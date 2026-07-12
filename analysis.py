@@ -5,11 +5,12 @@ from __future__ import annotations
 import math
 import statistics
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
 DAY_NAMES = ["MO", "DI", "MI", "DO", "FR", "SA", "SO"]
+MIN_TIME_OBSERVATIONS = 20
 
 
 @dataclass(frozen=True)
@@ -21,10 +22,10 @@ class PricePoint:
 
 @dataclass
 class Seasonality:
+    # + = historically favorable current day/time block
+    # = = neutral, ⚠ = historically weak/risky, ? = insufficient data
     current: str
-    preference: str
-    best: str
-    worst: str
+    best_weekday: str
     samples: int
 
 
@@ -96,17 +97,22 @@ def compute_volume_ratio(
 
 
 def classify_demand(day_pct: float, volume_ratio: float | None) -> str:
+    """Compact pressure grade from 24h price direction and relative volume."""
     if volume_ratio is None:
-        return "N?"
+        return "?"
+    if day_pct >= 4.0 and volume_ratio >= 2.0:
+        return "+++"
     if day_pct >= 1.0 and volume_ratio >= 1.5:
-        return "N++"
+        return "++"
     if day_pct > 0 and volume_ratio >= 1.1:
-        return "N+"
+        return "+"
+    if day_pct <= -4.0 and volume_ratio >= 2.0:
+        return "---"
     if day_pct <= -1.0 and volume_ratio >= 1.5:
-        return "N--"
+        return "--"
     if day_pct < 0 and volume_ratio >= 1.1:
-        return "N-"
-    return "N="
+        return "-"
+    return "="
 
 
 def classify_comeback(
@@ -119,28 +125,32 @@ def classify_comeback(
     cutoff = now_ms - 24 * 60 * 60 * 1000
     recent = [point.rate for point in points if point.timestamp_ms >= cutoff]
     if len(recent) < 3:
-        return "CB?", None
+        return "?", None
 
     low = min(recent)
     high = max(recent)
     spread = high - low
     if spread <= 0:
-        return "CB=", 0.5
+        return "=", 0.5
 
     position = max(0.0, min(1.0, (current_rate - low) / spread))
     drawdown_from_high = (current_rate / high - 1.0) * 100.0
 
+    if day_pct >= 3.0 and hour_pct > 0 and position >= 0.90:
+        return "+++", position
     if day_pct > 0 and hour_pct > 0 and position >= 0.80:
-        return "CB++", position
+        return "++", position
     if day_pct > 0 and position >= 0.65:
-        return "CB+", position
+        return "+", position
     if position >= 0.50 and day_pct <= 0:
-        return "CB?", position
+        return "?", position
+    if position < 0.20 and day_pct <= -3.0:
+        return "--", position
     if position < 0.35 and day_pct < 0:
-        return "CB-", position
+        return "-", position
     if drawdown_from_high <= -4.0 and hour_pct < 0:
-        return "CB-", position
-    return "CB=", position
+        return "-", position
+    return "=", position
 
 
 def _return_observations(
@@ -165,11 +175,6 @@ def _return_observations(
     return observations
 
 
-def _slot_label(weekday: int, block: int, block_hours: int) -> str:
-    end = (block + block_hours) % 24
-    return f"{DAY_NAMES[weekday]} {block:02d}–{end:02d}h"
-
-
 def analyze_seasonality(
     points: list[PricePoint],
     now: datetime,
@@ -177,37 +182,50 @@ def analyze_seasonality(
     block_hours: int = 4,
     min_samples: int = 3,
 ) -> Seasonality:
-    observations = _return_observations(points, timezone, block_hours)
-    if len(observations) < 20:
-        return Seasonality("TZ?", "WT=WE", "Lernphase", "Lernphase", len(observations))
+    """Evaluate the current time block and the single strongest weekday.
 
-    grouped: dict[tuple[int, int], list[float]] = {}
-    workday: list[float] = []
-    weekend: list[float] = []
+    This is a direct calculation from fetched history, not a model that learns
+    between runs. If too few usable observations exist, no time claim is made.
+    """
+    observations = _return_observations(points, timezone, block_hours)
+    if len(observations) < MIN_TIME_OBSERVATIONS:
+        return Seasonality("?", "?", len(observations))
+
+    by_slot: dict[tuple[int, int], list[float]] = {}
+    by_weekday: dict[int, list[float]] = {}
     all_returns: list[float] = []
 
     for weekday, block, value in observations:
-        grouped.setdefault((weekday, block), []).append(value)
-        (workday if weekday < 5 else weekend).append(value)
+        by_slot.setdefault((weekday, block), []).append(value)
+        by_weekday.setdefault(weekday, []).append(value)
         all_returns.append(value)
 
-    eligible = {
-        slot: values for slot, values in grouped.items() if len(values) >= min_samples
+    eligible_slots = {
+        slot: values for slot, values in by_slot.items() if len(values) >= min_samples
     }
-    if not eligible:
-        return Seasonality("TZ?", "WT=WE", "Lernphase", "Lernphase", len(observations))
+    weekday_min_samples = max(5, min_samples)
+    eligible_weekdays = {
+        weekday: values
+        for weekday, values in by_weekday.items()
+        if len(values) >= weekday_min_samples
+    }
 
     def quality(values: list[float]) -> float:
         avg = statistics.mean(values)
         hit_rate = sum(value > 0 for value in values) / len(values)
         return avg * (0.5 + hit_rate)
 
-    best_slot = max(eligible, key=lambda slot: quality(eligible[slot]))
-    worst_slot = min(eligible, key=lambda slot: quality(eligible[slot]))
+    best_weekday = "?"
+    if eligible_weekdays:
+        best_day_index = max(
+            eligible_weekdays,
+            key=lambda weekday: quality(eligible_weekdays[weekday]),
+        )
+        best_weekday = DAY_NAMES[best_day_index]
 
     local_now = now.astimezone(ZoneInfo(timezone))
     current_block = (local_now.hour // block_hours) * block_hours
-    current_values = eligible.get((local_now.weekday(), current_block), [])
+    current_values = eligible_slots.get((local_now.weekday(), current_block), [])
 
     median_abs = _median(abs(value) for value in all_returns) or 0.0
     threshold = max(0.025, median_abs * 0.15)
@@ -216,32 +234,17 @@ def analyze_seasonality(
         current_avg = statistics.mean(current_values)
         current_hit = sum(value > 0 for value in current_values) / len(current_values)
         if current_avg > threshold and current_hit >= 0.56:
-            current_label = "TZ+"
+            current_label = "+"
         elif current_avg < -threshold and current_hit <= 0.44:
-            current_label = "TZ⚠"
+            current_label = "⚠"
         else:
-            current_label = "TZ="
+            current_label = "="
     else:
-        current_label = "TZ?"
-
-    if workday and weekend:
-        workday_avg = statistics.mean(workday)
-        weekend_avg = statistics.mean(weekend)
-        difference = workday_avg - weekend_avg
-        if difference > threshold * 0.35:
-            preference = "WT>WE"
-        elif difference < -threshold * 0.35:
-            preference = "WE>WT"
-        else:
-            preference = "WT=WE"
-    else:
-        preference = "WT=WE"
+        current_label = "?"
 
     return Seasonality(
         current=current_label,
-        preference=preference,
-        best=_slot_label(best_slot[0], best_slot[1], block_hours),
-        worst=_slot_label(worst_slot[0], worst_slot[1], block_hours),
+        best_weekday=best_weekday,
         samples=len(observations),
     )
 
@@ -279,9 +282,28 @@ def calculate_signal_score(
     score += 1.0 * _graded(relative_day_pct, 0.4, 1.5)
     score += 1.2 * _graded(relative_week_pct, 1.0, 4.0)
 
-    score += {"N++": 1.0, "N+": 0.5, "N=": 0.0, "N?": 0.0, "N-": -0.5, "N--": -1.0}[demand]
-    score += {"CB++": 0.8, "CB+": 0.4, "CB=": 0.0, "CB?": -0.1, "CB-": -0.8}[comeback]
-    score += {"TZ+": 0.25, "TZ=": 0.0, "TZ?": 0.0, "TZ⚠": -0.25}[seasonality_current]
+    score += {
+        "+++": 1.2,
+        "++": 0.8,
+        "+": 0.4,
+        "=": 0.0,
+        "?": 0.0,
+        "-": -0.4,
+        "--": -0.8,
+        "---": -1.2,
+    }[demand]
+    score += {
+        "+++": 1.0,
+        "++": 0.7,
+        "+": 0.35,
+        "=": 0.0,
+        "?": -0.1,
+        "-": -0.6,
+        "--": -1.0,
+    }[comeback]
+    score += {"+": 0.25, "=": 0.0, "?": 0.0, "⚠": -0.25}[
+        seasonality_current
+    ]
 
     if btc_day_pct <= -3.0 or btc_week_pct <= -8.0:
         score -= 0.6
@@ -384,8 +406,37 @@ def market_arrow(btc_day_pct: float, btc_week_pct: float) -> str:
     return "→"
 
 
-def format_pct(value: float) -> str:
-    return f"{value:+.1f}"
+def pressure_marks(value: float, slight: float, clear: float, strong: float) -> str:
+    """Map a percentage move to compact -, =, + grades."""
+    if value >= strong:
+        return "+++"
+    if value >= clear:
+        return "++"
+    if value >= slight:
+        return "+"
+    if value <= -strong:
+        return "---"
+    if value <= -clear:
+        return "--"
+    if value <= -slight:
+        return "-"
+    return "="
+
+
+def day_marks(value: float) -> str:
+    return pressure_marks(value, slight=0.5, clear=2.0, strong=5.0)
+
+
+def week_marks(value: float) -> str:
+    return pressure_marks(value, slight=1.0, clear=4.0, strong=10.0)
+
+
+def relative_day_marks(value: float) -> str:
+    return pressure_marks(value, slight=0.3, clear=1.2, strong=3.0)
+
+
+def relative_week_marks(value: float) -> str:
+    return pressure_marks(value, slight=0.8, clear=3.0, strong=7.0)
 
 
 def format_price(value: float) -> str:
@@ -406,6 +457,20 @@ def format_price(value: float) -> str:
     return f"${value:.2e}"
 
 
+def _format_time_info(seasonality: Seasonality) -> str:
+    if seasonality.samples < MIN_TIME_OBSERVATIONS:
+        return "Zeitdaten:zu wenig"
+    if seasonality.current == "?" and seasonality.best_weekday == "?":
+        return "Zeitdaten:zu wenig"
+    current = f"Jetzt{seasonality.current}"
+    strongest = (
+        f"Top:{seasonality.best_weekday}"
+        if seasonality.best_weekday != "?"
+        else "Top:?"
+    )
+    return f"{current} {strongest}"
+
+
 def build_report(
     *,
     now: datetime,
@@ -421,23 +486,20 @@ def build_report(
     btc_week = delta_to_pct(ref_delta.get("week"))
 
     lines = [
-        f"📊 {local_now:%d.%m %H:%M} | {reference_code} {format_pct(btc_day)}/{format_pct(btc_week)} | MKT{market_arrow(btc_day, btc_week)}"
+        f"📊 {local_now:%d.%m %H:%M} | {reference_code} 24h{day_marks(btc_day)} 7d{week_marks(btc_week)} | Markt{market_arrow(btc_day, btc_week)}"
     ]
 
     for item in analyses:
         lines.append(
-            f"{item.code} {format_price(item.price)} | {format_pct(item.day_pct)}/{format_pct(item.week_pct)} "
-            f"| vsB {format_pct(item.relative_day_pct)}/{format_pct(item.relative_week_pct)} "
-            f"| {item.demand} {item.comeback} {item.seasonality.current} {item.seasonality.preference} "
-            f"| {item.signal_icon}{item.signal}"
+            f"{item.code} {format_price(item.price)} | 24h{day_marks(item.day_pct)} 7d{week_marks(item.week_pct)} "
+            f"| vsBTC {relative_day_marks(item.relative_day_pct)}/{relative_week_marks(item.relative_week_pct)} "
+            f"| Druck{item.demand} Comeback{item.comeback} "
+            f"| {_format_time_info(item.seasonality)} | {item.signal_icon}{item.signal}"
         )
 
-    time_parts = [
-        f"{item.code}: +{item.seasonality.best} / ⚠{item.seasonality.worst}"
-        for item in analyses
-    ]
-    lines.append(f"⏱ {' · '.join(time_parts)} | {history_days}T")
-    lines.append("24h/7d · autom. technisches Signal, keine Anlageberatung · Daten: Live Coin Watch")
+    lines.append(
+        f"+/++/+++ = leicht/klar/stark · Zeitbasis {history_days}T · autom. technisches Signal · keine Anlageberatung · LCW"
+    )
     return "\n".join(lines)
 
 

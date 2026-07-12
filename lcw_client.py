@@ -25,7 +25,7 @@ class LiveCoinWatchClient:
             {
                 "content-type": "application/json",
                 "x-api-key": api_key,
-                "user-agent": "crypto-signal-monitor/1.0",
+                "user-agent": "crypto-signal-monitor/1.1",
             }
         )
 

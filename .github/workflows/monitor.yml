@@ -2,8 +2,8 @@ name: Crypto Signal Monitor
 
 on:
   schedule:
-    # Zweimal pro Stunde, bewusst nicht zur vollen Stunde.
-    - cron: "7,37 * * * *"
+    # Bewusst nicht zur vollen Stunde.
+    - cron: "5,15,25,35,45,55 * * * *"
   workflow_dispatch:
     inputs:
       send_discord:

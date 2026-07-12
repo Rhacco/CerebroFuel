@@ -3,10 +3,12 @@ import unittest
 
 from analysis import (
     PricePoint,
+    analyze_seasonality,
     classify_comeback,
     classify_demand,
     delta_to_pct,
     format_price,
+    pressure_marks,
     signal_from_score,
 )
 
@@ -17,9 +19,10 @@ class AnalysisTests(unittest.TestCase):
         self.assertAlmostEqual(delta_to_pct(0.95), -5.0)
 
     def test_demand(self):
-        self.assertEqual(classify_demand(2.0, 1.6), "N++")
-        self.assertEqual(classify_demand(-2.0, 1.6), "N--")
-        self.assertEqual(classify_demand(0.2, 0.9), "N=")
+        self.assertEqual(classify_demand(5.0, 2.1), "+++")
+        self.assertEqual(classify_demand(2.0, 1.6), "++")
+        self.assertEqual(classify_demand(-2.0, 1.6), "--")
+        self.assertEqual(classify_demand(0.2, 0.9), "=")
 
     def test_comeback(self):
         now = datetime.now(timezone.utc)
@@ -30,8 +33,26 @@ class AnalysisTests(unittest.TestCase):
         label, position = classify_comeback(
             105, 5.0, 1.0, points, int(now.timestamp() * 1000)
         )
-        self.assertEqual(label, "CB++")
+        self.assertEqual(label, "+++")
         self.assertIsNotNone(position)
+
+    def test_pressure_marks(self):
+        self.assertEqual(pressure_marks(6.0, 0.5, 2.0, 5.0), "+++")
+        self.assertEqual(pressure_marks(2.5, 0.5, 2.0, 5.0), "++")
+        self.assertEqual(pressure_marks(-0.7, 0.5, 2.0, 5.0), "-")
+        self.assertEqual(pressure_marks(0.1, 0.5, 2.0, 5.0), "=")
+
+    def test_time_data_is_explicit_when_insufficient(self):
+        now = datetime.now(timezone.utc)
+        points = [
+            PricePoint(int((now - timedelta(hours=3)).timestamp() * 1000), 100, None),
+            PricePoint(int((now - timedelta(hours=2)).timestamp() * 1000), 101, None),
+            PricePoint(int((now - timedelta(hours=1)).timestamp() * 1000), 102, None),
+        ]
+        result = analyze_seasonality(points, now, "Europe/Berlin")
+        self.assertEqual(result.current, "?")
+        self.assertEqual(result.best_weekday, "?")
+        self.assertLess(result.samples, 20)
 
     def test_signal_thresholds(self):
         self.assertEqual(signal_from_score(3.0, 3.0, -2.5), ("EIN", "🟢"))

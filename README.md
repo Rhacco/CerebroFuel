@@ -1,92 +1,104 @@
-# Krypto-Signal-Monitor – Version 1
+# Krypto-Signal-Monitor – Version 1.1
 
-Automatischer 30-Minuten-Bericht für **HBAR** und **UNI**, jeweils gegen **Bitcoin**. Der Bericht wird durch GitHub Actions berechnet und über einen Discord-Webhook versendet.
+Automatischer 30-Minuten-Bericht für **HBAR** und **UNI**, jeweils gegen **Bitcoin**. GitHub Actions berechnet den Bericht und sendet ihn über einen Discord-Webhook.
 
-## Was Version 1 auswertet
+## Änderungen in Version 1.1
 
-- Kursentwicklung über 24 Stunden und 7 Tage
-- relative Stärke oder Schwäche gegenüber BTC
-- `N++` bis `N--`: Nachfrage-/Verkaufsdruck-Proxy aus Kurs und 24h-Volumen
-- `CB++` bis `CB-`: Kurs-Comeback anhand der Position innerhalb der letzten 24 Stunden
-- historisch starke und gefährliche Wochentag-/Uhrzeitblöcke aus 42 Tagen Kursdaten
-- festes technisches Signal: `EIN`, `WARTEN` oder `AUS`
-
-Die Signale sind regelbasiert und reproduzierbar. Sie sind keine Finanz- oder Anlageberatung. Eine optische Chart-KI ist in Version 1 noch nicht enthalten.
+- Trend-Prozentwerte in Discord wurden durch `+`, `++`, `+++`, `=`, `-`, `--`, `---` ersetzt.
+- `TZ` wurde durch das verständlichere `Jetzt` ersetzt.
+- Statt `WT>WE` wird nur noch der stärkste Wochentag als `Top:DI` angezeigt.
+- Das unklare Wort „Lernphase“ wurde entfernt.
+- Wenn die API nicht genug brauchbare Zeitdaten liefert, erscheint ausdrücklich `Zeitdaten:zu wenig`. Dann wird kein Zeitmuster geraten.
+- Die genauen Prozentwerte bleiben weiterhin in `output/latest_analysis.json` erhalten.
 
 ## Discord-Format
 
 ```text
-📊 12.07 20:37 | BTC +1.2/-0.7 | MKT↗
-HBAR $0.1235 | +3.4/+6.1 | vsB +2.2/+6.8 | N+ CB+ TZ+ WT>WE | 🟢EIN
-UNI $7.432 | -1.1/+2.8 | vsB -2.3/+3.5 | N- CB? TZ⚠ WE>WT | 🟡WARTEN
-⏱ HBAR: +DI 12–16h / ⚠SO 00–04h · UNI: +MO 08–12h / ⚠SA 20–00h | 42T
-24h/7d · autom. technisches Signal, keine Anlageberatung · Daten: Live Coin Watch
+📊 12.07 21:37 | BTC 24h+ 7d- | Markt→
+HBAR $0.1235 | 24h++ 7d+ | vsBTC ++/+ | Druck++ Comeback+ | Jetzt+ Top:DI | 🟢EIN
+UNI $7.432 | 24h- 7d= | vsBTC --/+ | Druck- Comeback? | Jetzt⚠ Top:MO | 🟡WARTEN
++/++/+++ = leicht/klar/stark · Zeitbasis 42T · autom. technisches Signal · keine Anlageberatung · LCW
 ```
 
-Abkürzungen:
+Die Reihenfolge bei `vsBTC` ist immer **24 Stunden / 7 Tage**.
 
-- `vsB`: Prozentpunkte stärker oder schwächer als Bitcoin
-- `N`: Nachfrage-/Verkaufsdruck-Proxy
-- `CB`: Comeback
-- `TZ+`, `TZ=`, `TZ⚠`: aktueller Wochentag-/Uhrzeitblock historisch positiv, neutral oder riskant
-- `WT>WE`: Werktage waren stärker als das Wochenende; `WE>WT` entsprechend umgekehrt
+## Bedeutung der kompakten Angaben
 
-## 1. Dateien in GitHub hochladen
+- `24h++`: in 24 Stunden klar positiv
+- `7d---`: in 7 Tagen stark negativ
+- `vsBTC ++/+`: über 24 Stunden klar und über 7 Tage leicht stärker als Bitcoin
+- `Druck++`: klarer Kauf-/Nachfragedruck aus Kursrichtung und relativem Volumen
+- `Druck--`: klarer Verkaufsdruck
+- `Comeback+`: Erholung innerhalb der letzten 24 Stunden
+- `Jetzt+`: der aktuelle Wochentag-/4-Stunden-Block war historisch eher günstig
+- `Jetzt=`: historisch neutral
+- `Jetzt⚠`: historisch eher schwach oder riskant
+- `Top:DI`: Dienstag war im betrachteten Zeitraum der stärkste Wochentag
+- `Zeitdaten:zu wenig`: weniger als 20 brauchbare historische Bewegungen; das Programm gibt bewusst keine Zeitbewertung aus
+
+`Zeitdaten:zu wenig` ist **keine Lernphase einer KI**. Bei jedem Lauf werden die letzten 42 Tage neu abgerufen und direkt berechnet. Reichen die Daten nicht aus, wird die Zeitangabe ausgelassen, statt etwas zu schätzen.
+
+## Was ausgewertet wird
+
+- Kursrichtung über 24 Stunden und 7 Tage
+- relative Stärke oder Schwäche gegenüber BTC
+- Nachfrage-/Verkaufsdruck aus Kurs und 24h-Volumen
+- Kurs-Comeback innerhalb der vergangenen 24 Stunden
+- aktueller Wochentag-/4-Stunden-Block aus historischen Daten
+- genau ein stärkster Wochentag
+- festes technisches Signal: `EIN`, `WARTEN` oder `AUS`
+
+Die Signale sind regelbasiert und reproduzierbar. Sie sind keine Finanz- oder Anlageberatung. Eine optische Chart-KI ist noch nicht enthalten.
+
+## Update im bestehenden Repository
+
+1. ZIP-Datei entpacken.
+2. Den Inhalt des Ordners `crypto-signal-monitor` in die oberste Ebene des bestehenden Repositorys hochladen.
+3. Vorhandene Dateien überschreiben lassen.
+4. **Commit changes** anklicken.
+5. Unter **Actions → Crypto Signal Monitor → Run workflow** einen manuellen Test starten.
+
+Deine bestehenden GitHub-Secrets bleiben erhalten:
+
+- `LCW_API_KEY`
+- `DISCORD_WEBHOOK_URL`
+
+## Ersteinrichtung
+
+### 1. Dateien in GitHub hochladen
 
 1. ZIP-Datei entpacken.
 2. Im privaten GitHub-Repository **Add file → Upload files** öffnen.
-3. Den gesamten Inhalt des Ordners `crypto-signal-monitor` hineinziehen. Wichtig: `.github/workflows/monitor.yml` muss ebenfalls hochgeladen werden.
-4. Unten **Commit changes** auswählen.
+3. Den gesamten Inhalt des Ordners `crypto-signal-monitor` hineinziehen.
+4. Prüfen, dass `.github/workflows/monitor.yml` vorhanden ist.
+5. **Commit changes** auswählen.
 
-## 2. Kostenlosen Live-Coin-Watch-API-Key erstellen
+### 2. GitHub-Secrets
 
-1. `https://www.livecoinwatch.com/tools/api` öffnen.
-2. Registrieren oder anmelden.
-3. Kostenlosen API-Key erzeugen und kopieren.
-
-Der Key gehört niemals direkt in `config.json` oder in den Programmcode.
-
-## 3. Discord-Webhook erstellen
-
-1. In Discord den gewünschten Server und Kanal öffnen.
-2. **Servereinstellungen → Integrationen → Webhooks** öffnen.
-3. Einen neuen Webhook für den Zielkanal erstellen.
-4. **Webhook-URL kopieren**.
-
-Die Webhook-URL ist geheim zu behandeln, weil jeder Besitzer dieser URL Nachrichten in den Kanal senden kann.
-
-## 4. GitHub-Secrets anlegen
-
-Im Repository:
-
-1. **Settings → Secrets and variables → Actions** öffnen.
-2. **New repository secret** anklicken.
-3. Diese beiden Secrets exakt mit folgenden Namen anlegen:
+Unter **Settings → Secrets and variables → Actions** müssen diese Repository-Secrets vorhanden sein:
 
 | Name | Inhalt |
 |---|---|
 | `LCW_API_KEY` | API-Key von Live Coin Watch |
 | `DISCORD_WEBHOOK_URL` | vollständige Discord-Webhook-URL |
 
-## 5. Ersten manuellen Test starten
+### 3. Manueller Test
 
-1. Im Repository den Reiter **Actions** öffnen.
-2. Links **Crypto Signal Monitor** auswählen.
+1. **Actions** öffnen.
+2. **Crypto Signal Monitor** auswählen.
 3. **Run workflow** anklicken.
-4. Für einen ersten Test `Bericht an Discord senden = false` wählen.
-5. Nach erfolgreichem Test erneut starten und `true` wählen.
-
-Im Workflow-Lauf zeigt der Schritt **Analyse ausführen** den kompletten Bericht. Zusätzlich wird unter **Artifacts** eine Datei mit `latest_report.txt` und `latest_analysis.json` für sieben Tage gespeichert.
+4. Zunächst `Bericht an Discord senden = false` wählen.
+5. Nach erfolgreichem Lauf erneut mit `true` testen.
 
 ## Automatischer Zeitplan
 
-Der Workflow läuft automatisch jeweils um Minute **07 und 37** jeder Stunde:
+Der Workflow läuft ungefähr um Minute **07 und 37** jeder Stunde:
 
 ```yaml
 - cron: "7,37 * * * *"
 ```
 
-Das entspricht ungefähr einem 30-Minuten-Intervall. GitHub kann geplante Läufe gelegentlich etwas verzögern.
+GitHub kann geplante Läufe gelegentlich etwas verzögern.
 
 ## Coins oder Einstellungen ändern
 
@@ -110,17 +122,15 @@ Nur `config.json` bearbeiten:
 }
 ```
 
-Weitere Coins können beispielsweise so ergänzt werden:
+Weitere Coins:
 
 ```json
 "coins": ["HBAR", "UNI", "SOL", "XRP"]
 ```
 
-Jeder zusätzliche Coin benötigt pro Durchlauf zwei weitere API-Abfragen: eine aktuelle Abfrage und eine Historienabfrage.
+## Lokaler Test – optional
 
-## Lokal testen – optional
-
-Voraussetzungen: Python 3.11 oder neuer.
+Voraussetzung: Python 3.11 oder neuer.
 
 ```bash
 python -m venv .venv
@@ -131,7 +141,7 @@ set LCW_API_KEY=DEIN_KEY
 python main.py --no-send
 ```
 
-Für den lokalen Discord-Test zusätzlich:
+Für einen lokalen Discord-Test zusätzlich:
 
 ```bash
 set DISCORD_WEBHOOK_URL=DEINE_WEBHOOK_URL
@@ -145,9 +155,5 @@ python main.py
 - `analysis.py`: Kennzahlen, Zeitmuster und Signallogik
 - `discord_sender.py`: Discord-Versand
 - `config.json`: Coins und veränderbare Einstellungen
-- `.github/workflows/monitor.yml`: automatischer GitHub-Actions-Zeitplan
-- `tests/test_analysis.py`: kleine Funktionstests
-
-## Spätere Erweiterungen
-
-Der Aufbau ist vorbereitet für zusätzliche Coins, kürzere Momentaufnahmen, Warnungen nur bei Signalwechsel, Chart-Screenshots, optische KI-Auswertung und getrennte Ein-/Ausstiegsalarme.
+- `.github/workflows/monitor.yml`: GitHub-Actions-Zeitplan
+- `tests/test_analysis.py`: Funktionstests
