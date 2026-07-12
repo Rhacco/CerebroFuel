@@ -1,0 +1,15 @@
+{
+  "reference_coin": "BTC",
+  "coins": ["HBAR", "UNI"],
+  "currency": "USD",
+  "timezone": "Europe/Berlin",
+  "history_days": 42,
+  "time_block_hours": 4,
+  "seasonality_min_samples": 3,
+  "request_timeout_seconds": 30,
+  "discord_username": "Krypto-Monitor",
+  "signal_thresholds": {
+    "entry": 3.0,
+    "exit": -2.5
+  }
+}
