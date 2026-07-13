@@ -1,4 +1,4 @@
-"""Deterministic market analysis and compact Discord formatting."""
+"""Deterministic short-term crypto anomaly analysis for Discord."""
 
 from __future__ import annotations
 
@@ -6,11 +6,22 @@ import math
 import statistics
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
 DAY_NAMES = ["MO", "DI", "MI", "DO", "FR", "SA", "SO"]
 MIN_TIME_OBSERVATIONS = 40
+WINDOWS = (10, 20, 60)
+
+PURPLE = "🟣"
+GREEN = "🟢"
+BLUE = "🔵"
+YELLOW = "🟡"
+ORANGE = "🟠"
+RED = "🔴"
+BROWN = "🟤"
+WHITE = "⚪"
+BLACK = "⚫"
 
 
 @dataclass(frozen=True)
@@ -28,31 +39,33 @@ class Seasonality:
 
 
 @dataclass
+class ShortMetrics:
+    price_changes: dict[int, float | None]
+    volume_changes: dict[int, float | None]
+    volume_colors: dict[int, str]
+    relative_short_pct: float | None
+    relative_color: str
+    pressure_score: float | None
+    pressure_color: str
+    buy_count: int
+    sell_count: int
+    direction: str
+    signal_color: str
+    anomaly_score: float
+    data_quality: str
+
+
+@dataclass
 class CoinAnalysis:
     display_code: str
     api_code: str
     price: float
-    short_pct: float
-    hour_pct: float
-    day_pct: float
     week_pct: float
-    relative_day_pct: float
-    relative_week_pct: float
-    volume_24h_pct: float | None
-    volume_7d_pct: float | None
-    day_mark: str
-    week_mark: str
-    relative_mark: str
-    pressure: str
+    week_color: str
+    short: ShortMetrics
     seasonality: Seasonality
-    buy_count: int
-    sell_count: int
-    direction: str
-    recommendation: str
-    eligible: bool
-    buy_flags: dict[str, bool]
-    sell_flags: dict[str, bool]
     is_reference: bool = False
+    btc_gate: bool = False
 
 
 def delta_to_pct(value: Any) -> float:
@@ -71,8 +84,8 @@ def normalize_history(raw: Iterable[dict[str, Any]]) -> list[PricePoint]:
             rate = float(row["rate"])
             if rate <= 0:
                 continue
-            volume_raw = row.get("volume")
-            volume = float(volume_raw) if volume_raw not in (None, "") else None
+            raw_volume = row.get("volume")
+            volume = float(raw_volume) if raw_volume not in (None, "") else None
             if volume is not None and volume < 0:
                 volume = None
         except (KeyError, TypeError, ValueError):
@@ -93,175 +106,395 @@ def _median(values: Iterable[float]) -> float | None:
     return statistics.median(cleaned) if cleaned else None
 
 
-def _volumes_between(points: list[PricePoint], start_ms: int, end_ms: int) -> list[float]:
-    return [
-        float(point.volume)
-        for point in points
-        if start_ms <= point.timestamp_ms <= end_ms
-        and point.volume is not None
-        and point.volume > 0
-    ]
+def _thresholds(config: Mapping[str, Any], name: str, window: int) -> tuple[float, float, float]:
+    raw = config.get(name, {}) if isinstance(config, Mapping) else {}
+    item = raw.get(str(window), {}) if isinstance(raw, Mapping) else {}
+    light = float(item.get("light", 0.10))
+    clear = float(item.get("clear", 0.35))
+    strong = float(item.get("strong", 1.20))
+    if not (0 <= light <= clear <= strong):
+        raise ValueError(f"Ungültige Schwellen für {name}/{window}.")
+    return light, clear, strong
 
 
-def compute_volume_trends(
-    current_volume: float | None,
-    points: list[PricePoint],
-    now_ms: int,
-) -> tuple[float | None, float | None]:
-    """Compare the current rolling 24h volume with fresh historic snapshots.
-
-    24h trend: current/recent six-hour median versus the 18-30h-old median.
-    7d trend: current/recent 24h median versus the 6-7-day-old median.
-    """
-    if current_volume is None or current_volume <= 0:
-        return None, None
-
-    hour = 60 * 60 * 1000
-    recent_6h = _volumes_between(points, now_ms - 6 * hour, now_ms)
-    recent_24h = _volumes_between(points, now_ms - 24 * hour, now_ms)
-    recent_6h.append(current_volume)
-    recent_24h.append(current_volume)
-
-    baseline_24h = _volumes_between(points, now_ms - 30 * hour, now_ms - 18 * hour)
-    baseline_7d = _volumes_between(points, now_ms - 7 * 24 * hour, now_ms - 6 * 24 * hour)
-
-    def pct(recent: list[float], baseline: list[float]) -> float | None:
-        recent_med = _median(recent)
-        baseline_med = _median(baseline)
-        if recent_med is None or baseline_med is None or baseline_med <= 0:
-            return None
-        return (recent_med / baseline_med - 1.0) * 100.0
-
-    return pct(recent_6h, baseline_24h), pct(recent_24h, baseline_7d)
-
-
-def compute_short_momentum(
-    current_rate: float,
-    points: list[PricePoint],
-    now_ms: int,
-    target_minutes: int = 15,
-) -> float:
-    """Estimate the latest 5-30 minute move from the freshly loaded history."""
-    if current_rate <= 0 or not points:
-        return 0.0
-    target_ms = now_ms - target_minutes * 60_000
-    candidates = [
-        point
-        for point in points
-        if now_ms - 45 * 60_000 <= point.timestamp_ms <= now_ms - 3 * 60_000
-    ]
-    if not candidates:
-        return 0.0
-    previous = min(candidates, key=lambda point: abs(point.timestamp_ms - target_ms))
-    if previous.rate <= 0:
-        return 0.0
-    return (current_rate / previous.rate - 1.0) * 100.0
-
-
-def marks_from_value(
+def signed_color(
     value: float | None,
     *,
     light: float,
     clear: float,
     strong: float,
+    uncertain: bool = False,
 ) -> str:
     if value is None or not math.isfinite(value):
-        return "?"
+        return WHITE
+    if uncertain:
+        return BROWN
     if value >= strong:
-        return "+++"
+        return PURPLE
     if value >= clear:
-        return "++"
+        return GREEN
     if value >= light:
-        return "+"
-    if value <= -strong:
-        return "---"
+        return BLUE
     if value <= -clear:
-        return "--"
+        return RED
     if value <= -light:
-        return "-"
-    return "="
+        return ORANGE
+    return YELLOW
 
 
-def mark_level(mark: str) -> int:
+def color_level(color: str) -> int:
     return {
-        "+++": 3,
-        "++": 2,
-        "+": 1,
-        "=": 0,
-        "?": 0,
-        "-": -1,
-        "--": -2,
-        "---": -3,
-    }.get(mark, 0)
+        PURPLE: 3,
+        GREEN: 2,
+        BLUE: 1,
+        YELLOW: 0,
+        ORANGE: -1,
+        RED: -2,
+        BROWN: 0,
+        WHITE: 0,
+        BLACK: 0,
+    }.get(color, 0)
 
 
-def colored_mark(mark: str) -> str:
-    return {
-        "+++": "🟢🟢🟢",
-        "++": "🟢🟢",
-        "+": "🟢",
-        "=": "🟡",
-        "-": "🔴",
-        "--": "🔴🔴",
-        "---": "🔴🔴🔴",
-        "?": "⚪",
-    }.get(mark, "⚪")
+def _find_snapshot_value(
+    snapshots: list[dict[str, Any]],
+    api_code: str,
+    target_ms: int,
+    tolerance_ms: int,
+) -> tuple[float | None, float | None]:
+    best: tuple[int, float | None, float | None] | None = None
+    for snapshot in snapshots:
+        try:
+            ts = int(snapshot["ts"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        distance = abs(ts - target_ms)
+        if distance > tolerance_ms:
+            continue
+        coins = snapshot.get("coins")
+        if not isinstance(coins, dict):
+            continue
+        row = coins.get(api_code)
+        if not isinstance(row, dict):
+            continue
+        try:
+            rate = float(row["rate"])
+            volume_raw = row.get("volume")
+            volume = float(volume_raw) if volume_raw not in (None, "") else None
+        except (KeyError, TypeError, ValueError):
+            continue
+        if rate <= 0:
+            continue
+        if best is None or distance < best[0]:
+            best = (distance, rate, volume)
+    if best is None:
+        return None, None
+    return best[1], best[2]
 
 
-def colored_time(mark: str) -> str:
-    return {
-        "+": "🟢",
-        "=": "🟡",
-        "-": "🔴",
-        "⚠": "🔴⚠",
-        "?": "⚪",
-    }.get(mark, "⚪")
+def _pct(current: float | None, previous: float | None) -> float | None:
+    if current is None or previous is None or previous <= 0:
+        return None
+    return (current / previous - 1.0) * 100.0
 
 
-def combined_relative_mark(relative_day_pct: float, relative_week_pct: float) -> str:
-    day = mark_level(marks_from_value(relative_day_pct, light=0.5, clear=2.0, strong=5.0))
-    week = mark_level(marks_from_value(relative_week_pct, light=1.5, clear=5.0, strong=10.0))
-    combined = 0.45 * day + 0.55 * week
-    if combined >= 2.35:
-        return "+++"
-    if combined >= 1.35:
-        return "++"
-    if combined >= 0.45:
-        return "+"
-    if combined <= -2.35:
-        return "---"
-    if combined <= -1.35:
-        return "--"
-    if combined <= -0.45:
-        return "-"
-    return "="
+def compute_window_changes(
+    *,
+    api_code: str,
+    current_rate: float,
+    current_volume: float | None,
+    snapshots: list[dict[str, Any]],
+    now_ms: int,
+    tolerance_minutes: int,
+) -> tuple[dict[int, float | None], dict[int, float | None]]:
+    price_changes: dict[int, float | None] = {}
+    volume_changes: dict[int, float | None] = {}
+    tolerance_ms = tolerance_minutes * 60_000
+    for window in WINDOWS:
+        previous_rate, previous_volume = _find_snapshot_value(
+            snapshots,
+            api_code,
+            now_ms - window * 60_000,
+            tolerance_ms,
+        )
+        price_changes[window] = _pct(current_rate, previous_rate)
+        volume_changes[window] = _pct(current_volume, previous_volume)
+    return price_changes, volume_changes
 
 
-def classify_pressure(
-    day_pct: float,
-    hour_pct: float,
-    short_pct: float,
-    volume_24h_pct: float | None,
-    volume_7d_pct: float | None,
+def _weighted_relative(
+    price_changes: Mapping[int, float | None],
+    btc_price_changes: Mapping[int, float | None],
+) -> float | None:
+    weights = {10: 0.45, 20: 0.35, 60: 0.20}
+    values: list[tuple[float, float]] = []
+    for window, weight in weights.items():
+        coin_value = price_changes.get(window)
+        btc_value = btc_price_changes.get(window)
+        if coin_value is None or btc_value is None:
+            continue
+        values.append((coin_value - btc_value, weight))
+    if len(values) < 2:
+        return None
+    total_weight = sum(weight for _, weight in values)
+    return sum(value * weight for value, weight in values) / total_weight
+
+
+def _pressure(
+    price_changes: Mapping[int, float | None],
+    volume_colors: Mapping[int, str],
+    price_thresholds: Mapping[str, Any],
+) -> float | None:
+    weights = {10: 0.45, 20: 0.35, 60: 0.20}
+    values: list[tuple[float, float]] = []
+    for window, weight in weights.items():
+        change = price_changes.get(window)
+        if change is None:
+            continue
+        light, clear, strong = _thresholds(price_thresholds, "price", window)
+        absolute = abs(change)
+        if absolute >= strong:
+            price_level = 3.0
+        elif absolute >= clear:
+            price_level = 2.0
+        elif absolute >= light:
+            price_level = 1.0
+        else:
+            price_level = 0.25
+        if change < 0:
+            price_level *= -1
+        volume_level = color_level(volume_colors.get(window, WHITE))
+        if volume_level > 0:
+            multiplier = 1.0 + 0.22 * volume_level
+        elif volume_level < 0:
+            multiplier = 0.72
+        else:
+            multiplier = 0.90
+        values.append((price_level * multiplier, weight))
+    if len(values) < 2:
+        return None
+    total_weight = sum(weight for _, weight in values)
+    return sum(value * weight for value, weight in values) / total_weight
+
+
+def pressure_color(score: float | None, *, uncertain: bool = False) -> str:
+    if score is None:
+        return WHITE
+    if uncertain:
+        return BROWN
+    if score >= 2.55:
+        return PURPLE
+    if score >= 1.15:
+        return GREEN
+    if score >= 0.35:
+        return BLUE
+    if score <= -1.15:
+        return RED
+    if score <= -0.35:
+        return ORANGE
+    return YELLOW
+
+
+def _data_quality(
+    *,
+    current_volume: float | None,
+    price_changes: Mapping[int, float | None],
+    volume_changes: Mapping[int, float | None],
+    minimum_volume: float,
+    maximum_volume_jump_pct: float,
 ) -> str:
-    """Estimate directional pressure from price and fresh volume confirmation."""
-    vol24 = volume_24h_pct if volume_24h_pct is not None else 0.0
-    vol7 = volume_7d_pct if volume_7d_pct is not None else 0.0
-    direction = day_pct + 0.35 * hour_pct + 0.90 * short_pct
+    usable_price = sum(value is not None for value in price_changes.values())
+    usable_volume = sum(value is not None for value in volume_changes.values())
+    if usable_price < 2 or usable_volume < 2:
+        return "insufficient"
+    if current_volume is None or current_volume <= 0 or current_volume < minimum_volume:
+        return "uncertain"
+    if any(
+        value is not None and abs(value) > maximum_volume_jump_pct
+        for value in volume_changes.values()
+    ):
+        return "uncertain"
+    return "good"
 
-    if direction >= 5.0 and vol24 >= 45 and vol7 >= 20:
-        return "+++"
-    if direction >= 2.0 and vol24 >= 25:
-        return "++"
-    if direction >= 0.5 and vol24 >= 12:
-        return "+"
-    if direction <= -5.0 and vol24 >= 45 and vol7 >= 20:
-        return "---"
-    if direction <= -2.0 and vol24 >= 25:
-        return "--"
-    if direction <= -0.5 and vol24 >= 12:
-        return "-"
-    return "="
+
+def _count_conditions(
+    *,
+    price_changes: Mapping[int, float | None],
+    volume_colors: Mapping[int, str],
+    relative_color: str,
+    p_color: str,
+    config: Mapping[str, Any],
+    is_reference: bool,
+) -> tuple[int, int]:
+    buy: list[bool] = []
+    sell: list[bool] = []
+    for window in WINDOWS:
+        value = price_changes.get(window)
+        light, clear, _ = _thresholds(config, "price", window)
+        buy.append(value is not None and value >= clear)
+        sell.append(value is not None and value <= -clear)
+    for window in WINDOWS:
+        value = price_changes.get(window)
+        light, _, _ = _thresholds(config, "price", window)
+        rising_volume = volume_colors.get(window) in {GREEN, PURPLE}
+        buy.append(value is not None and value >= light and rising_volume)
+        sell.append(value is not None and value <= -light and rising_volume)
+    if not is_reference:
+        buy.append(relative_color in {GREEN, PURPLE})
+        sell.append(relative_color in {ORANGE, RED})
+    buy.append(p_color in {GREEN, PURPLE})
+    sell.append(p_color in {ORANGE, RED})
+    return sum(buy), sum(sell)
+
+
+def _anomaly_score(
+    *,
+    price_changes: Mapping[int, float | None],
+    volume_colors: Mapping[int, str],
+    relative_color: str,
+    p_score: float | None,
+    week_pct: float,
+    quality: str,
+    config: Mapping[str, Any],
+    fallback_hour_pct: float,
+    fallback_day_pct: float,
+) -> float:
+    score = 0.0
+    price_weights = {10: 3.2, 20: 2.6, 60: 2.0}
+    volume_weights = {10: 2.0, 20: 1.7, 60: 1.3}
+    usable = 0
+    for window in WINDOWS:
+        value = price_changes.get(window)
+        if value is not None:
+            light, clear, strong = _thresholds(config, "price", window)
+            normalized = min(abs(value) / max(light, 1e-9), 6.0)
+            if abs(value) >= strong:
+                normalized += 1.5
+            elif abs(value) >= clear:
+                normalized += 0.7
+            score += normalized * price_weights[window]
+            usable += 1
+        score += abs(color_level(volume_colors.get(window, WHITE))) * volume_weights[window]
+    score += abs(color_level(relative_color)) * 2.2
+    if p_score is not None:
+        score += min(abs(p_score), 4.0) * 3.0
+    score += min(abs(week_pct) / 3.0, 3.0) * 0.8
+    if usable < 2:
+        score += min(abs(fallback_hour_pct) * 8.0 + abs(fallback_day_pct) * 1.8, 15.0)
+    if quality == "uncertain":
+        score *= 0.72
+    elif quality == "insufficient":
+        score *= 0.58
+    return score
+
+
+def build_short_metrics(
+    *,
+    api_code: str,
+    current: Mapping[str, Any],
+    snapshots: list[dict[str, Any]],
+    now_ms: int,
+    btc_price_changes: Mapping[int, float | None] | None,
+    config: Mapping[str, Any],
+    is_reference: bool,
+) -> ShortMetrics:
+    rate = float(current["rate"])
+    raw_volume = current.get("volume")
+    current_volume = float(raw_volume) if raw_volume not in (None, "") else None
+    price_changes, volume_changes = compute_window_changes(
+        api_code=api_code,
+        current_rate=rate,
+        current_volume=current_volume,
+        snapshots=snapshots,
+        now_ms=now_ms,
+        tolerance_minutes=int(config.get("snapshot_tolerance_minutes", 7)),
+    )
+    quality = _data_quality(
+        current_volume=current_volume,
+        price_changes=price_changes,
+        volume_changes=volume_changes,
+        minimum_volume=float(config.get("minimum_reliable_volume_usd", 500_000)),
+        maximum_volume_jump_pct=float(config.get("maximum_plausible_volume_jump_pct", 500.0)),
+    )
+    uncertain = quality == "uncertain"
+    volume_colors = {
+        window: signed_color(
+            volume_changes[window],
+            light=_thresholds(config, "volume", window)[0],
+            clear=_thresholds(config, "volume", window)[1],
+            strong=_thresholds(config, "volume", window)[2],
+            uncertain=uncertain,
+        )
+        for window in WINDOWS
+    }
+    if is_reference:
+        relative_short = 0.0
+        relative_color = YELLOW
+    else:
+        relative_short = _weighted_relative(price_changes, btc_price_changes or {})
+        relative_color = signed_color(
+            relative_short,
+            light=float(config.get("relative_light_pct", 0.12)),
+            clear=float(config.get("relative_clear_pct", 0.40)),
+            strong=float(config.get("relative_strong_pct", 1.20)),
+            uncertain=False,
+        )
+    p_score = _pressure(price_changes, volume_colors, config)
+    p_color = pressure_color(p_score, uncertain=uncertain)
+    buy_count, sell_count = _count_conditions(
+        price_changes=price_changes,
+        volume_colors=volume_colors,
+        relative_color=relative_color,
+        p_color=p_color,
+        config=config,
+        is_reference=is_reference,
+    )
+    if buy_count > sell_count:
+        direction = "▲"
+    elif sell_count > buy_count:
+        direction = "▼"
+    elif p_score is not None and p_score > 0.20:
+        direction = "▲"
+    elif p_score is not None and p_score < -0.20:
+        direction = "▼"
+    else:
+        direction = "="
+    if quality == "insufficient":
+        signal = WHITE
+    elif quality == "uncertain":
+        signal = BROWN
+    else:
+        signal = p_color
+    delta = current.get("delta") or {}
+    week_pct = delta_to_pct(delta.get("week"))
+    hour_pct = delta_to_pct(delta.get("hour"))
+    day_pct = delta_to_pct(delta.get("day"))
+    anomaly = _anomaly_score(
+        price_changes=price_changes,
+        volume_colors=volume_colors,
+        relative_color=relative_color,
+        p_score=p_score,
+        week_pct=week_pct,
+        quality=quality,
+        config=config,
+        fallback_hour_pct=hour_pct,
+        fallback_day_pct=day_pct,
+    )
+    return ShortMetrics(
+        price_changes=price_changes,
+        volume_changes=volume_changes,
+        volume_colors=volume_colors,
+        relative_short_pct=relative_short,
+        relative_color=relative_color,
+        pressure_score=p_score,
+        pressure_color=p_color,
+        buy_count=buy_count,
+        sell_count=sell_count,
+        direction=direction,
+        signal_color=signal,
+        anomaly_score=anomaly,
+        data_quality=quality,
+    )
 
 
 def _return_observations(
@@ -293,7 +526,6 @@ def analyze_seasonality(
     observations = _return_observations(points, timezone, block_hours)
     if len(observations) < MIN_TIME_OBSERVATIONS:
         return Seasonality("?", tuple(), len(observations))
-
     by_slot: dict[tuple[int, int], list[float]] = {}
     by_weekday: dict[int, list[float]] = {}
     all_returns: list[float] = []
@@ -307,20 +539,15 @@ def analyze_seasonality(
         hit_rate = sum(value > 0 for value in values) / len(values)
         return avg * (0.45 + hit_rate)
 
-    eligible_weekdays = {
+    eligible = {
         weekday: values
         for weekday, values in by_weekday.items()
         if len(values) >= max(10, min_samples)
     }
-    ranked = sorted(
-        eligible_weekdays,
-        key=lambda weekday: quality(eligible_weekdays[weekday]),
-        reverse=True,
-    )
-
+    ranked = sorted(eligible, key=lambda weekday: quality(eligible[weekday]), reverse=True)
     best_days: list[str] = []
     if ranked:
-        scores = [quality(eligible_weekdays[weekday]) for weekday in ranked]
+        scores = [quality(eligible[weekday]) for weekday in ranked]
         best_score = scores[0]
         take = min(2, len(ranked))
         if len(ranked) >= 3 and scores[2] > 0 and scores[2] >= best_score * 0.60:
@@ -334,65 +561,64 @@ def analyze_seasonality(
     current_values = by_slot.get((local_now.weekday(), current_block), [])
     median_abs = _median(abs(value) for value in all_returns) or 0.0
     threshold = max(0.02, median_abs * 0.18)
-
     if len(current_values) < min_samples:
-        current_label = "?"
+        current = "?"
     else:
-        current_avg = statistics.mean(current_values)
-        current_hit = sum(value > 0 for value in current_values) / len(current_values)
-        if current_avg > threshold and current_hit >= 0.56:
-            current_label = "+"
-        elif current_avg < -2.0 * threshold and current_hit <= 0.38:
-            current_label = "⚠"
-        elif current_avg < -threshold and current_hit <= 0.44:
-            current_label = "-"
+        avg = statistics.mean(current_values)
+        hit = sum(value > 0 for value in current_values) / len(current_values)
+        if avg > threshold and hit >= 0.56:
+            current = "+"
+        elif avg < -2.0 * threshold and hit <= 0.38:
+            current = "⚠"
+        elif avg < -threshold and hit <= 0.44:
+            current = "-"
         else:
-            current_label = "="
-
-    return Seasonality(current_label, tuple(best_days), len(observations))
-
-
-def _direction_from_counts(buy_count: int, sell_count: int) -> tuple[str, str]:
-    if buy_count > sell_count:
-        return "▲", "BUY"
-    if sell_count > buy_count:
-        return "▼", "SELL"
-    return "=", "NEUTRAL"
+            current = "="
+    return Seasonality(current, tuple(best_days), len(observations))
 
 
-def analyze_coin(
+def time_color(mark: str) -> str:
+    return {
+        "+": GREEN,
+        "=": YELLOW,
+        "-": ORANGE,
+        "⚠": RED,
+        "?": WHITE,
+    }.get(mark, WHITE)
+
+
+def week_color(week_pct: float) -> str:
+    return signed_color(week_pct, light=0.75, clear=3.0, strong=10.0)
+
+
+def btc_gate(short: ShortMetrics, config: Mapping[str, Any]) -> bool:
+    raw = config.get("btc_no_drop_pct", {})
+    defaults = {10: -0.10, 20: -0.15, 60: -0.25}
+    for window in WINDOWS:
+        value = short.price_changes.get(window)
+        limit = float(raw.get(str(window), defaults[window])) if isinstance(raw, Mapping) else defaults[window]
+        if value is None or value < limit:
+            return False
+        if short.volume_colors.get(window) not in {GREEN, PURPLE}:
+            return False
+    return True
+
+
+def build_coin_analysis(
     *,
     display_code: str,
     api_code: str,
-    current: dict[str, Any],
+    current: Mapping[str, Any],
+    short: ShortMetrics,
     history: list[PricePoint],
-    btc_day_pct: float,
-    btc_week_pct: float,
     now: datetime,
     timezone: str,
     block_hours: int,
     min_samples: int,
-    recommendation_threshold: int,
-    is_reference: bool = False,
+    is_reference: bool,
+    config: Mapping[str, Any],
 ) -> CoinAnalysis:
-    delta = current.get("delta") or {}
-    price = float(current["rate"])
-    hour_pct = delta_to_pct(delta.get("hour"))
-    day_pct = delta_to_pct(delta.get("day"))
-    week_pct = delta_to_pct(delta.get("week"))
-    relative_day = 0.0 if is_reference else day_pct - btc_day_pct
-    relative_week = 0.0 if is_reference else week_pct - btc_week_pct
-    now_ms = int(now.timestamp() * 1000)
-    short_pct = compute_short_momentum(price, history, now_ms)
-
-    volume_raw = current.get("volume")
-    current_volume = float(volume_raw) if volume_raw not in (None, "") else None
-    volume_24h_pct, volume_7d_pct = compute_volume_trends(current_volume, history, now_ms)
-
-    day_mark = marks_from_value(day_pct, light=0.5, clear=2.0, strong=5.0)
-    week_mark = marks_from_value(week_pct, light=1.5, clear=5.0, strong=10.0)
-    relative_mark = "=" if is_reference else combined_relative_mark(relative_day, relative_week)
-    pressure = classify_pressure(day_pct, hour_pct, short_pct, volume_24h_pct, volume_7d_pct)
+    week_pct = delta_to_pct((current.get("delta") or {}).get("week"))
     seasonality = analyze_seasonality(
         history,
         now,
@@ -400,202 +626,58 @@ def analyze_coin(
         block_hours=block_hours,
         min_samples=min_samples,
     )
-
-    buy_flags = {
-        "price_24h": day_pct >= 0.5,
-        "price_7d": week_pct >= 1.5,
-        "volume_24h": volume_24h_pct is not None and volume_24h_pct >= 12.0,
-        "volume_7d": volume_7d_pct is not None and volume_7d_pct >= 15.0,
-        "vs_btc_24h": (not is_reference) and relative_day >= 0.5,
-        "vs_btc_7d": (not is_reference) and relative_week >= 1.5,
-        "pressure": pressure in {"+", "++", "+++"},
-        "current_time": seasonality.current == "+",
-    }
-    sell_flags = {
-        "price_24h": day_pct <= -0.5,
-        "price_7d": week_pct <= -1.5,
-        "volume_24h": volume_24h_pct is not None and volume_24h_pct >= 12.0 and day_pct < 0,
-        "volume_7d": volume_7d_pct is not None and volume_7d_pct >= 15.0 and week_pct < 0,
-        "vs_btc_24h": (not is_reference) and relative_day <= -0.5,
-        "vs_btc_7d": (not is_reference) and relative_week <= -1.5,
-        "pressure": pressure in {"-", "--", "---"},
-        "current_time": seasonality.current in {"-", "⚠"},
-    }
-
-    buy_count = sum(buy_flags.values())
-    sell_count = sum(sell_flags.values())
-    direction, recommendation = _direction_from_counts(buy_count, sell_count)
-
-    if is_reference:
-        eligible = True
-    elif recommendation == "BUY":
-        eligible = (
-            buy_count >= recommendation_threshold
-            and buy_flags["volume_24h"]
-            and (buy_flags["volume_7d"] or buy_flags["vs_btc_24h"] or buy_flags["vs_btc_7d"])
-            and buy_flags["pressure"]
-            and seasonality.current not in {"-", "⚠"}
-        )
-    elif recommendation == "SELL":
-        eligible = (
-            sell_count >= recommendation_threshold
-            and sell_flags["volume_24h"]
-            and sell_flags["pressure"]
-            and (sell_flags["vs_btc_24h"] or sell_flags["vs_btc_7d"])
-        )
-    else:
-        eligible = False
-
     return CoinAnalysis(
         display_code=display_code,
         api_code=api_code,
-        price=price,
-        short_pct=short_pct,
-        hour_pct=hour_pct,
-        day_pct=day_pct,
+        price=float(current["rate"]),
         week_pct=week_pct,
-        relative_day_pct=relative_day,
-        relative_week_pct=relative_week,
-        volume_24h_pct=volume_24h_pct,
-        volume_7d_pct=volume_7d_pct,
-        day_mark=day_mark,
-        week_mark=week_mark,
-        relative_mark=relative_mark,
-        pressure=pressure,
+        week_color=week_color(week_pct),
+        short=short,
         seasonality=seasonality,
-        buy_count=buy_count,
-        sell_count=sell_count,
-        direction=direction,
-        recommendation=recommendation,
-        eligible=eligible,
-        buy_flags=buy_flags,
-        sell_flags=sell_flags,
         is_reference=is_reference,
+        btc_gate=btc_gate(short, config) if is_reference else False,
     )
 
 
-def _strength_count(item: CoinAnalysis) -> int:
-    if item.recommendation == "BUY":
-        return item.buy_count
-    if item.recommendation == "SELL":
-        return item.sell_count
-    return max(item.buy_count, item.sell_count)
-
-
-def _signal_prefix(item: CoinAnalysis, *, reference: bool = False) -> str:
-    if reference:
-        return "₿"
-    if item.recommendation == "BUY":
-        return "🟢▲" if item.eligible else "🟡▲"
-    if item.recommendation == "SELL":
-        return "🔴▼" if item.eligible else "🟡▼"
-    return "🟡="
+def strength_count(item: CoinAnalysis) -> int:
+    return max(item.short.buy_count, item.short.sell_count)
 
 
 def format_line(
     item: CoinAnalysis,
     *,
-    reference: bool = False,
-    generated_at: datetime | None = None,
-    timezone: str = "Europe/Berlin",
+    generated_at: datetime,
+    timezone: str,
 ) -> str:
-    count = _strength_count(item)
-    denominator = 6 if reference else 8
+    denominator = 7 if item.is_reference else 8
     weekdays = "/".join(item.seasonality.best_weekdays) or "?"
-    code = item.display_code
-    if reference and generated_at is not None:
-        code = f"{code}@{generated_at.astimezone(ZoneInfo(timezone)):%H:%M}"
+    volumes = "".join(item.short.volume_colors.get(window, WHITE) for window in WINDOWS)
+    count = strength_count(item)
+    if item.is_reference:
+        time_text = generated_at.astimezone(ZoneInfo(timezone)).strftime("%H:%M")
+        gate = GREEN if item.btc_gate else BLACK
+        return (
+            f"₿{time_text} {gate} · {count}/{denominator}{item.short.direction} · "
+            f"7d{item.week_color} · P{item.short.pressure_color} · "
+            f"V{volumes} · N{time_color(item.seasonality.current)} · {weekdays}"
+        )
     return (
-        f"{_signal_prefix(item, reference=reference)} {code} · {count}/{denominator} · "
-        f"24h{colored_mark(item.day_mark)} · 7d{colored_mark(item.week_mark)} · "
-        f"vB{colored_mark(item.relative_mark)} · P{colored_mark(item.pressure)} · "
-        f"N{colored_time(item.seasonality.current)} · {weekdays}"
+        f"{item.short.signal_color} {item.display_code} · {count}/{denominator}{item.short.direction} · "
+        f"7d{item.week_color} · vB{item.short.relative_color} · "
+        f"P{item.short.pressure_color} · V{volumes} · "
+        f"N{time_color(item.seasonality.current)} · {weekdays}"
     )
-
-
-def _sort_buy(item: CoinAnalysis) -> tuple[int, int, int, float, float]:
-    return (
-        1 if item.eligible else 0,
-        item.buy_count,
-        mark_level(item.pressure),
-        item.relative_day_pct,
-        item.short_pct,
-    )
-
-
-def _sort_sell(item: CoinAnalysis) -> tuple[int, int, int, float, float]:
-    return (
-        1 if item.eligible else 0,
-        item.sell_count,
-        -mark_level(item.pressure),
-        -item.relative_day_pct,
-        -item.short_pct,
-    )
-
-
-def _select_category(
-    group: list[CoinAnalysis],
-    recommendation: str,
-    *,
-    min_items: int,
-    max_items: int,
-    watch_threshold: int,
-) -> list[CoinAnalysis]:
-    if recommendation == "BUY":
-        candidates = [
-            item
-            for item in group
-            if item.recommendation == "BUY" and item.buy_count >= watch_threshold
-        ]
-        candidates.sort(key=_sort_buy, reverse=True)
-    else:
-        candidates = [
-            item
-            for item in group
-            if item.recommendation == "SELL" and item.sell_count >= watch_threshold
-        ]
-        candidates.sort(key=_sort_sell, reverse=True)
-
-    clear_count = sum(item.eligible for item in candidates)
-    target = min(max_items, max(min_items, clear_count))
-    return candidates[:target]
 
 
 def build_report(
     reference: CoinAnalysis,
-    grouped_analyses: list[list[CoinAnalysis]],
+    top_coins: list[CoinAnalysis],
     *,
     generated_at: datetime,
     timezone: str,
-    min_per_category: int = 3,
-    max_per_category: int = 6,
-    watch_threshold: int = 4,
 ) -> str:
-    lines = [
-        format_line(
-            reference,
-            reference=True,
-            generated_at=generated_at,
-            timezone=timezone,
-        )
-    ]
-    for group in grouped_analyses:
-        buys = _select_category(
-            group,
-            "BUY",
-            min_items=min_per_category,
-            max_items=max_per_category,
-            watch_threshold=watch_threshold,
-        )
-        sells = _select_category(
-            group,
-            "SELL",
-            min_items=min_per_category,
-            max_items=max_per_category,
-            watch_threshold=watch_threshold,
-        )
-        lines.extend(format_line(item) for item in buys)
-        lines.extend(format_line(item) for item in sells)
+    lines = [format_line(reference, generated_at=generated_at, timezone=timezone)]
+    lines.extend(format_line(item, generated_at=generated_at, timezone=timezone) for item in top_coins)
     return "\n".join(lines)
 
 

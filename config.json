@@ -3,106 +3,53 @@
   "groups": [
     {
       "coins": [
-        "ETH",
-        "BNB",
-        "XRP",
-        "SOL",
-        "DOGE",
-        "XLM",
-        "ADA",
-        "HBAR",
-        "SUI",
-        "TAO",
-        "UNI",
-        "PEPE",
-        "RENDER",
-        {
-          "display": "TRUMP",
-          "codes": [
-            "_______________________________TRUMP",
-            "TRUMP"
-          ]
-        },
-        "BONK",
-        "WIF"
+        "ETH", "BNB", "XRP", "SOL", "DOGE", "XLM", "ADA", "HBAR",
+        "SUI", "TAO", "UNI", "PEPE", "RENDER",
+        {"display": "TRUMP", "codes": ["_______________________________TRUMP", "TRUMP"]},
+        "BONK", "WIF"
       ]
     },
     {
       "coins": [
-        {
-          "display": "MEGA",
-          "codes": [
-            "__________________MEGA",
-            "MEGA"
-          ]
-        },
-        "W",
-        "KMNO",
-        {
-          "display": "ZKSYNC",
-          "codes": [
-            "ZK",
-            "ZKSYNC"
-          ]
-        },
-        "APE",
-        "FARTCOIN",
-        {
-          "display": "XPL",
-          "codes": [
-            "_XPL",
-            "XPL"
-          ]
-        },
-        "OP",
-        "LDO",
-        "PYTH",
-        "JTO",
-        "CRV",
-        "SEI",
-        "ETHFI",
-        "FET",
-        "TIA",
-        "INJ",
-        "PUMP",
-        "MORPHO",
-        {
-          "display": "WLD",
-          "codes": [
-            "__WLD",
-            "WLD"
-          ]
-        },
-        "DOT",
-        "AAVE",
-        "ONDO",
-        "WLFI",
-        "NEAR",
-        "BCH",
-        {
-          "display": "HYPE",
-          "codes": [
-            "______HYPE",
-            "HYPE"
-          ]
-        }
+        {"display": "MEGA", "codes": ["__________________MEGA", "MEGA"]},
+        "W", "KMNO", {"display": "ZKSYNC", "codes": ["ZK", "ZKSYNC"]},
+        "APE", "FARTCOIN", {"display": "XPL", "codes": ["_XPL", "XPL"]},
+        "OP", "LDO", "PYTH", "JTO", "CRV", "SEI", "ETHFI", "FET",
+        "TIA", "INJ", "PUMP", "MORPHO",
+        {"display": "WLD", "codes": ["__WLD", "WLD"]},
+        "DOT", "AAVE", "ONDO", "WLFI", "NEAR", "BCH",
+        {"display": "HYPE", "codes": ["______HYPE", "HYPE"]}
       ]
     }
   ],
   "currency": "USD",
   "timezone": "Europe/Berlin",
+  "top_coin_count": 8,
   "history_days": 42,
   "history_parallel_requests": 8,
   "time_block_hours": 4,
   "seasonality_min_samples": 4,
-  "recommendation_threshold": 6,
+  "snapshot_tolerance_minutes": 7,
+  "minimum_reliable_volume_usd": 500000,
+  "maximum_plausible_volume_jump_pct": 500,
+  "price": {
+    "10": {"light": 0.10, "clear": 0.30, "strong": 0.80},
+    "20": {"light": 0.15, "clear": 0.50, "strong": 1.20},
+    "60": {"light": 0.30, "clear": 1.00, "strong": 2.50}
+  },
+  "volume": {
+    "10": {"light": 0.05, "clear": 0.20, "strong": 0.75},
+    "20": {"light": 0.10, "clear": 0.35, "strong": 1.25},
+    "60": {"light": 0.25, "clear": 0.75, "strong": 2.50}
+  },
+  "relative_light_pct": 0.12,
+  "relative_clear_pct": 0.40,
+  "relative_strong_pct": 1.20,
+  "btc_no_drop_pct": {
+    "10": -0.10,
+    "20": -0.15,
+    "60": -0.25
+  },
   "request_timeout_seconds": 30,
-  "discord_username": "Krypto-Monitor",
-  "fresh_history_group_limits": [
-    16,
-    13
-  ],
-  "min_per_category": 3,
-  "max_per_category": 6,
-  "watch_threshold": 4
+  "discord_username": "Krypto-Monitor"
 }

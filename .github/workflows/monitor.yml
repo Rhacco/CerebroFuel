@@ -34,9 +34,11 @@ jobs:
       - name: Abhängigkeiten installieren
         run: python -m pip install --upgrade pip && pip install -r requirements.txt
 
-      - name: Analyse vollständig mit frischen LCW-Daten ausführen
+      - name: Frische Analyse ausführen
         env:
           LCW_API_KEY: ${{ secrets.LCW_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          CF_STATE_URL: ${{ secrets.CF_STATE_URL }}
+          CF_STATE_KEY: ${{ secrets.CF_STATE_KEY }}
           SEND_DISCORD: ${{ inputs.send_discord }}
         run: python main.py

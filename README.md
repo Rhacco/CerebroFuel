@@ -1,174 +1,183 @@
-# Krypto-Signal-Monitor – Version 3.0
+# Krypto-Signal-Monitor – Version 3.1
 
-Version 3.0 entfernt den bisherigen sechs Stunden alten History-Cache vollständig. Bei jedem Cloudflare-/GitHub-Start werden die aktuellen LCW-Daten neu geladen, die ausgewählten Historien neu abgefragt und sämtliche Signale neu berechnet.
+Version 3.1 zeigt immer genau **BTC plus die acht aktuell auffälligsten Coins** aus dem gesamten konfigurierten Pool. Steigende und fallende Bewegungen werden gemeinsam nach ihrer Auffälligkeit sortiert. Es gibt keine Überschriften, Leerzeilen oder Fußzeilen in Discord.
 
-Die Uhrzeit steht direkt in der BTC-Zeile. So ist sofort sichtbar, dass der Bericht wirklich aus dem aktuellen Fünf-Minuten-Lauf stammt. Trotz frischer Berechnung können einzelne Farbstufen gleich bleiben, wenn sich ein Wert zwar verändert, aber noch innerhalb derselben Signalstufe liegt.
-
-## Beispielausgabe
+## Beispiel
 
 ```text
-₿ BTC@14:04 · 4/6 · 24h🟢 · 7d🟡 · vB🟡 · P🟢 · N🟡 · DI/DO
-🟢▲ ETH · 8/8 · 24h🟢🟢 · 7d🟢🟢🟢 · vB🟢🟢 · P🟢🟢🟢 · N🟢 · DI/DO/FR
-🟢▲ SOL · 7/8 · 24h🟢🟢 · 7d🟢 · vB🟢🟢🟢 · P🟢🟢 · N🟢 · MO/DI/DO
-🟡▲ HBAR · 5/8 · 24h🟢 · 7d🟢🟢 · vB🟢 · P🟡 · N🟡 · DI/MI
-🔴▼ DOGE · 7/8 · 24h🔴🔴 · 7d🔴 · vB🔴🔴🔴 · P🔴🔴 · N🔴⚠ · SA/SO
-🟡▼ ADA · 5/8 · 24h🔴 · 7d🔴🔴 · vB🔴 · P🟡 · N🔴 · MO/SA
+₿14:01 🟢 · 6/7▲ · 7d🔵 · P🟢 · V🟢🟣🟢 · N🟡 · DI/DO
+🟣 ETH · 7/8▲ · 7d🟢 · vB🟢 · P🟣 · V🟣🟢🔵 · N🟡 · DI/DO/FR
+🔴 DOGE · 6/8▼ · 7d🟠 · vB🔴 · P🔴 · V🟢🟢🔵 · N🟠 · SA/SO
 ```
 
-Es gibt keine Überschriften, Leerzeilen oder Fußzeile. Bei mehr als 2.000 Zeichen teilt das Skript den Bericht automatisch zeilenweise in mehrere Discord-Nachrichten.
+Die Reihenfolge bei `V` ist immer **10 / 20 / 60 Minuten**.
 
-## Was ist wirklich frisch?
+## Bedeutung der Darstellung
 
-Bei jedem Lauf:
+- `₿14:01`: BTC-Referenz und deutsche Ortszeit des Berichts; das Wort `BTC` wird nicht zusätzlich ausgeschrieben.
+- Kreis direkt nach der BTC-Uhrzeit:
+  - `🟢`: BTC hatte über 10/20/60 Minuten keinen relevanten Einbruch **und** alle drei Volumentrends sind eindeutig steigend.
+  - `⚫`: mindestens eine dieser Bedingungen fehlt. Das ist bewusst ein strenger Sammelschalter.
+- `X/8▲` oder `X/8▼`: erfüllte positive beziehungsweise negative Kurzfristbedingungen. Bei BTC sind es `X/7`, weil ein Vergleich von BTC mit sich selbst entfällt.
+- `7d`: Kursrichtung der letzten sieben Tage.
+- `vB`: gewichtete relative Kursstärke des Coins gegenüber BTC über 10/20/60 Minuten.
+- `P`: kurzfristiger Druck aus Kursbewegung und Volumenbestätigung über 10/20/60 Minuten.
+- `V🟣🟢🔵`: Veränderung des von LCW gemeldeten **rollierenden 24h-Volumens** gegenüber vor 10/20/60 Minuten. Es ist ein sehr aktueller Volumentrend, aber nicht exakt das ausschließlich in diesem Intervall gehandelte Volumen.
+- `N`: historische Bewertung des aktuellen Wochentag-/Vierstundenblocks.
+- `MO/DI/MI/DO/FR/SA/SO`: zwei bis vier historisch stärkste Wochentage.
 
-1. `/coins/map` lädt die aktuellen Werte aller konfigurierten Coins neu.
-2. BTC sowie die für diesen Lauf analysierten Coins erhalten jeweils eine neue 42-Tage-Historie.
-3. Volumentrend, Kurzbewegung, 24h/7d, Stärke gegen BTC, Druck, aktueller Zeitblock und Wochentage werden vollständig neu berechnet.
-4. Es wird keine Ergebnis- oder History-Datei aus einem früheren GitHub-Lauf wiederhergestellt.
+## Farben
 
-Damit der kostenlose LCW-Rahmen bei 288 Läufen täglich nicht überschritten wird, werden pro Lauf maximal 30 Coin-Historien frisch geladen:
+- `🟣` außergewöhnlich stark beziehungsweise deutliche positive Volumenspitze
+- `🟢` klar positiv
+- `🔵` leicht positiv
+- `🟡` neutral oder gemischt
+- `🟠` nachlassend beziehungsweise negative Warnstufe
+- `🔴` klar negativ
+- `🟤` unsichere Datenbasis
+- `⚪` keine ausreichenden Daten
+- `⚫` nur in der BTC-Zeile: strenger BTC-Sammelschalter nicht erfüllt
 
-- BTC
-- alle 16 Coins der ersten Gruppe
-- 13 jeweils neu vorselektierte Coins der zweiten Gruppe
+### Warum kann `🟤` erscheinen?
 
-Die Vorselektion der zweiten Gruppe wird ebenfalls bei jedem Lauf mit aktuellen LCW-Werten neu erstellt: ungefähr die stärksten BUY- und SELL-Kandidaten. Dadurch kann die Auswahl von Lauf zu Lauf wechseln. Mit dem einen gemeinsamen `/coins/map`-Abruf ergeben sich regulär 31 API-Aufrufe pro Lauf beziehungsweise 8.928 pro Tag.
+`🟤` wird verwendet, wenn Werte vorhanden sind, ihre Aussagekraft aber eingeschränkt ist. Typische Gründe:
 
-## Anzeigeumfang
+- das aktuelle 24h-Volumen liegt unter dem in `config.json` gesetzten Mindestwert;
+- ein Volumenwert ist null, unplausibel oder zeigt einen extremen Sprung, der eher auf einen LCW-/Symbolwechsel oder eine Datenstörung hindeutet;
+- der Coin ist so wenig liquide, dass kleine Einzelbewegungen das Ergebnis stark verzerren können.
 
-Je Coin-Gruppe werden pro Richtung normalerweise drei bis sechs Coins dargestellt:
+Der Coin kann trotzdem unter den Top 8 erscheinen, wird bei der Sortierung aber abgewertet.
 
-- klare Signale zuerst
-- danach bei Bedarf die stärksten Beobachtungssignale
-- maximal sechs BUY- und sechs SELL-Zeilen pro Gruppe
+### Warum kann `⚪` erscheinen?
 
-Falls der Markt in einer Richtung keine ausreichend brauchbaren Kandidaten liefert, werden nicht künstlich drei falsche Empfehlungen erzeugt.
+`⚪` bedeutet, dass keine belastbare Berechnung möglich war. Typische Gründe:
 
-## Farben und Kürzel
+- in den ersten 10, 20 oder 60 Minuten nach der Einrichtung existiert der benötigte ältere Snapshot noch nicht;
+- ein Cloudflare-Cron-Lauf oder LCW-Abruf ist ausgefallen;
+- `CF_STATE_URL` oder `CF_STATE_KEY` fehlt beziehungsweise ist falsch;
+- LCW hat für diesen Coin oder Zeitpunkt keinen passenden Wert geliefert.
 
-### Zeilenanfang
+Der Cloudflare Worker sammelt auch bei `10 Min`, `30 Min` oder `Pause` weiterhin alle fünf Minuten Snapshots. Dadurch bleiben V10/20/60 aktuell.
 
-- `🟢▲` = klares BUY-Signal; alle Pflichtfilter sind erfüllt
-- `🔴▼` = klares SELL-Signal; alle Pflichtfilter sind erfüllt
-- `🟡▲` = stärkster BUY-Beobachtungskandidat, aber noch kein klares Signal
-- `🟡▼` = stärkster SELL-Beobachtungskandidat, aber noch kein klares Signal
-- `₿` = BTC-Referenz
+## Auswahl der acht Coins
 
-### X/Y
+Alle Coins des bisherigen Pools werden bei jedem GitHub-Lauf frisch über `/coins/map` geladen. Die Auffälligkeit berücksichtigt insbesondere:
 
-- Bei Altcoins: `X/8` = erfüllte Bedingungen von acht geprüften Bereichen
-- Bei BTC: `X/6` = sechs anwendbare Bedingungen; die beiden BTC-gegen-BTC-Bedingungen entfallen
+- absolute Kursbewegungen über 10/20/60 Minuten;
+- Stärke und Veränderung des Volumentrends über 10/20/60 Minuten;
+- kurzfristige Abweichung von BTC;
+- bestätigten positiven oder negativen Druck;
+- ergänzend 7-Tage-Bewegung.
 
-Die acht Altcoin-Bereiche sind:
+Danach werden exakt die acht höchsten Auffälligkeitswerte gewählt. Nur falls LCW weniger als acht Pool-Coins auflösen kann, erscheinen entsprechend weniger.
 
-1. Kurs 24h
-2. Kurs 7d
-3. Volumentrend 24h
-4. Volumentrend 7d
-5. Stärke gegen BTC 24h
-6. Stärke gegen BTC 7d
-7. Druck `P`
-8. aktueller Zeitblock `N`
+## Cloudflare-Worker aktualisieren
 
-### Farbstufen
+### 1. KV-Namespace anlegen und verbinden
 
-- `🟢` = leicht positiv
-- `🟢🟢` = klar positiv
-- `🟢🟢🟢` = stark positiv
-- `🟡` = neutral
-- `🔴` = leicht negativ
-- `🔴🔴` = klar negativ
-- `🔴🔴🔴` = stark negativ
-- `⚪` = nicht ausreichend berechenbar
+Im Cloudflare-Dashboard:
 
-### Felder
+```text
+Workers & Pages → KV → Create namespace
+```
 
-- `24h` = Kursrichtung der letzten 24 Stunden
-- `7d` = Kursrichtung der letzten sieben Tage
-- `vB` = kombinierte Stärke oder Schwäche gegenüber BTC aus 24h und 7d
-- `P` = Kauf-/Verkaufsdruck; berücksichtigt Kurs, frische Volumentrends sowie die jüngste Kurzbewegung
-- `N🟢` = aktueller Wochentag-/Vierstundenblock war historisch eher günstig
-- `N🟡` = aktueller Zeitblock war historisch neutral
-- `N🔴` = aktueller Zeitblock war historisch eher schwach
-- `N🔴⚠` = aktueller Zeitblock war historisch besonders schwach oder riskant
-- `N⚪` = zu wenig passende Zeitdaten
-- `MO/DI/MI/DO/FR/SA/SO` = zwei bis vier historisch stärkste Wochentage
+Beispielname: `crypto-scheduler-state`.
 
-Die Volumentrends werden aus frischen LCW-Historiendaten berechnet, aber aus Platzgründen nicht als eigenes Feld ausgegeben. Sie fließen in `X/8` und `P` ein.
+Danach beim Worker:
 
-## Update im bestehenden GitHub-Repository
+```text
+Settings → Bindings → Add binding → KV Namespace
+Variable name: SCHEDULER_KV
+KV namespace: crypto-scheduler-state
+```
 
-1. ZIP entpacken.
-2. Den Inhalt des Ordners `crypto-signal-monitor` in die oberste Ebene des Repositorys hochladen.
-3. Vorhandene Dateien überschreiben.
-4. **Commit changes** anklicken.
-5. Unter **Actions → Crypto Signal Monitor → Run workflow** zuerst mit `send_discord = false` testen.
-6. Danach einmal mit `send_discord = true` starten.
+Der Variablenname muss exakt `SCHEDULER_KV` sein.
 
-Die vorhandenen Secrets bleiben unverändert:
+### 2. Worker-Secrets
+
+Unter `Settings → Variables and Secrets`:
+
+- vorhandene Werte behalten: `GH_OWNER`, `GH_REPO`, `GH_REF`, `GH_WORKFLOW`, `GH_PAT`, `TEST_KEY`;
+- zusätzlich als Secret eintragen: `LCW_API_KEY`;
+- optional getrennte Schlüssel: `CONTROL_KEY` und `STATE_KEY`.
+
+Wenn `CONTROL_KEY` oder `STATE_KEY` fehlen, verwendet der Worker automatisch den vorhandenen `TEST_KEY`.
+
+### 3. Worker-Code ersetzen
+
+Den Inhalt von `cloudflare-worker.js` vollständig in den Cloudflare-Editor kopieren und **Deploy** drücken.
+
+### 4. Cron ändern
+
+Den alten Cron-Trigger löschen und diesen eintragen:
+
+```cron
+1,6,11,16,21,26,31,36,41,46,51,56 * * * *
+```
+
+Damit läuft der Basis-Worker immer um `:01, :06, :11, :16 …`. Cloudflare-Cron verwendet UTC; für die Minutenfolge ist das unerheblich. Änderungen können einige Minuten benötigen, bis sie aktiv sind.
+
+## Steuerungsseite
+
+Aufrufen:
+
+```text
+https://DEIN-WORKER.DEIN-SUBDOMAIN.workers.dev/control?key=DEIN_TEST_KEY
+```
+
+Schaltflächen:
+
+- `5 Min`: GitHub um `:01, :06, :11, :16 …`
+- `10 Min`: GitHub um `:01, :11, :21, :31, :41, :51`
+- `30 Min`: GitHub um `:01` und `:31`
+- `Pause`: keine automatischen GitHub-Läufe; Snapshots werden weiterhin gesammelt
+- `Jetzt starten`: sofort Snapshot erfassen und GitHub starten
+
+Die Auswahl wird in Workers KV gespeichert und bleibt nach Deployments erhalten.
+
+## Zwei neue GitHub-Secrets
+
+Im GitHub-Repository:
+
+```text
+Settings → Secrets and variables → Actions → New repository secret
+```
+
+Eintragen:
+
+- `CF_STATE_URL` = `https://DEIN-WORKER.DEIN-SUBDOMAIN.workers.dev/state`
+- `CF_STATE_KEY` = dein `STATE_KEY`; falls nicht separat angelegt, derselbe Wert wie `TEST_KEY`
+
+Die bestehenden Secrets bleiben:
 
 - `LCW_API_KEY`
 - `DISCORD_WEBHOOK_URL`
 
-Der Cloudflare Worker und sein Cron-Trigger bleiben unverändert.
+## Repository aktualisieren
 
-### Alte Cache-Dateien
+1. ZIP entpacken.
+2. Den Inhalt des Ordners `crypto-signal-monitor` in die oberste Ebene des Repositorys hochladen.
+3. Vorhandene Dateien überschreiben und die neuen Dateien `state_client.py` und `wrangler.jsonc.example` mit hochladen.
+4. Änderungen committen.
+5. Worker und GitHub-Secrets wie oben einrichten.
+6. Über die Cloudflare-Steuerungsseite `Jetzt starten` testen.
 
-Version 3.0 verwendet sie nicht mehr. Diese alten Dateien können im Repository gelöscht werden, müssen aber nicht gelöscht werden:
+Nach der ersten Einrichtung füllt sich die Volumenanzeige schrittweise:
 
-- `history_store.py`
-- Ordner `state`
-- vorhandene GitHub-Actions-Caches mit dem Namen `lcw-history-v2-*`
+- nach ungefähr 10 Minuten: V10 verfügbar;
+- nach ungefähr 20 Minuten: V10 und V20 verfügbar;
+- nach ungefähr 60 Minuten: alle drei Werte verfügbar.
 
-Die neue `monitor.yml` enthält keine Cache-Schritte mehr.
+## Konfigurierbare Schwellen
 
-## Wichtige Einstellungen in `config.json`
+In `config.json` lassen sich insbesondere ändern:
 
-```json
-{
-  "history_days": 42,
-  "fresh_history_group_limits": [16, 13],
-  "min_per_category": 3,
-  "max_per_category": 6,
-  "watch_threshold": 4,
-  "recommendation_threshold": 6
-}
-```
+- `top_coin_count`: aktuell 8;
+- `minimum_reliable_volume_usd`: Grenze für `🟤`;
+- `price`: Schwellen je 10/20/60 Minuten;
+- `volume`: Schwellen je 10/20/60 Minuten;
+- `btc_no_drop_pct`: maximal tolerierter BTC-Rückgang für den grünen BTC-Sammelschalter.
 
-- `fresh_history_group_limits`: maximale Zahl frisch historisch analysierter Coins je Gruppe
-- `min_per_category`: angestrebte Mindestzahl pro BUY-/SELL-Richtung
-- `max_per_category`: maximale Zahl pro BUY-/SELL-Richtung
-- `watch_threshold`: Mindestpunktzahl für gelbe Beobachtungszeilen
-- `recommendation_threshold`: Mindestpunktzahl für klare grüne/rote Signale; Pflichtfilter gelten zusätzlich
+## Technischer Abrufumfang
 
-## GitHub Actions und Cloudflare
-
-Der Workflow enthält weiterhin keinen GitHub-Cron. Cloudflare löst `monitor.yml` über `workflow_dispatch` aus.
-
-Für `:04, :09, :14, :19 ... :59`:
-
-```cron
-4,9,14,19,24,29,34,39,44,49,54,59 * * * *
-```
-
-## Lokaler Test
-
-```bash
-python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-pip install -r requirements.txt
-set LCW_API_KEY=DEIN_KEY
-python main.py --no-send
-```
-
-## Dateien
-
-- `main.py`: frische Datenabrufe, dynamische Vorauswahl und Ablauf
-- `analysis.py`: Regeln, Farben, Punkte, Zeit-/Wochentaganalyse und Format
-- `lcw_client.py`: Live-Coin-Watch-API ohne Ergebnis-Cache
-- `discord_sender.py`: Discord-Versand und Aufteilung langer Berichte
-- `config.json`: Coins, Limits und Schwellenwerte
-- `.github/workflows/monitor.yml`: externer GitHub-Actions-Start ohne History-Cache
-- `cloudflare-worker.js`: unveränderte Scheduler-Kopie
-- `tests/test_analysis.py`: lokale Funktionstests
+Der Worker benötigt pro fünf Minuten einen gemeinsamen `/coins/map`-Abruf für den gesamten Pool. Jeder tatsächlich gestartete GitHub-Lauf benötigt einen weiteren gemeinsamen `/coins/map`-Abruf sowie frische Historien nur für BTC und die acht ausgewählten Coins. Dadurch bleibt die Zahl der API-Aufrufe deutlich niedriger als bei einer Historienabfrage für den gesamten Pool.
