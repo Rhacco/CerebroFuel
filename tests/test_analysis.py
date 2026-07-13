@@ -1,34 +1,29 @@
-from datetime import datetime, timedelta, timezone
+from __future__ import annotations
+
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from analysis import (
     BLACK,
     BLUE,
-    BROWN,
     GREEN,
-    ORANGE,
     PURPLE,
     RED,
-    WHITE,
+    YELLOW,
     CoinAnalysis,
     PricePoint,
     Seasonality,
     ShortMetrics,
+    abbreviate_code,
     analyze_seasonality,
     btc_gate,
     build_report,
     build_short_metrics,
-    compute_window_changes,
-    delta_to_pct,
-    signed_color,
+    compute_window_changes_from_history,
 )
-from discord_sender import split_report
 
 
 CONFIG = {
-    "snapshot_tolerance_minutes": 7,
-    "minimum_reliable_volume_usd": 500_000,
-    "maximum_plausible_volume_jump_pct": 500,
     "price": {
         "10": {"light": 0.10, "clear": 0.30, "strong": 0.80},
         "20": {"light": 0.15, "clear": 0.50, "strong": 1.20},
@@ -42,164 +37,147 @@ CONFIG = {
     "relative_light_pct": 0.12,
     "relative_clear_pct": 0.40,
     "relative_strong_pct": 1.20,
+    "minimum_reliable_volume_usd": 500_000,
+    "minimum_short_history_points": 4,
+    "maximum_plausible_volume_jump_pct": 500,
     "btc_no_drop_pct": {"10": -0.10, "20": -0.15, "60": -0.25},
 }
 
 
-def make_snapshots(now_ms, code="BTC", rate=100.0, volume=1_000_000.0):
-    result = []
-    for minutes, factor, vol_factor in [(60, 0.98, 0.97), (20, 0.99, 0.985), (10, 0.995, 0.995)]:
-        result.append(
-            {
-                "ts": now_ms - minutes * 60_000,
-                "coins": {code: {"rate": rate * factor, "volume": volume * vol_factor}},
-            }
-        )
-    return result
-
-
-def metrics(color=GREEN, direction="▲", count=6, gate=False):
-    return ShortMetrics(
-        price_changes={10: 0.4, 20: 0.7, 60: 1.2},
-        volume_changes={10: 0.3, 20: 0.6, 60: 1.0},
-        volume_colors={10: GREEN, 20: GREEN, 60: GREEN},
-        relative_short_pct=0.5,
-        relative_color=GREEN,
-        pressure_score=1.5,
-        pressure_color=color,
-        buy_count=count if direction == "▲" else 1,
-        sell_count=count if direction == "▼" else 1,
-        direction=direction,
-        signal_color=color,
-        anomaly_score=10,
-        data_quality="good",
-    )
-
-
 class AnalysisTests(unittest.TestCase):
-    def test_delta_multiplier(self):
-        self.assertAlmostEqual(delta_to_pct(1.08), 8.0)
-        self.assertAlmostEqual(delta_to_pct(0.95), -5.0)
+    def test_abbreviations_are_at_most_three_chars(self) -> None:
+        self.assertEqual(abbreviate_code("ETH"), "ETH")
+        self.assertEqual(abbreviate_code("DOGE"), "DGE")
+        self.assertEqual(abbreviate_code("HBAR"), "HBR")
+        self.assertEqual(abbreviate_code("RENDER"), "RND")
+        self.assertEqual(abbreviate_code("FARTCOIN"), "FRT")
+        self.assertEqual(abbreviate_code("W"), "W")
 
-    def test_color_scale(self):
-        self.assertEqual(signed_color(2, light=0.1, clear=0.5, strong=1.5), PURPLE)
-        self.assertEqual(signed_color(0.7, light=0.1, clear=0.5, strong=1.5), GREEN)
-        self.assertEqual(signed_color(0.2, light=0.1, clear=0.5, strong=1.5), BLUE)
-        self.assertEqual(signed_color(-0.2, light=0.1, clear=0.5, strong=1.5), ORANGE)
-        self.assertEqual(signed_color(-0.7, light=0.1, clear=0.5, strong=1.5), RED)
-        self.assertEqual(signed_color(0.7, light=0.1, clear=0.5, strong=1.5, uncertain=True), BROWN)
-        self.assertEqual(signed_color(None, light=0.1, clear=0.5, strong=1.5), WHITE)
-
-    def test_window_changes(self):
-        now_ms = 2_000_000_000_000
-        snapshots = make_snapshots(now_ms)
-        prices, volumes = compute_window_changes(
-            api_code="BTC",
-            current_rate=100,
-            current_volume=1_000_000,
-            snapshots=snapshots,
-            now_ms=now_ms,
-            tolerance_minutes=7,
+    def test_short_history_calculates_all_windows(self) -> None:
+        now = 1_800_000_000_000
+        history = [
+            PricePoint(now - 60 * 60_000, 100.0, 1_000_000.0),
+            PricePoint(now - 20 * 60_000, 101.0, 1_010_000.0),
+            PricePoint(now - 10 * 60_000, 102.0, 1_020_000.0),
+        ]
+        price, volume = compute_window_changes_from_history(
+            current_rate=103.0,
+            current_volume=1_030_000.0,
+            history=history,
+            now_ms=now,
         )
-        self.assertGreater(prices[10], 0)
-        self.assertGreater(volumes[60], 0)
+        self.assertTrue(all(price[window] is not None for window in (10, 20, 60)))
+        self.assertTrue(all(volume[window] is not None for window in (10, 20, 60)))
+        self.assertGreater(price[10], 0)
+        self.assertGreater(volume[60], 0)
 
-    def test_btc_gate_green_only_when_all_windows_confirm(self):
-        now_ms = 2_000_000_000_000
-        current = {"rate": 100, "volume": 1_000_000, "delta": {"week": 1.02}}
-        short = build_short_metrics(
-            api_code="BTC",
-            current=current,
-            snapshots=make_snapshots(now_ms),
-            now_ms=now_ms,
-            btc_price_changes=None,
-            config=CONFIG,
-            is_reference=True,
+    def test_btc_gate_requires_rising_volume_and_no_drop(self) -> None:
+        short = ShortMetrics(
+            price_changes={10: 0.1, 20: 0.2, 60: 0.4},
+            volume_changes={10: 0.3, 20: 0.5, 60: 1.0},
+            volume_colors={10: GREEN, 20: GREEN, 60: PURPLE},
+            relative_short_pct=0.0,
+            relative_color=YELLOW,
+            pressure_score=1.0,
+            pressure_color=GREEN,
+            buy_count=5,
+            sell_count=0,
+            direction="▲",
+            signal_color=GREEN,
+            anomaly_score=10.0,
+            data_quality="good",
         )
         self.assertTrue(btc_gate(short, CONFIG))
-        short.volume_colors[20] = BLUE
+        short.volume_colors[20] = YELLOW
         self.assertFalse(btc_gate(short, CONFIG))
 
-    def test_insufficient_snapshots_are_white(self):
-        now_ms = 2_000_000_000_000
-        current = {"rate": 100, "volume": 1_000_000, "delta": {"week": 1.02}}
-        short = build_short_metrics(
-            api_code="BTC",
-            current=current,
-            snapshots=[],
-            now_ms=now_ms,
-            btc_price_changes=None,
-            config=CONFIG,
-            is_reference=True,
+    def test_adaptive_seasonality_never_returns_question_mark(self) -> None:
+        now = datetime(2026, 7, 13, 12, tzinfo=timezone.utc)
+        points = []
+        rate = 100.0
+        for day in range(50):
+            ts = now - timedelta(days=50 - day)
+            rate *= 1.002 if ts.weekday() in (1, 3) else 0.999
+            points.append(PricePoint(int(ts.timestamp() * 1000), rate, 1_000_000.0))
+        result = analyze_seasonality(
+            points,
+            now,
+            "Europe/Berlin",
+            block_hours=4,
+            min_samples=3,
+            minimum_observations=20,
         )
-        self.assertEqual(short.data_quality, "insufficient")
-        self.assertEqual(short.signal_color, WHITE)
-        self.assertTrue(all(value == WHITE for value in short.volume_colors.values()))
+        self.assertNotEqual(result.current, "?")
+        self.assertGreaterEqual(len(result.best_weekdays), 2)
 
-    def test_low_volume_is_brown(self):
-        now_ms = 2_000_000_000_000
-        current = {"rate": 100, "volume": 100_000, "delta": {"week": 1.02}}
-        short = build_short_metrics(
-            api_code="BTC",
-            current=current,
-            snapshots=make_snapshots(now_ms, volume=100_000),
-            now_ms=now_ms,
-            btc_price_changes=None,
-            config=CONFIG,
-            is_reference=True,
-        )
-        self.assertEqual(short.data_quality, "uncertain")
-        self.assertEqual(short.signal_color, BROWN)
-
-    def test_time_data_insufficient(self):
-        now = datetime.now(timezone.utc)
-        points = [
-            PricePoint(int((now - timedelta(hours=i)).timestamp() * 1000), 100 + i, 1000)
-            for i in range(5)
+    def test_fresh_short_metrics_do_not_need_kv(self) -> None:
+        now = 1_800_000_000_000
+        history = [
+            PricePoint(now - 60 * 60_000, 100.0, 1_000_000.0),
+            PricePoint(now - 40 * 60_000, 100.5, 1_005_000.0),
+            PricePoint(now - 20 * 60_000, 101.0, 1_010_000.0),
+            PricePoint(now - 10 * 60_000, 101.5, 1_015_000.0),
         ]
-        result = analyze_seasonality(points, now, "Europe/Berlin")
-        self.assertEqual(result.current, "?")
+        current = {
+            "rate": 102.0,
+            "volume": 1_020_000.0,
+            "delta": {"hour": 1.02, "day": 1.04, "week": 1.08},
+        }
+        short = build_short_metrics(
+            current=current,
+            short_history=history,
+            now_ms=now,
+            btc_price_changes=None,
+            config=CONFIG,
+            is_reference=True,
+        )
+        self.assertNotEqual(short.data_quality, "insufficient")
+        self.assertNotIn("⚪", short.volume_colors.values())
 
-    def test_report_is_exactly_btc_plus_eight_and_compact(self):
+    def test_compact_report_has_no_spaces_or_blank_lines(self) -> None:
         now = datetime(2026, 7, 13, 12, 1, tzinfo=timezone.utc)
-        reference = CoinAnalysis(
+        short = ShortMetrics(
+            price_changes={10: 0.2, 20: 0.4, 60: 0.8},
+            volume_changes={10: 0.3, 20: 0.5, 60: 1.0},
+            volume_colors={10: GREEN, 20: GREEN, 60: BLUE},
+            relative_short_pct=0.4,
+            relative_color=GREEN,
+            pressure_score=1.2,
+            pressure_color=GREEN,
+            buy_count=6,
+            sell_count=0,
+            direction="▲",
+            signal_color=GREEN,
+            anomaly_score=20.0,
+            data_quality="good",
+        )
+        ref = CoinAnalysis(
             display_code="BTC",
             api_code="BTC",
-            price=100,
-            week_pct=2,
+            price=1.0,
+            week_pct=2.0,
             week_color=BLUE,
-            short=metrics(),
-            seasonality=Seasonality("=", ("DI", "DO"), 200),
+            short=short,
+            seasonality=Seasonality("=", ("DI", "DO"), 100, "weekday"),
             is_reference=True,
-            btc_gate=True,
+            btc_gate=False,
         )
-        coins = []
-        for i in range(8):
-            coins.append(
-                CoinAnalysis(
-                    display_code=f"C{i}",
-                    api_code=f"C{i}",
-                    price=1,
-                    week_pct=2,
-                    week_color=BLUE,
-                    short=metrics(GREEN if i < 4 else RED, "▲" if i < 4 else "▼", 6),
-                    seasonality=Seasonality("+", ("MO", "DI", "DO"), 200),
-                )
-            )
-        report = build_report(reference, coins, generated_at=now, timezone="UTC")
+        coin = CoinAnalysis(
+            display_code="DOGE",
+            api_code="DOGE",
+            price=1.0,
+            week_pct=-2.0,
+            week_color=RED,
+            short=short,
+            seasonality=Seasonality("+", ("MO", "FR"), 100, "weekday"),
+        )
+        report = build_report(ref, [coin], generated_at=now, timezone="UTC")
         lines = report.splitlines()
-        self.assertEqual(len(lines), 9)
-        self.assertTrue(lines[0].startswith("₿12:01 🟢"))
-        self.assertNotIn(" BTC", lines[0])
-        self.assertNotIn("24h", report)
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[0].startswith(BLACK + ":01·6/7▲·7d" + BLUE + "·vB" + BLACK))
+        self.assertTrue(lines[1].startswith(GREEN + "DGE·"))
+        self.assertNotIn(" ", report)
         self.assertNotIn("\n\n", report)
-        self.assertIn("V🟢🟢🟢", report)
-
-    def test_discord_split_has_no_blank_lines(self):
-        text = "\n".join(f"COIN{i} " + "x" * 90 for i in range(30))
-        chunks = split_report(text, 500)
-        self.assertGreater(len(chunks), 1)
-        self.assertTrue(all("\n\n" not in chunk for chunk in chunks))
 
 
 if __name__ == "__main__":
