@@ -10,6 +10,7 @@ from analysis import (
     PURPLE,
     RED,
     YELLOW,
+    ORANGE,
     CoinAnalysis,
     PricePoint,
     Seasonality,
@@ -20,6 +21,7 @@ from analysis import (
     build_report,
     build_short_metrics,
     compute_window_changes_from_history,
+    current_now_signal,
 )
 
 
@@ -41,6 +43,7 @@ CONFIG = {
     "minimum_short_history_points": 4,
     "maximum_plausible_volume_jump_pct": 500,
     "btc_no_drop_pct": {"10": -0.10, "20": -0.15, "60": -0.25},
+    "now_signal": {"light": 0.35, "clear": 1.05, "strong": 2.20},
 }
 
 
@@ -135,6 +138,75 @@ class AnalysisTests(unittest.TestCase):
         self.assertNotEqual(short.data_quality, "insufficient")
         self.assertNotIn("⚪", short.volume_colors.values())
 
+    def test_now_signal_distinguishes_demand_and_selling_pressure(self) -> None:
+        neutral_season = Seasonality(
+            "=", ("SA", "MO"), 100, "weekday", current_score=0.0, current_confidence=0.8
+        )
+        stable_volume_spike = ShortMetrics(
+            price_changes={10: 0.01, 20: 0.01, 60: 0.01},
+            volume_changes={10: 1.0, 20: 2.0, 60: 4.0},
+            volume_colors={10: PURPLE, 20: PURPLE, 60: PURPLE},
+            relative_short_pct=0.0, relative_color=YELLOW,
+            pressure_score=0.0, pressure_color=YELLOW,
+            buy_count=3, sell_count=0, direction="▲", signal_color=GREEN,
+            anomaly_score=10.0, data_quality="good",
+        )
+        score_up, color_up = current_now_signal(
+            stable_volume_spike, neutral_season, CONFIG, is_reference=False
+        )
+        self.assertEqual(color_up, PURPLE)
+        self.assertGreater(score_up or 0.0, 2.2)
+
+        falling_on_volume = ShortMetrics(
+            price_changes={10: -0.4, 20: -0.7, 60: -1.5},
+            volume_changes={10: 0.3, 20: 0.5, 60: 1.0},
+            volume_colors={10: GREEN, 20: GREEN, 60: GREEN},
+            relative_short_pct=-0.8, relative_color=RED,
+            pressure_score=-2.0, pressure_color=RED,
+            buy_count=0, sell_count=7, direction="▼", signal_color=RED,
+            anomaly_score=20.0, data_quality="good",
+        )
+        score_down, color_down = current_now_signal(
+            falling_on_volume, neutral_season, CONFIG, is_reference=False
+        )
+        self.assertEqual(color_down, RED)
+        self.assertLess(score_down or 0.0, -1.05)
+
+    def test_report_sorts_strictly_by_x_of_8(self) -> None:
+        now = datetime(2026, 7, 13, 12, 1, tzinfo=timezone.utc)
+        def make_short(count: int, code_color: str) -> ShortMetrics:
+            return ShortMetrics(
+                price_changes={10: 0.2, 20: 0.4, 60: 0.8},
+                volume_changes={10: 0.3, 20: 0.5, 60: 1.0},
+                volume_colors={10: GREEN, 20: GREEN, 60: BLUE},
+                relative_short_pct=0.4, relative_color=GREEN,
+                pressure_score=1.2, pressure_color=GREEN,
+                buy_count=count, sell_count=0, direction="▲", signal_color=code_color,
+                anomaly_score=float(count), data_quality="good",
+            )
+        ref = CoinAnalysis(
+            "BTC", "BTC", 1.0, 2.0, BLUE, make_short(5, GREEN),
+            Seasonality("=", ("SA", "MO"), 100, "weekday"),
+            now_color=YELLOW, is_reference=True, btc_gate=True,
+        )
+        low = CoinAnalysis(
+            "DOGE", "DOGE", 1.0, 0.0, YELLOW, make_short(5, GREEN),
+            Seasonality("=", ("MO", "FR"), 100, "weekday"), now_color=YELLOW,
+        )
+        high = CoinAnalysis(
+            "ETH", "ETH", 1.0, 0.0, YELLOW, make_short(8, PURPLE),
+            Seasonality("=", ("SA", "DI"), 100, "weekday"), now_color=GREEN,
+        )
+        mid = CoinAnalysis(
+            "SOL", "SOL", 1.0, 0.0, YELLOW, make_short(7, GREEN),
+            Seasonality("=", ("SO", "MI"), 100, "weekday"), now_color=BLUE,
+        )
+        lines = build_report(ref, [low, high, mid], generated_at=now, timezone="UTC").splitlines()
+        self.assertIn("ETH8/8", lines[1])
+        self.assertIn("SOL7/8", lines[2])
+        self.assertIn("DGE5/8", lines[3])
+        self.assertTrue(lines[1].endswith("SADI"))
+
     def test_compact_report_has_only_one_space_after_reference_time(self) -> None:
         now = datetime(2026, 7, 13, 12, 1, tzinfo=timezone.utc)
         short = ShortMetrics(
@@ -175,7 +247,7 @@ class AnalysisTests(unittest.TestCase):
         report = build_report(ref, [coin], generated_at=now, timezone="UTC")
         lines = report.splitlines()
         self.assertEqual(len(lines), 2)
-        self.assertEqual(lines[0], BLACK + ":01 6/7▲7" + BLUE + "B" + BLACK + "P" + GREEN + "V" + GREEN + GREEN + BLUE + "N" + YELLOW + "DIDO")
+        self.assertEqual(lines[0], BLACK + BLACK + ":01 6/7▲7" + BLUE + "B" + BLACK + "P" + GREEN + "V" + GREEN + GREEN + BLUE + "N" + YELLOW + "DIDO")
         self.assertTrue(lines[1].startswith(GREEN + "DGE6/8▲7"))
         self.assertEqual(report.count(" "), 1)
         self.assertNotIn("·", report)

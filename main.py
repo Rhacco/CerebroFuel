@@ -1,4 +1,4 @@
-"""Entry point for crypto-signal-monitor v3.2."""
+"""Entry point for crypto-signal-monitor v3.2.2."""
 
 from __future__ import annotations
 
@@ -276,7 +276,7 @@ def run() -> int:
     (output_dir / "latest_analysis.json").write_text(
         json.dumps(
             {
-                "version": "3.2",
+                "version": "3.2.2",
                 "generated_at": now.isoformat(),
                 "reference": analysis_to_dict(reference_analysis),
                 "top_coins": [analysis_to_dict(item) for item in top_analyses],
