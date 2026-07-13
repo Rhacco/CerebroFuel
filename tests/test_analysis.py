@@ -108,7 +108,8 @@ class AnalysisTests(unittest.TestCase):
             minimum_observations=20,
         )
         self.assertNotEqual(result.current, "?")
-        self.assertGreaterEqual(len(result.best_weekdays), 2)
+        self.assertGreaterEqual(len(result.best_weekdays), 1)
+        self.assertLessEqual(len(result.best_weekdays), 2)
 
     def test_fresh_short_metrics_do_not_need_kv(self) -> None:
         now = 1_800_000_000_000
@@ -134,7 +135,7 @@ class AnalysisTests(unittest.TestCase):
         self.assertNotEqual(short.data_quality, "insufficient")
         self.assertNotIn("⚪", short.volume_colors.values())
 
-    def test_compact_report_has_no_spaces_or_blank_lines(self) -> None:
+    def test_compact_report_has_only_one_space_after_reference_time(self) -> None:
         now = datetime(2026, 7, 13, 12, 1, tzinfo=timezone.utc)
         short = ShortMetrics(
             price_changes={10: 0.2, 20: 0.4, 60: 0.8},
@@ -174,9 +175,11 @@ class AnalysisTests(unittest.TestCase):
         report = build_report(ref, [coin], generated_at=now, timezone="UTC")
         lines = report.splitlines()
         self.assertEqual(len(lines), 2)
-        self.assertTrue(lines[0].startswith(BLACK + ":01·6/7▲·7d" + BLUE + "·vB" + BLACK))
-        self.assertTrue(lines[1].startswith(GREEN + "DGE·"))
-        self.assertNotIn(" ", report)
+        self.assertEqual(lines[0], BLACK + ":01 6/7▲7" + BLUE + "B" + BLACK + "P" + GREEN + "V" + GREEN + GREEN + BLUE + "N" + YELLOW + "DIDO")
+        self.assertTrue(lines[1].startswith(GREEN + "DGE6/8▲7"))
+        self.assertEqual(report.count(" "), 1)
+        self.assertNotIn("·", report)
+        self.assertNotIn("/" + "".join(("DI", "DO")), report)
         self.assertNotIn("\n\n", report)
 
 

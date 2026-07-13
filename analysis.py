@@ -1,4 +1,4 @@
-"""Deterministic short-term crypto anomaly analysis for Discord (v3.2)."""
+"""Deterministic short-term crypto anomaly analysis for Discord (v3.2.1)."""
 
 from __future__ import annotations
 
@@ -587,11 +587,12 @@ def analyze_seasonality(
     if ranked:
         scores = [quality(eligible[weekday]) for weekday in ranked]
         best_score = scores[0]
-        take = min(2, len(ranked))
-        if len(ranked) >= 3 and scores[2] >= best_score * 0.60:
-            take = 3
-        if len(ranked) >= 4 and scores[3] >= best_score * 0.42:
-            take = 4
+        take = 1
+        if len(ranked) >= 2:
+            second_score = scores[1]
+            # Nur einen zweiten Tag anzeigen, wenn er dem besten Tag klar nahekommt.
+            if best_score > 0 and second_score >= best_score * 0.65:
+                take = 2
         best_days = [DAY_NAMES[weekday] for weekday in ranked[:take]]
 
     local_now = now.astimezone(ZoneInfo(timezone))
@@ -682,24 +683,21 @@ def format_line(item: CoinAnalysis, *, generated_at: datetime, timezone: str) ->
     denominator = 7 if item.is_reference else 8
     volumes = "".join(item.short.volume_colors.get(window, WHITE) for window in WINDOWS)
     count = strength_count(item)
-    weekday_suffix = (
-        "·" + "/".join(item.seasonality.best_weekdays)
-        if item.seasonality.best_weekdays
-        else ""
-    )
+    # Maximal zwei stärkste Tage, ohne Trennzeichen: z. B. DIDO oder FR.
+    weekday_suffix = "".join(item.seasonality.best_weekdays[:2])
     if item.is_reference:
         minute_text = generated_at.astimezone(ZoneInfo(timezone)).strftime(":%M")
         market_gate = GREEN if item.btc_gate else BLACK
         return (
-            f"{market_gate}{minute_text}·{count}/{denominator}{item.short.direction}·"
-            f"7d{item.week_color}·vB{market_gate}·P{item.short.pressure_color}·"
-            f"V{volumes}·N{time_color(item.seasonality.current)}{weekday_suffix}"
+            f"{market_gate}{minute_text} {count}/{denominator}{item.short.direction}"
+            f"7{item.week_color}B{market_gate}P{item.short.pressure_color}"
+            f"V{volumes}N{time_color(item.seasonality.current)}{weekday_suffix}"
         )
     code = abbreviate_code(item.display_code)
     return (
-        f"{item.short.signal_color}{code}·{count}/{denominator}{item.short.direction}·"
-        f"7d{item.week_color}·vB{item.short.relative_color}·"
-        f"P{item.short.pressure_color}·V{volumes}·"
+        f"{item.short.signal_color}{code}{count}/{denominator}{item.short.direction}"
+        f"7{item.week_color}B{item.short.relative_color}"
+        f"P{item.short.pressure_color}V{volumes}"
         f"N{time_color(item.seasonality.current)}{weekday_suffix}"
     )
 
