@@ -1,15 +1,102 @@
 {
   "reference_coin": "BTC",
-  "coins": ["HBAR", "UNI"],
+  "groups": [
+    {
+      "coins": [
+        "ETH",
+        "BNB",
+        "XRP",
+        "SOL",
+        "DOGE",
+        "XLM",
+        "ADA",
+        "HBAR",
+        "SUI",
+        "TAO",
+        "UNI",
+        "PEPE",
+        "RENDER",
+        {
+          "display": "TRUMP",
+          "codes": [
+            "_______________________________TRUMP",
+            "TRUMP"
+          ]
+        },
+        "BONK",
+        "WIF"
+      ]
+    },
+    {
+      "coins": [
+        {
+          "display": "MEGA",
+          "codes": [
+            "__________________MEGA",
+            "MEGA"
+          ]
+        },
+        "W",
+        "KMNO",
+        {
+          "display": "ZKSYNC",
+          "codes": [
+            "ZK",
+            "ZKSYNC"
+          ]
+        },
+        "APE",
+        "FARTCOIN",
+        {
+          "display": "XPL",
+          "codes": [
+            "_XPL",
+            "XPL"
+          ]
+        },
+        "OP",
+        "LDO",
+        "PYTH",
+        "JTO",
+        "CRV",
+        "SEI",
+        "ETHFI",
+        "FET",
+        "TIA",
+        "INJ",
+        "PUMP",
+        "MORPHO",
+        {
+          "display": "WLD",
+          "codes": [
+            "__WLD",
+            "WLD"
+          ]
+        },
+        "DOT",
+        "AAVE",
+        "ONDO",
+        "WLFI",
+        "NEAR",
+        "BCH",
+        {
+          "display": "HYPE",
+          "codes": [
+            "______HYPE",
+            "HYPE"
+          ]
+        }
+      ]
+    }
+  ],
   "currency": "USD",
   "timezone": "Europe/Berlin",
-  "history_days": 42,
+  "history_days": 90,
+  "history_refresh_hours": 6,
+  "history_parallel_requests": 6,
   "time_block_hours": 4,
-  "seasonality_min_samples": 3,
+  "seasonality_min_samples": 4,
+  "recommendation_threshold": 6,
   "request_timeout_seconds": 30,
-  "discord_username": "Krypto-Monitor",
-  "signal_thresholds": {
-    "entry": 3.0,
-    "exit": -2.5
-  }
+  "discord_username": "Krypto-Monitor"
 }

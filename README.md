@@ -1,136 +1,141 @@
-# Krypto-Signal-Monitor – Version 1.1
+# Krypto-Signal-Monitor – Version 2.0
 
-Automatischer 30-Minuten-Bericht für **HBAR** und **UNI**, jeweils gegen **Bitcoin**. GitHub Actions berechnet den Bericht und sendet ihn über einen Discord-Webhook.
+Regelbasierter BUY/SELL-Monitor für BTC und zwei konfigurierbare Coin-Gruppen. Cloudflare löst alle fünf Minuten einen öffentlichen GitHub-Actions-Workflow aus. Das Ergebnis wird ohne Überschriften, Leerzeilen oder Fußnote kompakt an Discord gesendet.
 
-## Änderungen in Version 1.1
-
-- Trend-Prozentwerte in Discord wurden durch `+`, `++`, `+++`, `=`, `-`, `--`, `---` ersetzt.
-- `TZ` wurde durch das verständlichere `Jetzt` ersetzt.
-- Statt `WT>WE` wird nur noch der stärkste Wochentag als `Top:DI` angezeigt.
-- Das unklare Wort „Lernphase“ wurde entfernt.
-- Wenn die API nicht genug brauchbare Zeitdaten liefert, erscheint ausdrücklich `Zeitdaten:zu wenig`. Dann wird kein Zeitmuster geraten.
-- Die genauen Prozentwerte bleiben weiterhin in `output/latest_analysis.json` erhalten.
-
-## Discord-Format
+## Beispielausgabe
 
 ```text
-📊 12.07 21:37 | BTC 24h+ 7d- | Markt→
-HBAR $0.1235 | 24h++ 7d+ | vsBTC ++/+ | Druck++ Comeback+ | Jetzt+ Top:DI | 🟢EIN
-UNI $7.432 | 24h- 7d= | vsBTC --/+ | Druck- Comeback? | Jetzt⚠ Top:MO | 🟡WARTEN
-+/++/+++ = leicht/klar/stark · Zeitbasis 42T · autom. technisches Signal · keine Anlageberatung · LCW
+BTC · 5/8▲ · 24h+ · 7d= · vB= · P+ · N= · DI/DO
+🟢 ETH · 8/8▲ · 24h++ · 7d+++ · vB++ · P+++ · N+ · DI/DO/FR
+🟢 SOL · 7/8▲ · 24h++ · 7d+ · vB+++ · P++ · N+ · MO/DI/DO
+🔴 DOGE · 7/8▼ · 24h-- · 7d- · vB--- · P--- · N⚠ · SA/SO
+🟢 HYPE · 8/8▲ · 24h+++ · 7d++ · vB+++ · P+++ · N+ · DI/MI/DO
+🔴 TIA · 6/8▼ · 24h- · 7d-- · vB--- · P-- · N- · MO/SA
 ```
 
-Die Reihenfolge bei `vsBTC` ist immer **24 Stunden / 7 Tage**.
+Die tatsächliche Ausgabe enthält nur Coins mit einem klaren BUY- oder SELL-Signal. BTC steht immer als Referenz in der ersten Zeile.
 
-## Bedeutung der kompakten Angaben
+## Kürzel
 
-- `24h++`: in 24 Stunden klar positiv
-- `7d---`: in 7 Tagen stark negativ
-- `vsBTC ++/+`: über 24 Stunden klar und über 7 Tage leicht stärker als Bitcoin
-- `Druck++`: klarer Kauf-/Nachfragedruck aus Kursrichtung und relativem Volumen
-- `Druck--`: klarer Verkaufsdruck
-- `Comeback+`: Erholung innerhalb der letzten 24 Stunden
-- `Jetzt+`: der aktuelle Wochentag-/4-Stunden-Block war historisch eher günstig
-- `Jetzt=`: historisch neutral
-- `Jetzt⚠`: historisch eher schwach oder riskant
-- `Top:DI`: Dienstag war im betrachteten Zeitraum der stärkste Wochentag
-- `Zeitdaten:zu wenig`: weniger als 20 brauchbare historische Bewegungen; das Programm gibt bewusst keine Zeitbewertung aus
+- `X/8▲`: X von 8 BUY-Bedingungen sind erfüllt.
+- `X/8▼`: X von 8 SELL-Bedingungen sind erfüllt.
+- `X/8=`: BUY und SELL sind gleich stark; dies kann praktisch nur bei BTC vorkommen.
+- `24h`: Kursrichtung der letzten 24 Stunden.
+- `7d`: Kursrichtung der letzten sieben Tage.
+- `vB`: kombinierte relative Stärke oder Schwäche gegenüber Bitcoin aus 24h und 7d.
+- `P`: Kauf- oder Verkaufsdruck aus Kursrichtung und LCW-Volumentrend.
+- `N+`: aktueller Wochentag-/4-Stunden-Block war in den letzten 90 Tagen eher günstig.
+- `N=`: aktueller Zeitblock war historisch neutral.
+- `N-`: aktueller Zeitblock war historisch eher schwach.
+- `N⚠`: aktueller Zeitblock war historisch deutlich schwach oder riskant.
+- `N?`: zu wenig passende Zeitdaten; es wird nichts geraten.
+- `MO/DI/...`: die zwei bis vier historisch stärksten Wochentage für den Coin.
+- `+ / ++ / +++`: leicht / klar / stark positiv.
+- `- / -- / ---`: leicht / klar / stark negativ.
+- `=`: neutral.
+- `?`: nicht genug Daten.
 
-`Zeitdaten:zu wenig` ist **keine Lernphase einer KI**. Bei jedem Lauf werden die letzten 42 Tage neu abgerufen und direkt berechnet. Reichen die Daten nicht aus, wird die Zeitangabe ausgelassen, statt etwas zu schätzen.
+## Die acht Bedingungen
 
-## Was ausgewertet wird
+Für BUY und SELL werden jeweils dieselben acht Bereiche in die passende Richtung geprüft:
 
-- Kursrichtung über 24 Stunden und 7 Tage
-- relative Stärke oder Schwäche gegenüber BTC
-- Nachfrage-/Verkaufsdruck aus Kurs und 24h-Volumen
-- Kurs-Comeback innerhalb der vergangenen 24 Stunden
-- aktueller Wochentag-/4-Stunden-Block aus historischen Daten
-- genau ein stärkster Wochentag
-- festes technisches Signal: `EIN`, `WARTEN` oder `AUS`
+1. Kurs 24h
+2. Kurs 7d
+3. LCW-Volumentrend 24h
+4. LCW-Volumentrend 7d
+5. Stärke gegen BTC 24h
+6. Stärke gegen BTC 7d
+7. Druck `P`
+8. aktueller Zeitblock `N`
 
-Die Signale sind regelbasiert und reproduzierbar. Sie sind keine Finanz- oder Anlageberatung. Eine optische Chart-KI ist noch nicht enthalten.
+Ein Nicht-BTC-Coin wird erst ab `6/8` angezeigt.
+
+### Zusätzliche BUY-Pflichtbedingungen
+
+- LCW-Volumentrend über 24h klar steigend
+- bestätigender 7d-Volumentrend oder Stärke gegen BTC
+- positiver Druck `P`
+- aktueller Zeitblock nicht negativ
+
+### Zusätzliche SELL-Pflichtbedingungen
+
+- LCW-Volumen über 24h steigt, während der Kurs fällt
+- negativer Druck `P`
+- klare Schwäche gegen BTC über 24h oder 7d
+
+Die angezeigten `24h`- und `7d`-Zeichen beschreiben den **Kurs**. Die Volumentrends sind Filter und Bestandteil von `X/8` sowie `P`, werden aber aus Platzgründen nicht als zusätzliches Feld ausgegeben.
+
+## Coin-Reihenfolge
+
+Ohne Überschriften oder Leerzeilen:
+
+1. BTC immer zuerst
+2. klare BUY-Coins der ersten Gruppe
+3. klare SELL-Coins der ersten Gruppe
+4. klare BUY-Coins der zweiten Gruppe
+5. klare SELL-Coins der zweiten Gruppe
+
+Die Gruppen und Coin-Codes stehen in `config.json`. `ZKSYNC` wird angezeigt, aber bei Live Coin Watch mit dem API-Code `ZK` abgefragt.
+
+## API-sparender Betrieb alle fünf Minuten
+
+- Aktuelle Werte aller Coins kommen mit **einem** `/coins/map`-Aufruf je Durchlauf.
+- Historische Daten werden nur alle sechs Stunden neu geladen.
+- Dazwischen stellt GitHub Actions die Historie aus einem Cache wieder her.
+- Die Historie wird auf ungefähr einen Punkt pro Stunde reduziert.
+- Es wird keine KI und keine optische Bildanalyse verwendet.
+
+Damit bleibt die Zahl der Live-Coin-Watch-Abfragen trotz der großen Coin-Liste niedrig.
 
 ## Update im bestehenden Repository
 
-1. ZIP-Datei entpacken.
-2. Den Inhalt des Ordners `crypto-signal-monitor` in die oberste Ebene des bestehenden Repositorys hochladen.
-3. Vorhandene Dateien überschreiben lassen.
+1. ZIP entpacken.
+2. Den kompletten Inhalt des Ordners in die oberste Ebene des Repositorys hochladen.
+3. Vorhandene Dateien überschreiben.
 4. **Commit changes** anklicken.
-5. Unter **Actions → Crypto Signal Monitor → Run workflow** einen manuellen Test starten.
+5. Unter **Actions → Crypto Signal Monitor → Run workflow** zuerst mit `send_discord = false` testen.
+6. Danach einmal mit `send_discord = true` testen.
 
-Deine bestehenden GitHub-Secrets bleiben erhalten:
+Die vorhandenen Secrets bleiben unverändert:
 
 - `LCW_API_KEY`
 - `DISCORD_WEBHOOK_URL`
 
-## Ersteinrichtung
+## GitHub Actions und Cloudflare
 
-### 1. Dateien in GitHub hochladen
+Der Workflow enthält absichtlich **keinen GitHub-Cron** mehr. Er wird nur über `workflow_dispatch` gestartet. Dein Cloudflare Worker kann unverändert weiterhin `monitor.yml` alle fünf Minuten auslösen.
 
-1. ZIP-Datei entpacken.
-2. Im privaten GitHub-Repository **Add file → Upload files** öffnen.
-3. Den gesamten Inhalt des Ordners `crypto-signal-monitor` hineinziehen.
-4. Prüfen, dass `.github/workflows/monitor.yml` vorhanden ist.
-5. **Commit changes** auswählen.
+Für `:04, :09, :14, :19 ... :59` lautet der Cloudflare-Cron:
 
-### 2. GitHub-Secrets
-
-Unter **Settings → Secrets and variables → Actions** müssen diese Repository-Secrets vorhanden sein:
-
-| Name | Inhalt |
-|---|---|
-| `LCW_API_KEY` | API-Key von Live Coin Watch |
-| `DISCORD_WEBHOOK_URL` | vollständige Discord-Webhook-URL |
-
-### 3. Manueller Test
-
-1. **Actions** öffnen.
-2. **Crypto Signal Monitor** auswählen.
-3. **Run workflow** anklicken.
-4. Zunächst `Bericht an Discord senden = false` wählen.
-5. Nach erfolgreichem Lauf erneut mit `true` testen.
-
-## Automatischer Zeitplan
-
-Der Workflow läuft ungefähr um Minute **07 und 37** jeder Stunde:
-
-```yaml
-- cron: "7,37 * * * *"
+```cron
+4,9,14,19,24,29,34,39,44,49,54,59 * * * *
 ```
 
-GitHub kann geplante Läufe gelegentlich etwas verzögern.
+Eine aktuelle Kopie des Workers liegt als `cloudflare-worker.js` bei.
 
-## Coins oder Einstellungen ändern
+## Erster Lauf
 
-Nur `config.json` bearbeiten:
+Der erste Lauf dauert länger, weil für alle Coins die 90-Tage-Historie geladen wird. Danach nutzt das System sechs Stunden lang den GitHub-Actions-Cache und läuft deutlich schneller. Wenn ein einzelner LCW-Code nicht verfügbar ist, wird nur dieser Coin übersprungen; der gesamte Bericht läuft weiter.
+
+## Einstellungen
+
+Wichtige Felder in `config.json`:
 
 ```json
 {
-  "reference_coin": "BTC",
-  "coins": ["HBAR", "UNI"],
-  "currency": "USD",
-  "timezone": "Europe/Berlin",
-  "history_days": 42,
-  "time_block_hours": 4,
-  "seasonality_min_samples": 3,
-  "request_timeout_seconds": 30,
-  "discord_username": "Krypto-Monitor",
-  "signal_thresholds": {
-    "entry": 3.0,
-    "exit": -2.5
-  }
+  "history_days": 90,
+  "history_refresh_hours": 6,
+  "recommendation_threshold": 6,
+  "time_block_hours": 4
 }
 ```
 
-Weitere Coins:
+- `history_days`: Grundlage für Wochentage und Zeitblock.
+- `history_refresh_hours`: Abstand zwischen den umfangreicheren Historienabrufen.
+- `recommendation_threshold`: Mindestanzahl erfüllter BUY-/SELL-Bedingungen.
+- `time_block_hours`: Länge eines Zeitblocks für `N`.
 
-```json
-"coins": ["HBAR", "UNI", "SOL", "XRP"]
-```
-
-## Lokaler Test – optional
-
-Voraussetzung: Python 3.11 oder neuer.
+## Lokaler Test
 
 ```bash
 python -m venv .venv
@@ -141,19 +146,20 @@ set LCW_API_KEY=DEIN_KEY
 python main.py --no-send
 ```
 
-Für einen lokalen Discord-Test zusätzlich:
+Historie unabhängig vom Cache neu laden:
 
 ```bash
-set DISCORD_WEBHOOK_URL=DEINE_WEBHOOK_URL
-python main.py
+python main.py --no-send --force-history-refresh
 ```
 
 ## Dateien
 
-- `main.py`: Ablauf und Dateiausgabe
+- `main.py`: Ablauf, Cache-Entscheidung und Bericht
+- `analysis.py`: Regeln, Zählung, Wochentage und Format
 - `lcw_client.py`: Live-Coin-Watch-API
-- `analysis.py`: Kennzahlen, Zeitmuster und Signallogik
-- `discord_sender.py`: Discord-Versand
-- `config.json`: Coins und veränderbare Einstellungen
-- `.github/workflows/monitor.yml`: GitHub-Actions-Zeitplan
+- `history_store.py`: kompakter History-Cache
+- `discord_sender.py`: Discord-Versand und Aufteilung langer Berichte
+- `config.json`: Coins, Gruppen und Schwellenwerte
+- `.github/workflows/monitor.yml`: externer GitHub-Actions-Start
+- `cloudflare-worker.js`: Scheduler-Kopie
 - `tests/test_analysis.py`: Funktionstests

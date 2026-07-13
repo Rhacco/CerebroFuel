@@ -1,6 +1,6 @@
 __pycache__/
-*.py[cod]
+*.pyc
 .venv/
-.env
-output/*
-!output/.gitkeep
+output/latest_*
+output/history_refreshed.flag
+state/history_cache.json
