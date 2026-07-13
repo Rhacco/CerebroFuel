@@ -91,12 +91,18 @@
   ],
   "currency": "USD",
   "timezone": "Europe/Berlin",
-  "history_days": 90,
-  "history_refresh_hours": 6,
-  "history_parallel_requests": 6,
+  "history_days": 42,
+  "history_parallel_requests": 8,
   "time_block_hours": 4,
   "seasonality_min_samples": 4,
   "recommendation_threshold": 6,
   "request_timeout_seconds": 30,
-  "discord_username": "Krypto-Monitor"
+  "discord_username": "Krypto-Monitor",
+  "fresh_history_group_limits": [
+    16,
+    13
+  ],
+  "min_per_category": 3,
+  "max_per_category": 6,
+  "watch_threshold": 4
 }

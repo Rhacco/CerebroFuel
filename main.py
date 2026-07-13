@@ -1,9 +1,10 @@
-"""Entry point for the crypto signal monitor."""
+"""Entry point for the fresh-data crypto signal monitor."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,7 +21,6 @@ from analysis import (
     normalize_history,
 )
 from discord_sender import send_discord
-from history_store import load_cache, save_cache
 from lcw_client import LiveCoinWatchClient
 
 ROOT = Path(__file__).resolve().parent
@@ -49,7 +49,6 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Kompakter Krypto-BUY/SELL-Monitor")
     parser.add_argument("--config", default=str(ROOT / "config.json"))
     parser.add_argument("--no-send", action="store_true")
-    parser.add_argument("--force-history-refresh", action="store_true")
     return parser.parse_args()
 
 
@@ -95,12 +94,12 @@ def refresh_histories(
     *,
     client: LiveCoinWatchClient,
     codes: list[str],
-    existing: dict[str, list],
     start_ms: int,
     end_ms: int,
     workers: int,
 ) -> tuple[dict[str, list], list[str]]:
-    histories = dict(existing)
+    """Load every selected history freshly; no cross-run result cache is used."""
+    histories: dict[str, list] = {}
     failed: list[str] = []
     with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
         futures = {
@@ -111,11 +110,114 @@ def refresh_histories(
             code = futures[future]
             try:
                 histories[code] = normalize_history(future.result())
-                print(f"Historie aktualisiert: {code} ({len(histories[code])} Punkte)")
+                print(f"Frische Historie: {code} ({len(histories[code])} Punkte)")
             except Exception as exc:
                 failed.append(code)
                 print(f"WARNUNG: Historie {code} fehlgeschlagen: {exc}", file=sys.stderr)
     return histories, failed
+
+
+def _preliminary_scores(
+    current: dict[str, Any],
+    *,
+    btc_day_pct: float,
+    btc_week_pct: float,
+) -> tuple[float, float]:
+    """Cheap fresh preselection using /coins/map before history requests."""
+    delta = current.get("delta") or {}
+    hour = delta_to_pct(delta.get("hour"))
+    day = delta_to_pct(delta.get("day"))
+    week = delta_to_pct(delta.get("week"))
+    rel_day = day - btc_day_pct
+    rel_week = week - btc_week_pct
+
+    buy_conditions = sum(
+        (
+            hour >= 0.10,
+            day >= 0.50,
+            week >= 1.50,
+            rel_day >= 0.50,
+            rel_week >= 1.50,
+        )
+    )
+    sell_conditions = sum(
+        (
+            hour <= -0.10,
+            day <= -0.50,
+            week <= -1.50,
+            rel_day <= -0.50,
+            rel_week <= -1.50,
+        )
+    )
+
+    buy_strength = (
+        buy_conditions * 10.0
+        + max(hour, 0.0) * 2.5
+        + max(day, 0.0) * 1.2
+        + max(week, 0.0) * 0.35
+        + max(rel_day, 0.0) * 1.5
+        + max(rel_week, 0.0) * 0.45
+    )
+    sell_strength = (
+        sell_conditions * 10.0
+        + max(-hour, 0.0) * 2.5
+        + max(-day, 0.0) * 1.2
+        + max(-week, 0.0) * 0.35
+        + max(-rel_day, 0.0) * 1.5
+        + max(-rel_week, 0.0) * 0.45
+    )
+    return buy_strength, sell_strength
+
+
+def select_group_for_history(
+    group: list[tuple[str, str]],
+    current_by_code: dict[str, dict[str, Any]],
+    *,
+    limit: int,
+    btc_day_pct: float,
+    btc_week_pct: float,
+) -> list[tuple[str, str]]:
+    """Select a balanced fresh-history set when a group exceeds its API budget."""
+    if limit <= 0 or len(group) <= limit:
+        return list(group)
+
+    scored: list[tuple[tuple[str, str], float, float]] = []
+    for pair in group:
+        current = current_by_code.get(pair[1])
+        if current is None:
+            continue
+        buy_score, sell_score = _preliminary_scores(
+            current,
+            btc_day_pct=btc_day_pct,
+            btc_week_pct=btc_week_pct,
+        )
+        scored.append((pair, buy_score, sell_score))
+
+    buy_slots = math.ceil(limit / 2)
+    sell_slots = limit - buy_slots
+    selected: list[tuple[str, str]] = []
+    selected_codes: set[str] = set()
+
+    def add(pair: tuple[str, str]) -> None:
+        if pair[1] not in selected_codes and len(selected) < limit:
+            selected.append(pair)
+            selected_codes.add(pair[1])
+
+    for pair, _, _ in sorted(scored, key=lambda row: row[1], reverse=True)[:buy_slots]:
+        add(pair)
+    for pair, _, _ in sorted(scored, key=lambda row: row[2], reverse=True)[:sell_slots]:
+        add(pair)
+
+    for pair, buy_score, sell_score in sorted(
+        scored,
+        key=lambda row: max(row[1], row[2]),
+        reverse=True,
+    ):
+        add(pair)
+        if len(selected) >= limit:
+            break
+
+    return selected
 
 
 def run() -> int:
@@ -131,13 +233,10 @@ def run() -> int:
 
     reference_pair, group_pairs = parse_layout(config)
     all_pairs = [reference_pair, *(pair for group in group_pairs for pair in group)]
-    candidate_codes = list(
-        dict.fromkeys(code for _, codes in all_pairs for code in codes)
-    )
+    candidate_codes = list(dict.fromkeys(code for _, codes in all_pairs for code in codes))
 
     now = datetime.now(timezone.utc)
-    history_days = int(config.get("history_days", 90))
-    refresh_hours = float(config.get("history_refresh_hours", 6))
+    history_days = int(config.get("history_days", 42))
     start_ms = int((now - timedelta(days=history_days)).timestamp() * 1000)
     end_ms = int(now.timestamp() * 1000)
 
@@ -148,7 +247,8 @@ def run() -> int:
     )
 
     print(
-        f"Lade aktuelle Daten für {len(candidate_codes)} LCW-Codes in einem /coins/map-Aufruf ..."
+        f"Lade frische aktuelle Daten für {len(candidate_codes)} LCW-Codes "
+        "in einem /coins/map-Aufruf ..."
     )
     current_by_code = client.get_coins(candidate_codes)
 
@@ -178,59 +278,50 @@ def run() -> int:
             else:
                 resolved_group.append(resolved)
         resolved_groups.append(resolved_group)
-    selected_api_codes = list(
-        dict.fromkeys([reference_api, *(code for group in resolved_groups for _, code in group)])
-    )
+
     if unresolved:
-        print(
-            "WARNUNG: Keine aktuellen LCW-Daten für: " + ", ".join(unresolved),
-            file=sys.stderr,
-        )
-
-    cache_path = ROOT / "state" / "history_cache.json"
-    fetched_at, histories = load_cache(cache_path)
-    cache_age = None if fetched_at is None else now - fetched_at.astimezone(timezone.utc)
-    refresh_due = (
-        args.force_history_refresh
-        or fetched_at is None
-        or cache_age is None
-        or cache_age >= timedelta(hours=refresh_hours)
-    )
-
-    output_dir = ROOT / "output"
-    output_dir.mkdir(exist_ok=True)
-    refresh_flag = output_dir / "history_refreshed.flag"
-    if refresh_flag.exists():
-        refresh_flag.unlink()
-
-    if refresh_due:
-        print(f"Aktualisiere LCW-Historien ({history_days} Tage; Intervall {refresh_hours:g}h) ...")
-        histories, failed_history = refresh_histories(
-            client=client,
-            codes=selected_api_codes,
-            existing=histories,
-            start_ms=start_ms,
-            end_ms=end_ms,
-            workers=int(config.get("history_parallel_requests", 6)),
-        )
-        save_cache(
-            cache_path,
-            fetched_at=now,
-            histories=histories,
-            history_days=history_days,
-        )
-        refresh_flag.write_text("refreshed\n", encoding="utf-8")
-        fetched_at = now
-        if failed_history:
-            print("WARNUNG: Historie nicht aktualisiert für: " + ", ".join(sorted(failed_history)), file=sys.stderr)
-    else:
-        age_hours = cache_age.total_seconds() / 3600 if cache_age else 0
-        print(f"Nutze History-Cache ({age_hours:.1f}h alt).")
+        print("WARNUNG: Keine aktuellen LCW-Daten für: " + ", ".join(unresolved), file=sys.stderr)
 
     reference_current = current_by_code[reference_api]
     reference_delta = reference_current.get("delta") or {}
     btc_day = delta_to_pct(reference_delta.get("day"))
     btc_week = delta_to_pct(reference_delta.get("week"))
+
+    raw_limits = config.get("fresh_history_group_limits", [])
+    if not isinstance(raw_limits, list):
+        raw_limits = []
+    selected_groups: list[list[tuple[str, str]]] = []
+    preselection_omitted: list[str] = []
+    for index, group in enumerate(resolved_groups):
+        limit = int(raw_limits[index]) if index < len(raw_limits) else len(group)
+        selected = select_group_for_history(
+            group,
+            current_by_code,
+            limit=limit,
+            btc_day_pct=btc_day,
+            btc_week_pct=btc_week,
+        )
+        selected_groups.append(selected)
+        selected_codes = {api_code for _, api_code in selected}
+        preselection_omitted.extend(display for display, api_code in group if api_code not in selected_codes)
+
+    history_codes = list(
+        dict.fromkeys(
+            [reference_api, *(api_code for group in selected_groups for _, api_code in group)]
+        )
+    )
+    print(
+        f"Lade für diesen Lauf {len(history_codes)} Historien frisch "
+        f"({history_days} Tage; kein Ergebnis-Cache) ..."
+    )
+    histories, failed_history = refresh_histories(
+        client=client,
+        codes=history_codes,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        workers=int(config.get("history_parallel_requests", 8)),
+    )
+
     common = {
         "btc_day_pct": btc_day,
         "btc_week_pct": btc_week,
@@ -252,7 +343,7 @@ def run() -> int:
 
     grouped_analyses: list[list[CoinAnalysis]] = []
     skipped: list[str] = list(unresolved)
-    for group in resolved_groups:
+    for group in selected_groups:
         analyses: list[CoinAnalysis] = []
         for display, api_code in group:
             current = current_by_code.get(api_code)
@@ -271,17 +362,30 @@ def run() -> int:
             )
         grouped_analyses.append(analyses)
 
-    report = build_report(reference_analysis, grouped_analyses)
+    report = build_report(
+        reference_analysis,
+        grouped_analyses,
+        generated_at=now,
+        timezone=str(config.get("timezone", "Europe/Berlin")),
+        min_per_category=int(config.get("min_per_category", 3)),
+        max_per_category=int(config.get("max_per_category", 6)),
+        watch_threshold=int(config.get("watch_threshold", 4)),
+    )
+
+    output_dir = ROOT / "output"
+    output_dir.mkdir(exist_ok=True)
     (output_dir / "latest_report.txt").write_text(report + "\n", encoding="utf-8")
     (output_dir / "latest_analysis.json").write_text(
         json.dumps(
             {
                 "generated_at": now.isoformat(),
-                "history_fetched_at": fetched_at.isoformat() if fetched_at else None,
+                "fresh_history_codes": history_codes,
                 "reference": analysis_to_dict(reference_analysis),
                 "groups": [
                     [analysis_to_dict(item) for item in group] for group in grouped_analyses
                 ],
+                "preselection_omitted_this_run": preselection_omitted,
+                "history_failures": failed_history,
                 "skipped": skipped,
             },
             indent=2,
@@ -292,6 +396,13 @@ def run() -> int:
     )
 
     print("\n" + report + "\n", flush=True)
+    if preselection_omitted:
+        print(
+            "Nur per frischem /coins/map vorselektiert (nächster Lauf kann wechseln): "
+            + ", ".join(preselection_omitted)
+        )
+    if failed_history:
+        print("Historie fehlgeschlagen für: " + ", ".join(sorted(failed_history)), file=sys.stderr)
     if skipped:
         print("Übersprungen: " + ", ".join(skipped), file=sys.stderr)
 

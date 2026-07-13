@@ -32,6 +32,7 @@ class CoinAnalysis:
     display_code: str
     api_code: str
     price: float
+    short_pct: float
     hour_pct: float
     day_pct: float
     week_pct: float
@@ -51,6 +52,7 @@ class CoinAnalysis:
     eligible: bool
     buy_flags: dict[str, bool]
     sell_flags: dict[str, bool]
+    is_reference: bool = False
 
 
 def delta_to_pct(value: Any) -> float:
@@ -91,9 +93,7 @@ def _median(values: Iterable[float]) -> float | None:
     return statistics.median(cleaned) if cleaned else None
 
 
-def _volumes_between(
-    points: list[PricePoint], start_ms: int, end_ms: int
-) -> list[float]:
+def _volumes_between(points: list[PricePoint], start_ms: int, end_ms: int) -> list[float]:
     return [
         float(point.volume)
         for point in points
@@ -108,10 +108,10 @@ def compute_volume_trends(
     points: list[PricePoint],
     now_ms: int,
 ) -> tuple[float | None, float | None]:
-    """Compare LCW rolling 24h volume with earlier rolling-volume snapshots.
+    """Compare the current rolling 24h volume with fresh historic snapshots.
 
-    24h trend: recent six-hour median versus the 18-30h-old median.
-    7d trend: recent 24h median versus the 6-7-day-old median.
+    24h trend: current/recent six-hour median versus the 18-30h-old median.
+    7d trend: current/recent 24h median versus the 6-7-day-old median.
     """
     if current_volume is None or current_volume <= 0:
         return None, None
@@ -133,6 +133,29 @@ def compute_volume_trends(
         return (recent_med / baseline_med - 1.0) * 100.0
 
     return pct(recent_6h, baseline_24h), pct(recent_24h, baseline_7d)
+
+
+def compute_short_momentum(
+    current_rate: float,
+    points: list[PricePoint],
+    now_ms: int,
+    target_minutes: int = 15,
+) -> float:
+    """Estimate the latest 5-30 minute move from the freshly loaded history."""
+    if current_rate <= 0 or not points:
+        return 0.0
+    target_ms = now_ms - target_minutes * 60_000
+    candidates = [
+        point
+        for point in points
+        if now_ms - 45 * 60_000 <= point.timestamp_ms <= now_ms - 3 * 60_000
+    ]
+    if not candidates:
+        return 0.0
+    previous = min(candidates, key=lambda point: abs(point.timestamp_ms - target_ms))
+    if previous.rate <= 0:
+        return 0.0
+    return (current_rate / previous.rate - 1.0) * 100.0
 
 
 def marks_from_value(
@@ -172,13 +195,32 @@ def mark_level(mark: str) -> int:
     }.get(mark, 0)
 
 
+def colored_mark(mark: str) -> str:
+    return {
+        "+++": "🟢🟢🟢",
+        "++": "🟢🟢",
+        "+": "🟢",
+        "=": "🟡",
+        "-": "🔴",
+        "--": "🔴🔴",
+        "---": "🔴🔴🔴",
+        "?": "⚪",
+    }.get(mark, "⚪")
+
+
+def colored_time(mark: str) -> str:
+    return {
+        "+": "🟢",
+        "=": "🟡",
+        "-": "🔴",
+        "⚠": "🔴⚠",
+        "?": "⚪",
+    }.get(mark, "⚪")
+
+
 def combined_relative_mark(relative_day_pct: float, relative_week_pct: float) -> str:
-    day = mark_level(
-        marks_from_value(relative_day_pct, light=0.5, clear=2.0, strong=5.0)
-    )
-    week = mark_level(
-        marks_from_value(relative_week_pct, light=1.5, clear=5.0, strong=10.0)
-    )
+    day = mark_level(marks_from_value(relative_day_pct, light=0.5, clear=2.0, strong=5.0))
+    week = mark_level(marks_from_value(relative_week_pct, light=1.5, clear=5.0, strong=10.0))
     combined = 0.45 * day + 0.55 * week
     if combined >= 2.35:
         return "+++"
@@ -198,13 +240,14 @@ def combined_relative_mark(relative_day_pct: float, relative_week_pct: float) ->
 def classify_pressure(
     day_pct: float,
     hour_pct: float,
+    short_pct: float,
     volume_24h_pct: float | None,
     volume_7d_pct: float | None,
 ) -> str:
-    """Estimate directional pressure from price direction and volume confirmation."""
+    """Estimate directional pressure from price and fresh volume confirmation."""
     vol24 = volume_24h_pct if volume_24h_pct is not None else 0.0
     vol7 = volume_7d_pct if volume_7d_pct is not None else 0.0
-    direction = day_pct + 0.35 * hour_pct
+    direction = day_pct + 0.35 * hour_pct + 0.90 * short_pct
 
     if direction >= 5.0 and vol24 >= 45 and vol7 >= 20:
         return "+++"
@@ -230,7 +273,7 @@ def _return_observations(
     observations: list[tuple[int, int, float]] = []
     for previous, current in zip(points, points[1:]):
         elapsed_hours = (current.timestamp_ms - previous.timestamp_ms) / 3_600_000
-        if elapsed_hours < 0.5 or elapsed_hours > 3.5 or previous.rate <= 0:
+        if elapsed_hours < 0.4 or elapsed_hours > 4.0 or previous.rate <= 0:
             continue
         raw_return = (current.rate / previous.rate - 1.0) * 100.0
         hourly_return = raw_return / elapsed_hours
@@ -309,12 +352,12 @@ def analyze_seasonality(
     return Seasonality(current_label, tuple(best_days), len(observations))
 
 
-def _direction_from_counts(buy_count: int, sell_count: int) -> tuple[str, str, int]:
+def _direction_from_counts(buy_count: int, sell_count: int) -> tuple[str, str]:
     if buy_count > sell_count:
-        return "▲", "BUY", buy_count
+        return "▲", "BUY"
     if sell_count > buy_count:
-        return "▼", "SELL", sell_count
-    return "=", "NEUTRAL", buy_count
+        return "▼", "SELL"
+    return "=", "NEUTRAL"
 
 
 def analyze_coin(
@@ -340,19 +383,16 @@ def analyze_coin(
     relative_day = 0.0 if is_reference else day_pct - btc_day_pct
     relative_week = 0.0 if is_reference else week_pct - btc_week_pct
     now_ms = int(now.timestamp() * 1000)
+    short_pct = compute_short_momentum(price, history, now_ms)
 
     volume_raw = current.get("volume")
     current_volume = float(volume_raw) if volume_raw not in (None, "") else None
-    volume_24h_pct, volume_7d_pct = compute_volume_trends(
-        current_volume, history, now_ms
-    )
+    volume_24h_pct, volume_7d_pct = compute_volume_trends(current_volume, history, now_ms)
 
     day_mark = marks_from_value(day_pct, light=0.5, clear=2.0, strong=5.0)
     week_mark = marks_from_value(week_pct, light=1.5, clear=5.0, strong=10.0)
-    relative_mark = (
-        "=" if is_reference else combined_relative_mark(relative_day, relative_week)
-    )
-    pressure = classify_pressure(day_pct, hour_pct, volume_24h_pct, volume_7d_pct)
+    relative_mark = "=" if is_reference else combined_relative_mark(relative_day, relative_week)
+    pressure = classify_pressure(day_pct, hour_pct, short_pct, volume_24h_pct, volume_7d_pct)
     seasonality = analyze_seasonality(
         history,
         now,
@@ -364,8 +404,8 @@ def analyze_coin(
     buy_flags = {
         "price_24h": day_pct >= 0.5,
         "price_7d": week_pct >= 1.5,
-        "volume_24h": volume_24h_pct is not None and volume_24h_pct >= 15.0,
-        "volume_7d": volume_7d_pct is not None and volume_7d_pct >= 20.0,
+        "volume_24h": volume_24h_pct is not None and volume_24h_pct >= 12.0,
+        "volume_7d": volume_7d_pct is not None and volume_7d_pct >= 15.0,
         "vs_btc_24h": (not is_reference) and relative_day >= 0.5,
         "vs_btc_7d": (not is_reference) and relative_week >= 1.5,
         "pressure": pressure in {"+", "++", "+++"},
@@ -374,12 +414,8 @@ def analyze_coin(
     sell_flags = {
         "price_24h": day_pct <= -0.5,
         "price_7d": week_pct <= -1.5,
-        "volume_24h": (
-            volume_24h_pct is not None and volume_24h_pct >= 15.0 and day_pct < 0
-        ),
-        "volume_7d": (
-            volume_7d_pct is not None and volume_7d_pct >= 20.0 and week_pct < 0
-        ),
+        "volume_24h": volume_24h_pct is not None and volume_24h_pct >= 12.0 and day_pct < 0,
+        "volume_7d": volume_7d_pct is not None and volume_7d_pct >= 15.0 and week_pct < 0,
         "vs_btc_24h": (not is_reference) and relative_day <= -0.5,
         "vs_btc_7d": (not is_reference) and relative_week <= -1.5,
         "pressure": pressure in {"-", "--", "---"},
@@ -388,7 +424,7 @@ def analyze_coin(
 
     buy_count = sum(buy_flags.values())
     sell_count = sum(sell_flags.values())
-    direction, recommendation, _ = _direction_from_counts(buy_count, sell_count)
+    direction, recommendation = _direction_from_counts(buy_count, sell_count)
 
     if is_reference:
         eligible = True
@@ -414,6 +450,7 @@ def analyze_coin(
         display_code=display_code,
         api_code=api_code,
         price=price,
+        short_pct=short_pct,
         hour_pct=hour_pct,
         day_pct=day_pct,
         week_pct=week_pct,
@@ -433,39 +470,129 @@ def analyze_coin(
         eligible=eligible,
         buy_flags=buy_flags,
         sell_flags=sell_flags,
+        is_reference=is_reference,
     )
 
 
 def _strength_count(item: CoinAnalysis) -> int:
-    return item.buy_count if item.recommendation == "BUY" else item.sell_count
+    if item.recommendation == "BUY":
+        return item.buy_count
+    if item.recommendation == "SELL":
+        return item.sell_count
+    return max(item.buy_count, item.sell_count)
 
 
-def format_line(item: CoinAnalysis, *, reference: bool = False) -> str:
+def _signal_prefix(item: CoinAnalysis, *, reference: bool = False) -> str:
+    if reference:
+        return "₿"
+    if item.recommendation == "BUY":
+        return "🟢▲" if item.eligible else "🟡▲"
+    if item.recommendation == "SELL":
+        return "🔴▼" if item.eligible else "🟡▼"
+    return "🟡="
+
+
+def format_line(
+    item: CoinAnalysis,
+    *,
+    reference: bool = False,
+    generated_at: datetime | None = None,
+    timezone: str = "Europe/Berlin",
+) -> str:
     count = _strength_count(item)
-    prefix = "" if reference else ("🟢 " if item.recommendation == "BUY" else "🔴 ")
+    denominator = 6 if reference else 8
     weekdays = "/".join(item.seasonality.best_weekdays) or "?"
+    code = item.display_code
+    if reference and generated_at is not None:
+        code = f"{code}@{generated_at.astimezone(ZoneInfo(timezone)):%H:%M}"
     return (
-        f"{prefix}{item.display_code} · {count}/8{item.direction} · "
-        f"24h{item.day_mark} · 7d{item.week_mark} · vB{item.relative_mark} · "
-        f"P{item.pressure} · N{item.seasonality.current} · {weekdays}"
+        f"{_signal_prefix(item, reference=reference)} {code} · {count}/{denominator} · "
+        f"24h{colored_mark(item.day_mark)} · 7d{colored_mark(item.week_mark)} · "
+        f"vB{colored_mark(item.relative_mark)} · P{colored_mark(item.pressure)} · "
+        f"N{colored_time(item.seasonality.current)} · {weekdays}"
     )
+
+
+def _sort_buy(item: CoinAnalysis) -> tuple[int, int, int, float, float]:
+    return (
+        1 if item.eligible else 0,
+        item.buy_count,
+        mark_level(item.pressure),
+        item.relative_day_pct,
+        item.short_pct,
+    )
+
+
+def _sort_sell(item: CoinAnalysis) -> tuple[int, int, int, float, float]:
+    return (
+        1 if item.eligible else 0,
+        item.sell_count,
+        -mark_level(item.pressure),
+        -item.relative_day_pct,
+        -item.short_pct,
+    )
+
+
+def _select_category(
+    group: list[CoinAnalysis],
+    recommendation: str,
+    *,
+    min_items: int,
+    max_items: int,
+    watch_threshold: int,
+) -> list[CoinAnalysis]:
+    if recommendation == "BUY":
+        candidates = [
+            item
+            for item in group
+            if item.recommendation == "BUY" and item.buy_count >= watch_threshold
+        ]
+        candidates.sort(key=_sort_buy, reverse=True)
+    else:
+        candidates = [
+            item
+            for item in group
+            if item.recommendation == "SELL" and item.sell_count >= watch_threshold
+        ]
+        candidates.sort(key=_sort_sell, reverse=True)
+
+    clear_count = sum(item.eligible for item in candidates)
+    target = min(max_items, max(min_items, clear_count))
+    return candidates[:target]
 
 
 def build_report(
     reference: CoinAnalysis,
     grouped_analyses: list[list[CoinAnalysis]],
+    *,
+    generated_at: datetime,
+    timezone: str,
+    min_per_category: int = 3,
+    max_per_category: int = 6,
+    watch_threshold: int = 4,
 ) -> str:
-    lines = [format_line(reference, reference=True)]
-    for group in grouped_analyses:
-        buys = sorted(
-            (item for item in group if item.eligible and item.recommendation == "BUY"),
-            key=lambda item: (item.buy_count, mark_level(item.pressure), item.relative_day_pct),
-            reverse=True,
+    lines = [
+        format_line(
+            reference,
+            reference=True,
+            generated_at=generated_at,
+            timezone=timezone,
         )
-        sells = sorted(
-            (item for item in group if item.eligible and item.recommendation == "SELL"),
-            key=lambda item: (item.sell_count, -mark_level(item.pressure), -item.relative_day_pct),
-            reverse=True,
+    ]
+    for group in grouped_analyses:
+        buys = _select_category(
+            group,
+            "BUY",
+            min_items=min_per_category,
+            max_items=max_per_category,
+            watch_threshold=watch_threshold,
+        )
+        sells = _select_category(
+            group,
+            "SELL",
+            min_items=min_per_category,
+            max_items=max_per_category,
+            watch_threshold=watch_threshold,
         )
         lines.extend(format_line(item) for item in buys)
         lines.extend(format_line(item) for item in sells)

@@ -23,14 +23,16 @@ class LiveCoinWatchClient:
         self.headers = {
             "accept": "application/json",
             "content-type": "application/json",
+            "cache-control": "no-cache",
+            "pragma": "no-cache",
             "x-api-key": api_key,
-            "user-agent": "crypto-signal-monitor/2.0",
+            "user-agent": "crypto-signal-monitor/3.0",
         }
 
     def _post(self, endpoint: str, payload: dict[str, Any]) -> Any:
         url = f"{self.BASE_URL}{endpoint}"
         last_error: Exception | None = None
-        for attempt in range(3):
+        for attempt in range(2):
             try:
                 response = requests.post(
                     url,
@@ -45,8 +47,8 @@ class LiveCoinWatchClient:
                 return data
             except (requests.RequestException, ValueError, LiveCoinWatchError) as exc:
                 last_error = exc
-                if attempt < 2:
-                    time.sleep(2**attempt)
+                if attempt == 0:
+                    time.sleep(1.0)
         raise LiveCoinWatchError(f"Fehler bei {endpoint}: {last_error}")
 
     def get_coins(self, codes: list[str]) -> dict[str, dict[str, Any]]:
