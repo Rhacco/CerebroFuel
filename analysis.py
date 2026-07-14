@@ -1,4 +1,4 @@
-"""Deterministic high-confidence crypto extreme analysis for Discord (v3.2.4)."""
+"""Deterministic high-confidence crypto extreme analysis for Discord (v3.2.5)."""
 
 from __future__ import annotations
 
@@ -83,6 +83,18 @@ class ShortMetrics:
     volume_baselines: dict[int, RobustBaseline] = field(default_factory=dict)
     price_strengths: dict[int, float | None] = field(default_factory=dict)
     volume_strengths: dict[int, float | None] = field(default_factory=dict)
+    price_continuity: dict[int, float] = field(default_factory=dict)
+    volume_continuity: dict[int, float] = field(default_factory=dict)
+    price_jump_share: dict[int, float] = field(default_factory=dict)
+    volume_jump_share: dict[int, float] = field(default_factory=dict)
+    temporal_axes: dict[int, float | None] = field(default_factory=dict)
+    temporal_pressures: dict[int, float | None] = field(default_factory=dict)
+    temporal_score: float = 0.0
+    temporal_pressure: float = 0.0
+    positive_streak: int = 0
+    negative_streak: int = 0
+    temporal_samples: int = 0
+    reversal_guard: bool = False
 
 
 @dataclass
@@ -108,6 +120,24 @@ class TimeObservation:
     weekday: int
     block: int | None
     score: float
+
+
+@dataclass
+class TemporalContext:
+    axes: dict[int, float | None] = field(default_factory=dict)
+    pressures: dict[int, float | None] = field(default_factory=dict)
+    smoothed_axis: float = 0.0
+    smoothed_pressure: float = 0.0
+    positive_streak: int = 0
+    negative_streak: int = 0
+    positive_votes: int = 0
+    negative_votes: int = 0
+    recent_positive: bool = False
+    recent_negative: bool = False
+    positive_confirmed: bool = False
+    negative_confirmed: bool = False
+    reversal_guard: bool = False
+    samples: int = 0
 
 
 CODE_ALIASES = {
@@ -342,6 +372,74 @@ def _window_baselines(history: list[PricePoint], config: Mapping[str, Any]) -> t
     return price, volume
 
 
+
+def _series_with_current(
+    history: Sequence[PricePoint],
+    *,
+    now_ms: int,
+    rate: float,
+    volume: float | None,
+) -> list[PricePoint]:
+    """Return a sorted series with the fresh map value as the final observation."""
+    by_timestamp = {point.timestamp_ms: point for point in history if point.timestamp_ms <= now_ms}
+    by_timestamp[now_ms] = PricePoint(now_ms, rate, volume)
+    return sorted(by_timestamp.values(), key=lambda point: point.timestamp_ms)
+
+
+def _path_stats(
+    series: Sequence[PricePoint],
+    *,
+    now_ms: int,
+    window: int,
+    field_name: str,
+) -> tuple[float, float, int]:
+    """Measure whether a change is sustained or concentrated in one staircase jump."""
+    start_ms = now_ms - window * 60_000
+    points = [point for point in series if start_ms - 180_000 <= point.timestamp_ms <= now_ms + 60_000]
+    if len(points) < 3:
+        return 0.0, 1.0, max(0, len(points) - 1)
+    changes: list[float] = []
+    for previous, current in zip(points, points[1:]):
+        previous_value = getattr(previous, field_name)
+        current_value = getattr(current, field_name)
+        change = _pct(current_value, previous_value)
+        if change is not None and math.isfinite(change):
+            changes.append(change)
+    if len(changes) < 2:
+        return 0.0, 1.0, len(changes)
+    total = sum(changes)
+    absolute_total = sum(abs(value) for value in changes)
+    if absolute_total <= 1e-12:
+        return 0.45, 0.0, len(changes)
+    direction = 1.0 if total > 0 else (-1.0 if total < 0 else 0.0)
+    meaningful = [value for value in changes if abs(value) >= max(0.002, absolute_total * 0.015)]
+    if not meaningful:
+        meaningful = changes
+    same_weight = sum(abs(value) for value in meaningful if direction == 0.0 or value * direction > 0)
+    directional_share = same_weight / max(sum(abs(value) for value in meaningful), 1e-12)
+    jump_share = max(abs(value) for value in changes) / absolute_total
+    expected_steps = max(2.0, window / 5.0)
+    coverage = min(1.0, len(changes) / expected_steps)
+    continuity = coverage * (0.67 * directional_share + 0.33 * (1.0 - jump_share))
+    return _clamp(continuity, 0.0, 1.0), _clamp(jump_share, 0.0, 1.0), len(changes)
+
+
+def _all_path_stats(
+    series: Sequence[PricePoint], now_ms: int
+) -> tuple[dict[int, float], dict[int, float], dict[int, float], dict[int, float]]:
+    price_continuity: dict[int, float] = {}
+    volume_continuity: dict[int, float] = {}
+    price_jump_share: dict[int, float] = {}
+    volume_jump_share: dict[int, float] = {}
+    for window in WINDOWS:
+        p_cont, p_jump, _ = _path_stats(series, now_ms=now_ms, window=window, field_name="rate")
+        v_cont, v_jump, _ = _path_stats(series, now_ms=now_ms, window=window, field_name="volume")
+        price_continuity[window] = p_cont
+        volume_continuity[window] = v_cont
+        price_jump_share[window] = p_jump
+        volume_jump_share[window] = v_jump
+    return price_continuity, volume_continuity, price_jump_share, volume_jump_share
+
 def _absolute_level(value: float, *, light: float, clear: float, strong: float) -> float:
     absolute = abs(value)
     if absolute >= strong:
@@ -402,19 +500,37 @@ def _volume_color(
     strength: float | None,
     baseline: RobustBaseline,
     quality: str,
+    *,
+    continuity: float = 0.0,
+    jump_share: float = 1.0,
 ) -> str:
     if quality == "insufficient" or value is None or strength is None:
         return WHITE
     if quality == "uncertain":
         return BROWN
     z = _robust_z(value, baseline) or 0.0
-    extreme_positive = baseline.samples >= 8 and value > 0 and strength >= 2.65 and z >= 2.6
-    extreme_negative = baseline.samples >= 8 and value < 0 and strength <= -2.65 and z <= -2.6
-    return _strict_gradient_color(
-        strength,
+    sustained = continuity >= 0.62 and jump_share <= 0.68
+    extreme_positive = (
+        sustained and baseline.samples >= 8 and value > 0 and strength >= 2.85 and z >= 2.8
+    )
+    extreme_negative = (
+        sustained and baseline.samples >= 8 and value < 0 and strength <= -2.85 and z <= -2.8
+    )
+    adjusted = strength
+    if jump_share > 0.76:
+        adjusted *= 0.48
+    elif continuity < 0.45:
+        adjusted *= 0.68
+    color = _strict_gradient_color(
+        adjusted,
         extreme_positive=extreme_positive,
         extreme_negative=extreme_negative,
     )
+    if jump_share > 0.76 and color in {PURPLE, GREEN}:
+        return BLUE
+    if continuity < 0.45 and color == GREEN:
+        return BLUE
+    return color
 
 
 def _window_data_quality(
@@ -464,8 +580,12 @@ def _window_pattern(
     window: int,
     config: Mapping[str, Any],
     quality: str,
+    price_continuity: float = 0.0,
+    volume_continuity: float = 0.0,
+    price_jump_share: float = 1.0,
+    volume_jump_share: float = 1.0,
 ) -> tuple[float | None, float | None, float | None]:
-    """Return accumulation, distribution and pressure for one window (0..100, 0..100, -3..3)."""
+    """Return accumulation, distribution and pressure for one sustained window."""
     if quality != "good" or None in (price_change, volume_change, price_strength, volume_strength):
         return None, None, None
     assert price_change is not None and volume_change is not None
@@ -479,26 +599,201 @@ def _window_pattern(
     volume_lead = volume_strength - max(price_strength, 0.0) * 0.55
     volume_force = _clamp((volume_strength - 0.65) / 2.35, 0.0, 1.0)
     lead_force = _clamp((volume_lead - 0.55) / 2.25, 0.0, 1.0)
+    volume_path = 0.48 + 0.52 * volume_continuity
+    if volume_jump_share > 0.76:
+        volume_path *= 0.52
+    elif volume_jump_share > 0.64:
+        volume_path *= 0.76
     accumulation = 100.0 * volume_force * (0.82 * price_stability + 0.18 * slight_up) * no_drop
-    accumulation *= 0.72 + 0.28 * lead_force
+    accumulation *= (0.72 + 0.28 * lead_force) * volume_path
 
     price_rise = _clamp((price_strength - 0.45) / 2.55, 0.0, 1.0)
     lag = price_strength - volume_strength
     lag_force = _clamp((lag - 0.65) / 2.35, 0.0, 1.0)
     nonconfirm = _clamp((0.35 - volume_strength) / 2.35, 0.0, 1.0)
+    price_path = 0.52 + 0.48 * price_continuity
+    if price_jump_share > 0.78:
+        price_path *= 0.72
+    volume_nonconfirm_path = 0.72 + 0.28 * (volume_continuity if volume_strength < 0 else 0.55)
     distribution = 100.0 * price_rise * (0.72 * lag_force + 0.28 * nonconfirm)
+    distribution *= price_path * volume_nonconfirm_path
 
-    confirmed_selling = _clamp((-price_strength - 0.35) / 2.40, 0.0, 1.0) * _clamp(
-        (volume_strength - 0.35) / 2.40, 0.0, 1.0
+    confirmed_selling = (
+        _clamp((-price_strength - 0.35) / 2.40, 0.0, 1.0)
+        * _clamp((volume_strength - 0.35) / 2.40, 0.0, 1.0)
+        * (0.48 + 0.52 * min(price_continuity, volume_continuity))
     )
-    fading_demand = _clamp((-price_strength - 0.30) / 2.70, 0.0, 1.0) * _clamp(
-        (-volume_strength - 0.30) / 2.70, 0.0, 1.0
+    fading_demand = (
+        _clamp((-price_strength - 0.30) / 2.70, 0.0, 1.0)
+        * _clamp((-volume_strength - 0.30) / 2.70, 0.0, 1.0)
+        * (0.55 + 0.45 * min(price_continuity, volume_continuity))
     )
     positive_pressure = accumulation / 100.0
     negative_pressure = max(distribution / 100.0, confirmed_selling, 0.55 * fading_demand)
     pressure = _clamp((positive_pressure - negative_pressure) * 3.25, -3.25, 3.25)
     return accumulation, distribution, pressure
 
+
+
+def _snapshot_signature(
+    series: Sequence[PricePoint],
+    *,
+    as_of_ms: int,
+    config: Mapping[str, Any],
+) -> tuple[float, float] | None:
+    endpoint = _nearest_point(series, as_of_ms, 4 * 60_000)
+    if endpoint is None:
+        return None
+    subset = [point for point in series if point.timestamp_ms <= endpoint.timestamp_ms]
+    if len(subset) < int(config.get("minimum_short_history_points", 8)):
+        return None
+    price_changes, volume_changes = compute_window_changes_from_history(
+        current_rate=endpoint.rate,
+        current_volume=endpoint.volume,
+        history=subset,
+        now_ms=endpoint.timestamp_ms,
+    )
+    price_baselines, volume_baselines = _window_baselines(subset, config)
+    quality, _, overall = _window_data_quality(
+        current_volume=endpoint.volume,
+        price_changes=price_changes,
+        volume_changes=volume_changes,
+        volume_baselines=volume_baselines,
+        minimum_volume=float(config.get("minimum_reliable_volume_usd", 500_000)),
+        maximum_volume_jump_pct=float(config.get("maximum_plausible_volume_jump_pct", 1500.0)),
+    )
+    if overall == "insufficient":
+        return None
+    p_cont, v_cont, p_jump, v_jump = _all_path_stats(subset, endpoint.timestamp_ms)
+    accumulations: dict[int, float | None] = {}
+    distributions: dict[int, float | None] = {}
+    pressures: dict[int, float | None] = {}
+    for window in WINDOWS:
+        p_strength = _robust_signed_strength(
+            price_changes.get(window), price_baselines[window], _thresholds(config, "price", window)
+        )
+        v_strength = _robust_signed_strength(
+            volume_changes.get(window), volume_baselines[window], _thresholds(config, "volume", window)
+        )
+        acc, dist, pressure = _window_pattern(
+            price_change=price_changes.get(window),
+            volume_change=volume_changes.get(window),
+            price_strength=p_strength,
+            volume_strength=v_strength,
+            window=window,
+            config=config,
+            quality=quality[window],
+            price_continuity=p_cont[window],
+            volume_continuity=v_cont[window],
+            price_jump_share=p_jump[window],
+            volume_jump_share=v_jump[window],
+        )
+        accumulations[window] = acc
+        distributions[window] = dist
+        pressures[window] = pressure
+    acc_score, dist_score, _, _ = _pattern_aggregate(accumulations, distributions)
+    usable_pressures = [value for value in pressures.values() if value is not None]
+    pressure_score = _weighted(pressures) if len(usable_pressures) >= 2 else 0.0
+    axis = _clamp((acc_score - dist_score) / 100.0, -1.0, 1.0)
+    return axis, _clamp(pressure_score / 3.25, -1.0, 1.0)
+
+
+def _streak(values: Sequence[float | None], *, positive: bool, threshold: float) -> int:
+    count = 0
+    for value in values:
+        if value is None:
+            break
+        if positive and value >= threshold:
+            count += 1
+        elif not positive and value <= -threshold:
+            count += 1
+        else:
+            break
+    return count
+
+
+def _temporal_context(
+    series: Sequence[PricePoint],
+    *,
+    now_ms: int,
+    current_axis: float,
+    current_pressure: float,
+    config: Mapping[str, Any],
+) -> TemporalContext:
+    offsets = tuple(int(value) for value in config.get("temporal_offsets_minutes", [5, 10, 15, 20, 25, 30]))
+    axes: dict[int, float | None] = {}
+    pressures: dict[int, float | None] = {}
+    for offset in offsets:
+        snapshot = _snapshot_signature(series, as_of_ms=now_ms - offset * 60_000, config=config)
+        axes[offset] = snapshot[0] if snapshot else None
+        pressures[offset] = snapshot[1] if snapshot else None
+
+    sequence = [current_axis] + [axes[offset] for offset in offsets]
+    clear = float(config.get("temporal_axis_clear", 0.18))
+    strong = float(config.get("temporal_axis_strong", 0.34))
+    positive_streak = _streak(sequence, positive=True, threshold=clear)
+    negative_streak = _streak(sequence, positive=False, threshold=clear)
+    recent_values_20 = [axes[offset] for offset in offsets if offset <= 20 and axes[offset] is not None]
+    recent_values_30 = [axes[offset] for offset in offsets if offset <= 30 and axes[offset] is not None]
+    positive_votes = sum(value >= clear for value in sequence if value is not None)
+    negative_votes = sum(value <= -clear for value in sequence if value is not None)
+    recent_positive = any(value >= strong for value in recent_values_30)
+    recent_negative = any(value <= -strong for value in recent_values_30)
+    current_positive = current_axis >= clear
+    current_negative = current_axis <= -clear
+    opposite_20 = (
+        current_positive and any(value <= -clear for value in recent_values_20)
+    ) or (
+        current_negative and any(value >= clear for value in recent_values_20)
+    )
+    min_confirmations = int(config.get("temporal_confirmation_points", 3))
+    positive_confirmed = (
+        positive_streak >= min_confirmations
+        and not any(value <= -clear for value in recent_values_20)
+    )
+    negative_confirmed = (
+        negative_streak >= min_confirmations
+        and not any(value >= clear for value in recent_values_20)
+    )
+    reversal_guard = opposite_20 or (
+        current_positive and recent_negative and not positive_confirmed
+    ) or (
+        current_negative and recent_positive and not negative_confirmed
+    )
+
+    weights = [0.38, 0.24, 0.15, 0.10, 0.06, 0.04, 0.03]
+    weighted_axes: list[tuple[float, float]] = []
+    weighted_pressures: list[tuple[float, float]] = [(current_pressure, weights[0])]
+    for index, value in enumerate(sequence):
+        if value is not None:
+            weighted_axes.append((float(value), weights[min(index, len(weights) - 1)]))
+    for index, offset in enumerate(offsets, start=1):
+        value = pressures.get(offset)
+        if value is not None:
+            weighted_pressures.append((float(value), weights[min(index, len(weights) - 1)]))
+    axis_weight = sum(weight for _, weight in weighted_axes)
+    pressure_weight = sum(weight for _, weight in weighted_pressures)
+    smoothed_axis = sum(value * weight for value, weight in weighted_axes) / max(axis_weight, 1e-9)
+    smoothed_pressure = sum(value * weight for value, weight in weighted_pressures) / max(pressure_weight, 1e-9)
+    if reversal_guard:
+        smoothed_axis *= 0.72
+        smoothed_pressure *= 0.78
+    return TemporalContext(
+        axes=axes,
+        pressures=pressures,
+        smoothed_axis=_clamp(smoothed_axis, -1.0, 1.0),
+        smoothed_pressure=_clamp(smoothed_pressure, -1.0, 1.0),
+        positive_streak=positive_streak,
+        negative_streak=negative_streak,
+        positive_votes=positive_votes,
+        negative_votes=negative_votes,
+        recent_positive=recent_positive,
+        recent_negative=recent_negative,
+        positive_confirmed=positive_confirmed,
+        negative_confirmed=negative_confirmed,
+        reversal_guard=reversal_guard,
+        samples=sum(value is not None for value in axes.values()),
+    )
 
 def _weighted(values: Mapping[int, float | None]) -> float:
     usable = [(values.get(window), WINDOW_WEIGHTS[window]) for window in WINDOWS if values.get(window) is not None]
@@ -536,17 +831,26 @@ def _strict_accumulation_extreme(
     distribution: Mapping[int, float | None],
     price_changes: Mapping[int, float | None],
     volume_strengths: Mapping[int, float | None],
+    volume_continuity: Mapping[int, float],
+    volume_jump_share: Mapping[int, float],
     config: Mapping[str, Any],
     quality: Mapping[int, str],
     aggregate: float,
+    temporal: TemporalContext,
 ) -> bool:
     if any(quality.get(window) != "good" for window in WINDOWS):
         return False
-    if aggregate < 82.0:
+    if aggregate < 84.0 or not temporal.positive_confirmed or temporal.recent_negative:
+        return False
+    if temporal.smoothed_axis < 0.55 or temporal.positive_streak < 3:
         return False
     if sum((accumulation.get(window) or 0.0) >= 78.0 for window in WINDOWS) < 2:
         return False
-    if any((distribution.get(window) or 0.0) >= 38.0 for window in WINDOWS):
+    if any((distribution.get(window) or 0.0) >= 32.0 for window in WINDOWS):
+        return False
+    if sum(volume_continuity.get(window, 0.0) >= 0.62 for window in WINDOWS) < 2:
+        return False
+    if sum(volume_jump_share.get(window, 1.0) <= 0.68 for window in WINDOWS) < 2:
         return False
     for window in WINDOWS:
         p_light, p_clear, _ = _thresholds(config, "price", window)
@@ -554,7 +858,7 @@ def _strict_accumulation_extreme(
         volume_strength = volume_strengths.get(window)
         if price is None or volume_strength is None:
             return False
-        if price < -p_light or price > p_clear * 1.20 or volume_strength < 1.55:
+        if price < -p_light or price > p_clear * 1.15 or volume_strength < 1.65:
             return False
     return True
 
@@ -564,23 +868,30 @@ def _strict_distribution_extreme(
     distribution: Mapping[int, float | None],
     price_strengths: Mapping[int, float | None],
     volume_strengths: Mapping[int, float | None],
+    price_continuity: Mapping[int, float],
+    config: Mapping[str, Any],
     quality: Mapping[int, str],
     aggregate: float,
+    temporal: TemporalContext,
 ) -> bool:
     if any(quality.get(window) != "good" for window in WINDOWS):
         return False
-    if aggregate < 82.0:
+    if aggregate < 84.0 or not temporal.negative_confirmed or temporal.recent_positive:
+        return False
+    if temporal.smoothed_axis > -0.55 or temporal.negative_streak < 3:
         return False
     if sum((distribution.get(window) or 0.0) >= 76.0 for window in WINDOWS) < 2:
         return False
-    if any((accumulation.get(window) or 0.0) >= 38.0 for window in WINDOWS):
+    if any((accumulation.get(window) or 0.0) >= 32.0 for window in WINDOWS):
+        return False
+    if sum(price_continuity.get(window, 0.0) >= 0.54 for window in WINDOWS) < 2:
         return False
     for window in WINDOWS:
         price_strength = price_strengths.get(window)
         volume_strength = volume_strengths.get(window)
         if price_strength is None or volume_strength is None:
             return False
-        if price_strength < 0.70 or price_strength - volume_strength < 0.90:
+        if price_strength < 0.78 or price_strength - volume_strength < 1.00:
             return False
     return True
 
@@ -593,6 +904,7 @@ def _pattern_color(
     strict_distribution: bool,
     quality: str,
     good_windows: int,
+    temporal: TemporalContext,
 ) -> str:
     if good_windows < 2:
         return BROWN if quality == "uncertain" else WHITE
@@ -600,14 +912,20 @@ def _pattern_color(
         return PURPLE
     if strict_distribution:
         return RED
-    margin = accumulation_score - distribution_score
-    if margin >= 25.0 and accumulation_score >= 58.0:
+    axis = temporal.smoothed_axis
+    if temporal.reversal_guard:
+        if axis >= 0.28:
+            return BLUE
+        if axis <= -0.20:
+            return ORANGE
+        return YELLOW
+    if axis >= 0.50 and temporal.positive_confirmed:
         return GREEN
-    if margin >= 10.0 and accumulation_score >= 34.0:
+    if axis >= 0.18:
         return BLUE
-    if margin <= -25.0 and distribution_score >= 58.0:
+    if axis <= -0.48 and temporal.negative_streak >= 2:
         return ORANGE
-    if margin <= -10.0 and distribution_score >= 34.0:
+    if axis <= -0.16:
         return ORANGE
     return YELLOW
 
@@ -646,17 +964,38 @@ def _pressure_color(
     strict_accumulation: bool,
     strict_distribution: bool,
     quality: str,
+    temporal: TemporalContext,
 ) -> str:
     values = [value for value in window_pressures.values() if value is not None]
     if len(values) < 2 or score is None:
         return BROWN if quality == "uncertain" else WHITE
-    purple = strict_accumulation and min(values) >= 1.25 and sum(value >= 2.1 for value in values) >= 2
+    purple = (
+        strict_accumulation
+        and temporal.positive_confirmed
+        and min(values) >= 1.25
+        and sum(value >= 2.1 for value in values) >= 2
+    )
     red = (
-        (strict_distribution or sum(value <= -2.0 for value in values) >= 2)
+        strict_distribution
+        and temporal.negative_confirmed
         and max(values) <= -0.45
         and score <= -2.0
     )
-    return _strict_gradient_color(score, extreme_positive=purple, extreme_negative=red)
+    if purple:
+        return PURPLE
+    if red:
+        return RED
+    if temporal.reversal_guard and score > 0:
+        return BLUE if score >= 1.0 else YELLOW
+    if score >= 1.25 and temporal.positive_streak >= 3:
+        return GREEN
+    if score >= 0.35:
+        return BLUE
+    if score <= -1.15:
+        return ORANGE
+    if score <= -0.35:
+        return ORANGE
+    return YELLOW
 
 
 def _quality_factor(quality: str, good_windows: int) -> float:
@@ -671,29 +1010,37 @@ def _condition_counts(
     *,
     accumulation: Mapping[int, float | None],
     distribution: Mapping[int, float | None],
-    acc_acceleration: float,
-    dist_acceleration: float,
     relative_color: str,
-    volume_strengths: Mapping[int, float | None],
-    price_strengths: Mapping[int, float | None],
     quality: Mapping[int, str],
+    price_continuity: Mapping[int, float],
+    volume_continuity: Mapping[int, float],
+    volume_jump_share: Mapping[int, float],
+    temporal: TemporalContext,
 ) -> tuple[int, int]:
-    acc_values = {window: accumulation.get(window) for window in WINDOWS}
-    dist_values = {window: distribution.get(window) for window in WINDOWS}
-    buy = sum((acc_values[window] or 0.0) >= (50.0 if window == 60 else 55.0) for window in WINDOWS)
-    sell = sum((dist_values[window] or 0.0) >= (50.0 if window == 60 else 55.0) for window in WINDOWS)
-    buy += int(sum((value or 0.0) >= 55.0 for value in acc_values.values()) >= 2 and not any((value or 0.0) >= 55.0 for value in dist_values.values()))
-    sell += int(sum((value or 0.0) >= 55.0 for value in dist_values.values()) >= 2 and not any((value or 0.0) >= 55.0 for value in acc_values.values()))
-    buy += int(acc_acceleration >= 8.0 or (acc_values.get(10) or 0.0) >= 78.0)
-    sell += int(dist_acceleration >= 8.0 or (dist_values.get(10) or 0.0) >= 78.0)
-    buy += int(relative_color in {BLUE, GREEN, PURPLE})
-    sell += int(relative_color in {ORANGE, RED})
-    buy += int(sum((volume_strengths.get(window) or -9.0) >= 1.25 for window in WINDOWS) >= 2 and any((volume_strengths.get(window) or -9.0) >= 2.0 for window in WINDOWS))
-    sell += int(sum(((price_strengths.get(window) or 0.0) - (volume_strengths.get(window) or 0.0)) >= 1.20 for window in WINDOWS) >= 2)
+    acc = {window: accumulation.get(window) or 0.0 for window in WINDOWS}
+    dist = {window: distribution.get(window) or 0.0 for window in WINDOWS}
     all_good = all(quality.get(window) == "good" for window in WINDOWS)
-    buy += int(all_good and not any((value or 0.0) >= 45.0 for value in dist_values.values()))
-    sell += int(all_good and not any((value or 0.0) >= 45.0 for value in acc_values.values()))
-    return min(buy, 8), min(sell, 8)
+    buy_conditions = [
+        acc[10] >= 58.0,
+        acc[20] >= 58.0,
+        acc[60] >= 52.0,
+        sum(value >= 55.0 for value in acc.values()) >= 2 and max(dist.values()) < 48.0,
+        sum(volume_continuity.get(window, 0.0) >= 0.58 and volume_jump_share.get(window, 1.0) <= 0.72 for window in WINDOWS) >= 2,
+        temporal.positive_confirmed,
+        not temporal.recent_negative and not (temporal.reversal_guard and temporal.smoothed_axis > 0),
+        all_good and relative_color in {BLUE, GREEN, PURPLE},
+    ]
+    sell_conditions = [
+        dist[10] >= 58.0,
+        dist[20] >= 58.0,
+        dist[60] >= 52.0,
+        sum(value >= 55.0 for value in dist.values()) >= 2 and max(acc.values()) < 48.0,
+        sum(price_continuity.get(window, 0.0) >= 0.52 for window in WINDOWS) >= 2,
+        temporal.negative_confirmed,
+        not temporal.recent_positive and not (temporal.reversal_guard and temporal.smoothed_axis < 0),
+        all_good and relative_color in {ORANGE, RED},
+    ]
+    return sum(buy_conditions), sum(sell_conditions)
 
 
 def _weighted_relative_pct(
@@ -749,13 +1096,14 @@ def build_short_metrics(
     rate = float(current["rate"])
     raw_volume = current.get("volume")
     current_volume = float(raw_volume) if raw_volume not in (None, "") else None
+    series = _series_with_current(short_history, now_ms=now_ms, rate=rate, volume=current_volume)
     price_changes, volume_changes = compute_window_changes_from_history(
         current_rate=rate,
         current_volume=current_volume,
-        history=short_history,
+        history=series,
         now_ms=now_ms,
     )
-    price_baselines, volume_baselines = _window_baselines(short_history, config)
+    price_baselines, volume_baselines = _window_baselines(series, config)
     window_quality, quality_reasons, quality = _window_data_quality(
         current_volume=current_volume,
         price_changes=price_changes,
@@ -764,12 +1112,17 @@ def build_short_metrics(
         minimum_volume=float(config.get("minimum_reliable_volume_usd", 500_000)),
         maximum_volume_jump_pct=float(config.get("maximum_plausible_volume_jump_pct", 1500.0)),
     )
+    price_continuity, volume_continuity, price_jump_share, volume_jump_share = _all_path_stats(series, now_ms)
     price_strengths = {
-        window: _robust_signed_strength(price_changes.get(window), price_baselines[window], _thresholds(config, "price", window))
+        window: _robust_signed_strength(
+            price_changes.get(window), price_baselines[window], _thresholds(config, "price", window)
+        )
         for window in WINDOWS
     }
     volume_strengths = {
-        window: _robust_signed_strength(volume_changes.get(window), volume_baselines[window], _thresholds(config, "volume", window))
+        window: _robust_signed_strength(
+            volume_changes.get(window), volume_baselines[window], _thresholds(config, "volume", window)
+        )
         for window in WINDOWS
     }
     volume_colors = {
@@ -778,6 +1131,8 @@ def build_short_metrics(
             volume_strengths.get(window),
             volume_baselines[window],
             window_quality[window],
+            continuity=volume_continuity[window],
+            jump_share=volume_jump_share[window],
         )
         for window in WINDOWS
     }
@@ -794,29 +1149,65 @@ def build_short_metrics(
             window=window,
             config=config,
             quality=window_quality[window],
+            price_continuity=price_continuity[window],
+            volume_continuity=volume_continuity[window],
+            price_jump_share=price_jump_share[window],
+            volume_jump_share=volume_jump_share[window],
         )
         accumulation[window] = acc
         distribution[window] = dist
         window_pressures[window] = pressure
 
-    acc_score, dist_score, acc_acceleration, dist_acceleration = _pattern_aggregate(accumulation, distribution)
+    raw_acc_score, raw_dist_score, acc_acceleration, dist_acceleration = _pattern_aggregate(accumulation, distribution)
+    current_axis = _clamp((raw_acc_score - raw_dist_score) / 100.0, -1.0, 1.0)
+    current_pressure_values = [value for value in window_pressures.values() if value is not None]
+    current_pressure = _weighted(window_pressures) / 3.25 if len(current_pressure_values) >= 2 else 0.0
+    temporal = _temporal_context(
+        series,
+        now_ms=now_ms,
+        current_axis=current_axis,
+        current_pressure=current_pressure,
+        config=config,
+    )
+
+    # The effective score deliberately retains recent warnings instead of treating every run as a reset.
+    positive_temporal = max(temporal.smoothed_axis, 0.0) * 100.0
+    negative_temporal = max(-temporal.smoothed_axis, 0.0) * 100.0
+    acc_score = 0.64 * raw_acc_score + 0.36 * positive_temporal
+    dist_score = 0.64 * raw_dist_score + 0.36 * negative_temporal
+    if temporal.reversal_guard:
+        if current_axis > 0:
+            acc_score *= 0.62
+            dist_score = max(dist_score, negative_temporal * 0.85)
+        elif current_axis < 0:
+            dist_score *= 0.70
+            acc_score = max(acc_score, positive_temporal * 0.75)
+    acc_score = _clamp(acc_score, 0.0, 100.0)
+    dist_score = _clamp(dist_score, 0.0, 100.0)
+
     good_windows = sum(window_quality.get(window) == "good" for window in WINDOWS)
     strict_acc = _strict_accumulation_extreme(
         accumulation,
         distribution,
         price_changes,
         volume_strengths,
+        volume_continuity,
+        volume_jump_share,
         config,
         window_quality,
         acc_score,
+        temporal,
     )
     strict_dist = _strict_distribution_extreme(
         accumulation,
         distribution,
         price_strengths,
         volume_strengths,
+        price_continuity,
+        config,
         window_quality,
         dist_score,
+        temporal,
     )
 
     relative_scores: dict[int, float | None] = {}
@@ -832,19 +1223,26 @@ def build_short_metrics(
                 relative_scores[window] = None
                 continue
             coin_baseline = price_baselines[window]
-            btc_baseline = btc_short.price_baselines[window] if btc_short else RobustBaseline(0.0, _thresholds(config, "price", window)[0], 0)
+            btc_baseline = (
+                btc_short.price_baselines[window]
+                if btc_short
+                else RobustBaseline(0.0, _thresholds(config, "price", window)[0], 0)
+            )
             center = coin_baseline.median - btc_baseline.median
             scale = math.sqrt(coin_baseline.scale**2 + btc_baseline.scale**2)
-            relative_scores[window] = _clamp((coin_change - btc_change - center) / max(scale, 1e-9), -5.0, 5.0)
+            relative_scores[window] = _clamp(
+                (coin_change - btc_change - center) / max(scale, 1e-9), -5.0, 5.0
+            )
         relative_short = _weighted_relative_pct(price_changes, btc_price_changes or {})
         relative_color = _relative_color(relative_scores)
 
     pressure_values = [value for value in window_pressures.values() if value is not None]
     if len(pressure_values) >= 2:
-        pressure_score = _weighted(window_pressures)
-        same_direction = sum(value > 0.7 for value in pressure_values) >= 2 or sum(value < -0.7 for value in pressure_values) >= 2
-        if same_direction:
-            pressure_score += 0.18 * (1 if pressure_score > 0 else -1)
+        current_pressure_score = _weighted(window_pressures)
+        temporal_pressure_score = temporal.smoothed_pressure * 3.25
+        pressure_score = 0.64 * current_pressure_score + 0.36 * temporal_pressure_score
+        if temporal.reversal_guard:
+            pressure_score *= 0.78
         pressure_score = _clamp(pressure_score, -3.25, 3.25)
     else:
         pressure_score = None
@@ -854,19 +1252,23 @@ def build_short_metrics(
         strict_accumulation=strict_acc,
         strict_distribution=strict_dist,
         quality=quality,
+        temporal=temporal,
     )
 
     buy_count, sell_count = _condition_counts(
         accumulation=accumulation,
         distribution=distribution,
-        acc_acceleration=acc_acceleration,
-        dist_acceleration=dist_acceleration,
         relative_color=relative_color,
-        volume_strengths=volume_strengths,
-        price_strengths=price_strengths,
         quality=window_quality,
+        price_continuity=price_continuity,
+        volume_continuity=volume_continuity,
+        volume_jump_share=volume_jump_share,
+        temporal=temporal,
     )
-    direction = "▲" if acc_score > dist_score else ("▼" if dist_score > acc_score else "=")
+    effective_axis = temporal.smoothed_axis
+    if abs(effective_axis) < 0.10:
+        effective_axis = (acc_score - dist_score) / 100.0
+    direction = "▲" if effective_axis > 0.08 else ("▼" if effective_axis < -0.08 else "=")
     signal = _pattern_color(
         accumulation_score=acc_score,
         distribution_score=dist_score,
@@ -874,13 +1276,27 @@ def build_short_metrics(
         strict_distribution=strict_dist,
         quality=quality,
         good_windows=good_windows,
+        temporal=temporal,
     )
     quality_factor = _quality_factor(quality, good_windows)
-    proximity = max(acc_score, dist_score) * quality_factor
+    persistence_factor = 0.62 + 0.10 * min(max(temporal.positive_streak, temporal.negative_streak), 3)
+    if temporal.reversal_guard:
+        persistence_factor *= 0.72
+    proximity = max(acc_score, dist_score) * quality_factor * persistence_factor
     margin = abs(acc_score - dist_score)
-    pattern_confidence = _clamp((0.55 * proximity + 0.45 * margin) / 100.0, 0.0, 1.0)
-    acceleration = acc_acceleration if acc_score >= dist_score else -dist_acceleration
-    anomaly = proximity + max(buy_count, sell_count) * 3.2 + margin * 0.20 + abs(acceleration) * 0.10
+    pattern_confidence = _clamp(
+        (0.42 * proximity + 0.30 * margin + 28.0 * abs(temporal.smoothed_axis)) / 100.0,
+        0.0,
+        1.0,
+    )
+    acceleration = acc_acceleration if effective_axis >= 0 else -dist_acceleration
+    anomaly = (
+        proximity
+        + max(buy_count, sell_count) * 3.5
+        + margin * 0.18
+        + abs(acceleration) * 0.08
+        + abs(temporal.smoothed_axis) * 18.0
+    )
 
     return ShortMetrics(
         price_changes=price_changes,
@@ -899,7 +1315,7 @@ def build_short_metrics(
         window_quality=window_quality,
         quality_reasons=quality_reasons,
         window_setup_scores=window_pressures,
-        agreement_score=(acc_score - dist_score) / 33.333,
+        agreement_score=temporal.smoothed_axis * 3.0,
         accumulation_windows=accumulation,
         distribution_windows=distribution,
         accumulation_score=acc_score,
@@ -912,6 +1328,18 @@ def build_short_metrics(
         volume_baselines=volume_baselines,
         price_strengths=price_strengths,
         volume_strengths=volume_strengths,
+        price_continuity=price_continuity,
+        volume_continuity=volume_continuity,
+        price_jump_share=price_jump_share,
+        volume_jump_share=volume_jump_share,
+        temporal_axes=temporal.axes,
+        temporal_pressures=temporal.pressures,
+        temporal_score=temporal.smoothed_axis,
+        temporal_pressure=temporal.smoothed_pressure,
+        positive_streak=temporal.positive_streak,
+        negative_streak=temporal.negative_streak,
+        temporal_samples=temporal.samples,
+        reversal_guard=temporal.reversal_guard,
     )
 
 
@@ -1157,32 +1585,66 @@ def current_now_signal(
     valid = [value for value in short.window_setup_scores.values() if value is not None]
     if len(valid) < 2:
         return None, BROWN if short.data_quality == "uncertain" else WHITE
-    pattern_axis = (short.accumulation_score - short.distribution_score) / 33.333
-    pressure = short.pressure_score or 0.0
-    relative = color_level(short.relative_color) / 2.0
+    pattern_axis = short.temporal_score
+    pressure = (short.pressure_score or 0.0) / 3.25
+    relative = color_level(short.relative_color) / 3.0
     week = color_level(week_signal) / 3.0
     historical = 0.0
-    if seasonality.current_score is not None and seasonality.current_confidence >= 0.48:
+    if seasonality.current_score is not None and seasonality.current_confidence >= 0.52:
         historical = _clamp(seasonality.current_score / 1.2, -1.0, 1.0) * seasonality.current_confidence
-    score = 0.52 * pattern_axis + 0.25 * pressure + (0.0 if is_reference else 0.14 * relative) + 0.05 * week + 0.04 * historical
+    score = (
+        0.54 * pattern_axis
+        + 0.24 * pressure
+        + (0.0 if is_reference else 0.12 * relative)
+        + 0.05 * week
+        + 0.05 * historical
+    ) * 3.0
 
     three_good = all(short.window_quality.get(window) == "good" for window in WINDOWS)
-    positive_confirmations = sum(
-        [short.signal_color == PURPLE, short.pressure_color == PURPLE, short.relative_color in {GREEN, PURPLE}, week_signal in {GREEN, PURPLE}]
+    purple = (
+        three_good
+        and short.signal_color == PURPLE
+        and short.pressure_color == PURPLE
+        and short.positive_streak >= 3
+        and not short.reversal_guard
+        and score >= 1.85
     )
-    negative_confirmations = sum(
-        [short.signal_color == RED, short.pressure_color == RED, short.relative_color in {ORANGE, RED}, week_signal in {ORANGE, RED}]
+    red = (
+        three_good
+        and short.signal_color == RED
+        and short.pressure_color == RED
+        and short.negative_streak >= 3
+        and not short.reversal_guard
+        and score <= -1.85
     )
-    purple = three_good and positive_confirmations >= 3 and score >= 2.0
-    red = three_good and negative_confirmations >= 3 and score <= -2.0
-    color = _strict_gradient_color(score, extreme_positive=purple, extreme_negative=red)
-    if short.data_quality == "uncertain" and color in {PURPLE, RED}:
-        color = GREEN if score > 0 else ORANGE
-    return score, color
+    if purple:
+        return score, PURPLE
+    if red:
+        return score, RED
+    if short.reversal_guard:
+        if score >= 0.85:
+            return score, BLUE
+        if score <= -0.40:
+            return score, ORANGE
+        return score, YELLOW
+    if score >= 1.15 and short.positive_streak >= 3:
+        return score, GREEN
+    if score >= 0.35:
+        return score, BLUE
+    if score <= -1.05 and short.negative_streak >= 2:
+        return score, ORANGE
+    if score <= -0.30:
+        return score, ORANGE
+    return score, YELLOW
 
 
 def btc_gate(short: ShortMetrics, config: Mapping[str, Any]) -> bool:
-    return short.signal_color in {BLUE, GREEN, PURPLE} and short.data_quality == "good"
+    return (
+        short.signal_color in {GREEN, PURPLE}
+        and short.positive_streak >= 3
+        and not short.reversal_guard
+        and short.data_quality == "good"
+    )
 
 
 def build_coin_analysis(
@@ -1245,14 +1707,15 @@ def confidence_sort_key(item: CoinAnalysis) -> tuple[float, ...]:
     quality_rank = {"good": 2.0, "uncertain": 1.0, "insufficient": 0.0}.get(item.short.data_quality, 0.0)
     count = strength_count(item)
     margin = abs(item.short.accumulation_score - item.short.distribution_score)
-    # Primary order: closest to either strict extreme, then data quality and confirmed criteria.
+    persistence = max(item.short.positive_streak, item.short.negative_streak)
     return (
         float(item.short.extreme_proximity),
         float(item.short.pattern_confidence),
+        float(persistence),
+        0.0 if item.short.reversal_guard else 1.0,
         quality_rank,
         float(count),
         float(margin),
-        float(abs(item.short.acceleration_score)),
         float(item.short.anomaly_score),
     )
 

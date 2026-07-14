@@ -1,5 +1,6 @@
+# v3.2.5
 __pycache__/
-*.pyc
-.venv/
-output/latest_*
-# v3.2.4
+*.py[cod]
+.env
+output/latest_report.txt
+output/latest_analysis.json

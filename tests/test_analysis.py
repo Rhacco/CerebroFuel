@@ -1,4 +1,4 @@
-"""Focused deterministic tests for crypto-signal-monitor v3.2.4."""
+"""Focused deterministic tests for crypto-signal-monitor v3.2.5."""
 
 from __future__ import annotations
 
@@ -50,6 +50,62 @@ def calm_history(*, hours: int = 12, rate: float = 100.0, volume: float = 1_000_
             )
         )
     return points
+
+
+def sustained_history(kind: str) -> tuple[list[PricePoint], dict[str, object]]:
+    points: list[PricePoint] = []
+    count = 144
+    active_points = 24
+    for index in range(count):
+        timestamp = NOW_MS - (count - index) * 5 * 60_000
+        if index < count - active_points:
+            rate = 100.0 * (1.0 + 0.00005 * math.sin(index / 5.0))
+            volume = 1_000_000.0 * (1.0 + 0.0005 * math.sin(index / 7.0))
+        else:
+            step = index - (count - active_points)
+            if kind == "accumulation":
+                rate = 100.0 * (1.0 + 0.00002 * step)
+                volume = 1_000_000.0 * (1.0 + 0.0030 * step)
+            else:
+                rate = 100.0 * (1.0 + 0.0020 * step)
+                volume = 1_000_000.0 * (1.0 - 0.0015 * step)
+        points.append(PricePoint(timestamp, rate, volume))
+    if kind == "accumulation":
+        current = {
+            "rate": 100.0 * (1.0 + 0.00002 * active_points),
+            "volume": 1_000_000.0 * (1.0 + 0.0030 * active_points),
+            "delta": {"hour": 1.0002, "day": 1.0, "week": 1.01},
+        }
+    else:
+        current = {
+            "rate": 100.0 * (1.0 + 0.0020 * active_points),
+            "volume": 1_000_000.0 * (1.0 - 0.0015 * active_points),
+            "delta": {"hour": 1.02, "day": 1.03, "week": 1.05},
+        }
+    return points, current
+
+
+def reversal_history() -> tuple[list[PricePoint], dict[str, object]]:
+    """APE-like case: prior distribution followed by one fresh volume jump."""
+    points: list[PricePoint] = []
+    count = 144
+    for index in range(count):
+        timestamp = NOW_MS - (count - index) * 5 * 60_000
+        if index < 132:
+            rate = 100.0 * (1.0 + 0.00005 * math.sin(index / 5.0))
+            volume = 1_000_000.0 * (1.0 + 0.0005 * math.sin(index / 7.0))
+        else:
+            step = index - 132
+            rate = 100.0 * (1.0 + 0.00045 * step)
+            volume = 1_000_000.0 * (1.0 - 0.0012 * step)
+        points.append(PricePoint(timestamp, rate, volume))
+    last = points[-1]
+    current = {
+        "rate": last.rate * 1.0001,
+        "volume": float(last.volume or 0.0) * 1.022,
+        "delta": {"hour": 1.001, "day": 1.0, "week": 1.0},
+    }
+    return points, current
 
 
 def make_short(
@@ -120,13 +176,10 @@ class AnalysisTests(unittest.TestCase):
         self.assertTrue(all(volume[window] is not None for window in (10, 20, 60)))
 
     def test_strict_accumulation_is_purple_and_high_count(self) -> None:
+        history, current = sustained_history("accumulation")
         short = build_short_metrics(
-            current={
-                "rate": 100.01,
-                "volume": 1_030_000,
-                "delta": {"hour": 1.0001, "day": 1.0, "week": 1.01},
-            },
-            short_history=calm_history(),
+            current=current,
+            short_history=history,
             now_ms=NOW_MS,
             btc_price_changes={10: 0.0, 20: 0.0, 60: 0.0},
             config=CONFIG,
@@ -135,16 +188,14 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(short.signal_color, PURPLE)
         self.assertEqual(short.pressure_color, PURPLE)
         self.assertGreaterEqual(short.buy_count, 6)
-        self.assertGreaterEqual(short.accumulation_score, 82.0)
+        self.assertGreaterEqual(short.positive_streak, 3)
+        self.assertFalse(short.reversal_guard)
 
     def test_strict_distribution_is_red_and_high_count(self) -> None:
+        history, current = sustained_history("distribution")
         short = build_short_metrics(
-            current={
-                "rate": 102.0,
-                "volume": 985_000,
-                "delta": {"hour": 1.02, "day": 1.03, "week": 1.05},
-            },
-            short_history=calm_history(),
+            current=current,
+            short_history=history,
             now_ms=NOW_MS,
             btc_price_changes={10: 0.0, 20: 0.0, 60: 0.0},
             config=CONFIG,
@@ -153,7 +204,8 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(short.signal_color, RED)
         self.assertEqual(short.pressure_color, RED)
         self.assertGreaterEqual(short.sell_count, 6)
-        self.assertGreaterEqual(short.distribution_score, 82.0)
+        self.assertGreaterEqual(short.negative_streak, 3)
+        self.assertFalse(short.reversal_guard)
 
     def test_mixed_windows_interpolate_without_extreme_color(self) -> None:
         history = calm_history()
@@ -222,6 +274,56 @@ class AnalysisTests(unittest.TestCase):
         )
         # A single/mild relative impulse is not enough for purple/red.
         self.assertNotIn(coin.relative_color, {PURPLE, RED})
+
+    def test_recent_distribution_blocks_instant_green_reversal(self) -> None:
+        history, current = reversal_history()
+        short = build_short_metrics(
+            current=current,
+            short_history=history,
+            now_ms=NOW_MS,
+            btc_price_changes={10: 0.0, 20: 0.0, 60: 0.0},
+            config=CONFIG,
+            is_reference=False,
+        )
+        analysis = build_coin_analysis(
+            display_code="APE",
+            api_code="APE",
+            current=current,
+            short=short,
+            history=[],
+            now=datetime.fromtimestamp(NOW_MS / 1000, tz=timezone.utc),
+            timezone="UTC",
+            block_hours=4,
+            min_samples=12,
+            minimum_observations=60,
+            is_reference=False,
+            config=CONFIG,
+        )
+        self.assertTrue(short.reversal_guard)
+        self.assertNotIn(short.signal_color, {GREEN, PURPLE})
+        self.assertNotIn(short.pressure_color, {GREEN, PURPLE})
+        self.assertNotIn(analysis.now_color, {GREEN, PURPLE})
+        self.assertLessEqual(short.buy_count, 3)
+
+    def test_single_volume_jump_cannot_create_strong_buy(self) -> None:
+        history = calm_history()[:-1]
+        last = history[-1]
+        short = build_short_metrics(
+            current={
+                "rate": last.rate * 1.00005,
+                "volume": float(last.volume or 0.0) * 1.06,
+                "delta": {"week": 1.0},
+            },
+            short_history=history,
+            now_ms=NOW_MS,
+            btc_price_changes={10: 0.0, 20: 0.0, 60: 0.0},
+            config=CONFIG,
+            is_reference=False,
+        )
+        self.assertGreater(short.volume_jump_share[10], 0.75)
+        self.assertNotIn(short.signal_color, {GREEN, PURPLE})
+        self.assertNotEqual(short.pressure_color, PURPLE)
+        self.assertLessEqual(short.buy_count, 3)
 
     def test_weekdays_need_120_day_consistency_and_only_positive_days(self) -> None:
         now = datetime(2026, 7, 13, 12, tzinfo=timezone.utc)

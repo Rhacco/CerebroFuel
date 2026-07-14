@@ -1,4 +1,4 @@
-"""Entry point for crypto-signal-monitor v3.2.4."""
+"""Entry point for crypto-signal-monitor v3.2.5."""
 
 from __future__ import annotations
 
@@ -174,12 +174,18 @@ def refresh_histories(
 
 
 def log_quality(display: str, short: ShortMetrics) -> None:
-    if not short.quality_reasons:
-        return
-    details = ", ".join(
-        f"{window}m={reason}" for window, reason in sorted(short.quality_reasons.items())
-    )
-    print(f"Datenhinweis {display}: {details}", file=sys.stderr)
+    if short.quality_reasons:
+        details = ", ".join(
+            f"{window}m={reason}" for window, reason in sorted(short.quality_reasons.items())
+        )
+        print(f"Datenhinweis {display}: {details}", file=sys.stderr)
+    if short.reversal_guard:
+        print(
+            f"Trendwechsel-Schutz {display}: zeitliche Bestätigung fehlt "
+            f"(Achse={short.temporal_score:+.3f}, "
+            f"Streak={short.positive_streak}/{short.negative_streak}).",
+            file=sys.stderr,
+        )
 
 def run() -> int:
     args = parse_args()
@@ -277,6 +283,8 @@ def run() -> int:
         key=lambda pair: (
             short_by_code[pair[1]].extreme_proximity,
             short_by_code[pair[1]].pattern_confidence,
+            max(short_by_code[pair[1]].positive_streak, short_by_code[pair[1]].negative_streak),
+            0 if short_by_code[pair[1]].reversal_guard else 1,
             max(short_by_code[pair[1]].buy_count, short_by_code[pair[1]].sell_count),
             short_by_code[pair[1]].anomaly_score,
             pre_anomaly_score(current_by_code[pair[1]], reference_current),
@@ -340,7 +348,7 @@ def run() -> int:
     (output_dir / "latest_analysis.json").write_text(
         json.dumps(
             {
-                "version": "3.2.4",
+                "version": "3.2.5",
                 "generated_at": now.isoformat(),
                 "reference": analysis_to_dict(reference_analysis),
                 "top_coins": [analysis_to_dict(item) for item in top_analyses],

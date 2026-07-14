@@ -1,5 +1,5 @@
 {
-  "schema_version": "3.2.4",
+  "schema_version": "3.2.5",
   "reference_coin": "BTC",
   "groups": [
     {
@@ -151,5 +151,16 @@
     "light": 0.35,
     "clear": 1.05,
     "strong": 2.2
-  }
+  },
+  "temporal_offsets_minutes": [
+    5,
+    10,
+    15,
+    20,
+    25,
+    30
+  ],
+  "temporal_axis_clear": 0.18,
+  "temporal_axis_strong": 0.34,
+  "temporal_confirmation_points": 3
 }
