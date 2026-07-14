@@ -140,9 +140,10 @@ def abbreviate_code(code: str) -> str:
 
 
 def display_code(code: str) -> str:
-    """Keep short codes visible; requested format adds two spaces below 3 chars."""
+    """Pad short codes with three spaces for every missing character."""
     short = abbreviate_code(code)
-    return short + ("  " if len(short) < 3 else "")
+    missing = max(0, 3 - len(short))
+    return short + (" " * (3 * missing))
 
 
 
@@ -987,7 +988,7 @@ def format_line(item: CoinAnalysis, *, generated_at: datetime, timezone: str) ->
         market_gate = GREEN if item.btc_gate else BLACK
         # One BTC circle, then one literal space replacing the former second circle.
         return (
-            f"{market_gate} {minute_text} {count}/7{item.short.direction}"
+            f"{market_gate} {minute_text} {count}{item.short.direction}"
             f"7{item.week_color}B{market_gate}P{item.short.pressure_color}"
             f"V{volumes}N{item.now_color}{weekday_suffix}"
         )
@@ -1016,3 +1017,4 @@ def build_report(
 
 def analysis_to_dict(item: CoinAnalysis) -> dict[str, Any]:
     return asdict(item)
+

@@ -48,3 +48,4 @@ def send_discord(webhook_url: str, content: str, username: str, timeout: int = 3
             )
         if index + 1 < len(chunks):
             time.sleep(0.5)
+

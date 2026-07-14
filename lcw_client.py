@@ -89,3 +89,4 @@ class LiveCoinWatchClient:
         if not isinstance(data, dict) or not isinstance(data.get("history"), list):
             raise LiveCoinWatchError(f"Keine Historie für {code} erhalten.")
         return data["history"]
+

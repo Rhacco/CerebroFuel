@@ -83,8 +83,8 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(abbreviate_code("ZKSYNC"), "ZKS")
         self.assertEqual(abbreviate_code("ETHFI"), "EFI")
         self.assertEqual(abbreviate_code("MORPHO"), "MRP")
-        self.assertEqual(display_code("W"), "W  ")
-        self.assertEqual(display_code("OP"), "OP  ")
+        self.assertEqual(display_code("W"), "W      ")
+        self.assertEqual(display_code("OP"), "OP   ")
 
     def test_short_history_calculates_all_windows(self) -> None:
         history = [
@@ -225,10 +225,10 @@ class AnalysisTests(unittest.TestCase):
             Seasonality("=", ("SO", "MI"), 100, "weekday"), now_color=BLUE,
         )
         lines = build_report(ref, [low, high, mid], generated_at=now, timezone="UTC").splitlines()
-        self.assertEqual(lines[0], GREEN + " :01 6/7▲7" + BLUE + "B" + GREEN + "P" + GREEN + "V" + GREEN + GREEN + BLUE + "N" + YELLOW + "DIDO")
+        self.assertEqual(lines[0], GREEN + " :01 6▲7" + BLUE + "B" + GREEN + "P" + GREEN + "V" + GREEN + GREEN + BLUE + "N" + YELLOW + "DIDO")
         self.assertIn("ETH8▲", lines[1])
-        self.assertIn("OP  7▲", lines[2])
-        self.assertIn("W  5▲", lines[3])
+        self.assertIn("OP   7▲", lines[2])
+        self.assertIn("W      5▲", lines[3])
         self.assertNotIn("/8", "\n".join(lines[1:]))
         self.assertNotIn("\n\n", "\n".join(lines))
 
@@ -256,3 +256,4 @@ class AnalysisTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
