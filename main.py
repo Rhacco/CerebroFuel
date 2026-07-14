@@ -1,4 +1,4 @@
-"""Entry point for crypto-signal-monitor v3.2.2."""
+"""Entry point for crypto-signal-monitor v3.2.3."""
 
 from __future__ import annotations
 
@@ -125,6 +125,15 @@ def refresh_histories(
     return histories, failed
 
 
+
+def log_quality(display: str, short: ShortMetrics) -> None:
+    if not short.quality_reasons:
+        return
+    details = ", ".join(
+        f"{window}m={reason}" for window, reason in sorted(short.quality_reasons.items())
+    )
+    print(f"Datenhinweis {display}: {details}", file=sys.stderr)
+
 def run() -> int:
     args = parse_args()
     config = load_config(Path(args.config))
@@ -198,9 +207,10 @@ def run() -> int:
         config=config,
         is_reference=True,
     )
+    log_quality(reference_display, btc_short)
 
     short_by_code: dict[str, ShortMetrics] = {}
-    for _, api_code in preselected:
+    for display, api_code in preselected:
         short_by_code[api_code] = build_short_metrics(
             current=current_by_code[api_code],
             short_history=short_histories.get(api_code, []),
@@ -209,6 +219,7 @@ def run() -> int:
             config=config,
             is_reference=False,
         )
+        log_quality(display, short_by_code[api_code])
 
     top_count = int(config.get("top_coin_count", 8))
     selected = sorted(
@@ -276,7 +287,7 @@ def run() -> int:
     (output_dir / "latest_analysis.json").write_text(
         json.dumps(
             {
-                "version": "3.2.2",
+                "version": "3.2.3",
                 "generated_at": now.isoformat(),
                 "reference": analysis_to_dict(reference_analysis),
                 "top_coins": [analysis_to_dict(item) for item in top_analyses],

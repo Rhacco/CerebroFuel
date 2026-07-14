@@ -92,7 +92,7 @@
   "currency": "USD",
   "timezone": "Europe/Berlin",
   "top_coin_count": 8,
-  "preselect_coin_count": 12,
+  "preselect_coin_count": 20,
   "short_history_minutes": 120,
   "history_days": 42,
   "history_parallel_requests": 8,

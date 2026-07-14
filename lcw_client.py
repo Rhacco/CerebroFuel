@@ -26,7 +26,7 @@ class LiveCoinWatchClient:
             "cache-control": "no-cache",
             "pragma": "no-cache",
             "x-api-key": api_key,
-            "user-agent": "crypto-signal-monitor/3.2.2",
+            "user-agent": "crypto-signal-monitor/3.2.3",
         }
 
     def _post(self, endpoint: str, payload: dict[str, Any]) -> Any:

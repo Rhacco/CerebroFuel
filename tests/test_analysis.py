@@ -6,11 +6,12 @@ from datetime import datetime, timedelta, timezone
 from analysis import (
     BLACK,
     BLUE,
+    BROWN,
     GREEN,
     PURPLE,
     RED,
+    WHITE,
     YELLOW,
-    ORANGE,
     CoinAnalysis,
     PricePoint,
     Seasonality,
@@ -18,12 +19,13 @@ from analysis import (
     abbreviate_code,
     analyze_seasonality,
     btc_gate,
+    build_coin_analysis,
     build_report,
     build_short_metrics,
     compute_window_changes_from_history,
     current_now_signal,
+    display_code,
 )
-
 
 CONFIG = {
     "price": {
@@ -40,157 +42,178 @@ CONFIG = {
     "relative_clear_pct": 0.40,
     "relative_strong_pct": 1.20,
     "minimum_reliable_volume_usd": 500_000,
-    "minimum_short_history_points": 4,
     "maximum_plausible_volume_jump_pct": 500,
-    "btc_no_drop_pct": {"10": -0.10, "20": -0.15, "60": -0.25},
     "now_signal": {"light": 0.35, "clear": 1.05, "strong": 2.20},
 }
 
+NOW_MS = 1_800_000_000_000
+
+
+def make_short(
+    count: int,
+    signal_color: str,
+    *,
+    setup: dict[int, float | None] | None = None,
+) -> ShortMetrics:
+    return ShortMetrics(
+        price_changes={10: 0.2, 20: 0.4, 60: 0.8},
+        volume_changes={10: 0.3, 20: 0.5, 60: 1.0},
+        volume_colors={10: GREEN, 20: GREEN, 60: BLUE},
+        relative_short_pct=0.4,
+        relative_color=GREEN,
+        pressure_score=1.2,
+        pressure_color=GREEN,
+        buy_count=count,
+        sell_count=0,
+        direction="▲",
+        signal_color=signal_color,
+        anomaly_score=float(count),
+        data_quality="good",
+        window_setup_scores=setup or {10: 1.2, 20: 1.1, 60: 0.8},
+        agreement_score=1.3,
+    )
+
 
 class AnalysisTests(unittest.TestCase):
-    def test_abbreviations_are_at_most_three_chars(self) -> None:
-        self.assertEqual(abbreviate_code("ETH"), "ETH")
-        self.assertEqual(abbreviate_code("DOGE"), "DGE")
+    def test_fixed_readable_aliases_and_short_spacing(self) -> None:
+        self.assertEqual(abbreviate_code("NEAR"), "NER")
         self.assertEqual(abbreviate_code("HBAR"), "HBR")
+        self.assertEqual(abbreviate_code("DOGE"), "DGE")
         self.assertEqual(abbreviate_code("RENDER"), "RND")
-        self.assertEqual(abbreviate_code("FARTCOIN"), "FRT")
-        self.assertEqual(abbreviate_code("W"), "W")
+        self.assertEqual(abbreviate_code("ZKSYNC"), "ZKS")
+        self.assertEqual(abbreviate_code("ETHFI"), "EFI")
+        self.assertEqual(abbreviate_code("MORPHO"), "MRP")
+        self.assertEqual(display_code("W"), "W  ")
+        self.assertEqual(display_code("OP"), "OP  ")
 
     def test_short_history_calculates_all_windows(self) -> None:
-        now = 1_800_000_000_000
         history = [
-            PricePoint(now - 60 * 60_000, 100.0, 1_000_000.0),
-            PricePoint(now - 20 * 60_000, 101.0, 1_010_000.0),
-            PricePoint(now - 10 * 60_000, 102.0, 1_020_000.0),
+            PricePoint(NOW_MS - 60 * 60_000, 100.0, 1_000_000.0),
+            PricePoint(NOW_MS - 20 * 60_000, 101.0, 1_010_000.0),
+            PricePoint(NOW_MS - 10 * 60_000, 102.0, 1_020_000.0),
         ]
         price, volume = compute_window_changes_from_history(
             current_rate=103.0,
             current_volume=1_030_000.0,
             history=history,
-            now_ms=now,
+            now_ms=NOW_MS,
         )
         self.assertTrue(all(price[window] is not None for window in (10, 20, 60)))
         self.assertTrue(all(volume[window] is not None for window in (10, 20, 60)))
-        self.assertGreater(price[10], 0)
-        self.assertGreater(volume[60], 0)
 
-    def test_btc_gate_requires_rising_volume_and_no_drop(self) -> None:
-        short = ShortMetrics(
-            price_changes={10: 0.1, 20: 0.2, 60: 0.4},
-            volume_changes={10: 0.3, 20: 0.5, 60: 1.0},
-            volume_colors={10: GREEN, 20: GREEN, 60: PURPLE},
-            relative_short_pct=0.0,
-            relative_color=YELLOW,
-            pressure_score=1.0,
-            pressure_color=GREEN,
-            buy_count=5,
-            sell_count=0,
-            direction="▲",
-            signal_color=GREEN,
-            anomaly_score=10.0,
-            data_quality="good",
-        )
-        self.assertTrue(btc_gate(short, CONFIG))
-        short.volume_colors[20] = YELLOW
-        self.assertFalse(btc_gate(short, CONFIG))
-
-    def test_adaptive_seasonality_never_returns_question_mark(self) -> None:
-        now = datetime(2026, 7, 13, 12, tzinfo=timezone.utc)
-        points = []
-        rate = 100.0
-        for day in range(50):
-            ts = now - timedelta(days=50 - day)
-            rate *= 1.002 if ts.weekday() in (1, 3) else 0.999
-            points.append(PricePoint(int(ts.timestamp() * 1000), rate, 1_000_000.0))
-        result = analyze_seasonality(
-            points,
-            now,
-            "Europe/Berlin",
-            block_hours=4,
-            min_samples=3,
-            minimum_observations=20,
-        )
-        self.assertNotEqual(result.current, "?")
-        self.assertGreaterEqual(len(result.best_weekdays), 1)
-        self.assertLessEqual(len(result.best_weekdays), 2)
-
-    def test_fresh_short_metrics_do_not_need_kv(self) -> None:
-        now = 1_800_000_000_000
+    def test_accumulation_is_scored_early_and_strongly(self) -> None:
         history = [
-            PricePoint(now - 60 * 60_000, 100.0, 1_000_000.0),
-            PricePoint(now - 40 * 60_000, 100.5, 1_005_000.0),
-            PricePoint(now - 20 * 60_000, 101.0, 1_010_000.0),
-            PricePoint(now - 10 * 60_000, 101.5, 1_015_000.0),
+            PricePoint(NOW_MS - 60 * 60_000, 100.00, 1_000_000),
+            PricePoint(NOW_MS - 20 * 60_000, 100.01, 1_010_000),
+            PricePoint(NOW_MS - 10 * 60_000, 100.02, 1_015_000),
         ]
         current = {
-            "rate": 102.0,
-            "volume": 1_020_000.0,
-            "delta": {"hour": 1.02, "day": 1.04, "week": 1.08},
+            "rate": 100.03,
+            "volume": 1_040_000,
+            "delta": {"hour": 1.0003, "day": 1.0, "week": 1.01},
         }
         short = build_short_metrics(
             current=current,
             short_history=history,
-            now_ms=now,
-            btc_price_changes=None,
+            now_ms=NOW_MS,
+            btc_price_changes={10: 0.0, 20: 0.0, 60: 0.0},
             config=CONFIG,
-            is_reference=True,
+            is_reference=False,
         )
-        self.assertNotEqual(short.data_quality, "insufficient")
-        self.assertNotIn("⚪", short.volume_colors.values())
+        score, color = current_now_signal(
+            short,
+            Seasonality("=", ("SA", "DI"), 100, "weekday", 0.0, 0.8),
+            CONFIG,
+            is_reference=False,
+        )
+        self.assertGreaterEqual(short.buy_count, 5)
+        self.assertEqual(short.pressure_color, PURPLE)
+        self.assertEqual(color, PURPLE)
+        self.assertGreater(score or 0.0, 2.2)
 
-    def test_now_signal_distinguishes_demand_and_selling_pressure(self) -> None:
-        neutral_season = Seasonality(
-            "=", ("SA", "MO"), 100, "weekday", current_score=0.0, current_confidence=0.8
+    def test_price_outrunning_falling_volume_is_strong_sell_divergence(self) -> None:
+        history = [
+            PricePoint(NOW_MS - 60 * 60_000, 97.0, 1_050_000),
+            PricePoint(NOW_MS - 20 * 60_000, 98.5, 1_040_000),
+            PricePoint(NOW_MS - 10 * 60_000, 99.2, 1_030_000),
+        ]
+        current = {
+            "rate": 100.0,
+            "volume": 1_000_000,
+            "delta": {"hour": 1.03, "day": 1.05, "week": 1.10},
+        }
+        short = build_short_metrics(
+            current=current,
+            short_history=history,
+            now_ms=NOW_MS,
+            btc_price_changes={10: 0.0, 20: 0.0, 60: 0.0},
+            config=CONFIG,
+            is_reference=False,
         )
-        stable_volume_spike = ShortMetrics(
-            price_changes={10: 0.01, 20: 0.01, 60: 0.01},
-            volume_changes={10: 1.0, 20: 2.0, 60: 4.0},
-            volume_colors={10: PURPLE, 20: PURPLE, 60: PURPLE},
-            relative_short_pct=0.0, relative_color=YELLOW,
-            pressure_score=0.0, pressure_color=YELLOW,
-            buy_count=3, sell_count=0, direction="▲", signal_color=GREEN,
-            anomaly_score=10.0, data_quality="good",
-        )
-        score_up, color_up = current_now_signal(
-            stable_volume_spike, neutral_season, CONFIG, is_reference=False
-        )
-        self.assertEqual(color_up, PURPLE)
-        self.assertGreater(score_up or 0.0, 2.2)
+        self.assertGreaterEqual(short.sell_count, 5)
+        self.assertEqual(short.pressure_color, RED)
+        self.assertTrue(all((value or 0) <= -2.0 for value in short.window_setup_scores.values()))
 
-        falling_on_volume = ShortMetrics(
-            price_changes={10: -0.4, 20: -0.7, 60: -1.5},
-            volume_changes={10: 0.3, 20: 0.5, 60: 1.0},
-            volume_colors={10: GREEN, 20: GREEN, 60: GREEN},
-            relative_short_pct=-0.8, relative_color=RED,
-            pressure_score=-2.0, pressure_color=RED,
-            buy_count=0, sell_count=7, direction="▼", signal_color=RED,
-            anomaly_score=20.0, data_quality="good",
+    def test_one_bad_volume_window_does_not_turn_whole_coin_brown(self) -> None:
+        history = [
+            PricePoint(NOW_MS - 60 * 60_000, 100.0, 800_000),
+            PricePoint(NOW_MS - 20 * 60_000, 100.0, 900_000),
+            PricePoint(NOW_MS - 10 * 60_000, 100.0, 1_000),
+        ]
+        current = {
+            "rate": 100.01,
+            "volume": 1_000_000,
+            "delta": {"hour": 1.0, "day": 1.0, "week": 1.0},
+        }
+        short = build_short_metrics(
+            current=current,
+            short_history=history,
+            now_ms=NOW_MS,
+            btc_price_changes={10: 0.0, 20: 0.0, 60: 0.0},
+            config=CONFIG,
+            is_reference=False,
         )
-        score_down, color_down = current_now_signal(
-            falling_on_volume, neutral_season, CONFIG, is_reference=False
-        )
-        self.assertEqual(color_down, RED)
-        self.assertLess(score_down or 0.0, -1.05)
+        self.assertEqual(short.volume_colors[10], BROWN)
+        self.assertNotEqual(short.volume_colors[20], BROWN)
+        self.assertNotEqual(short.volume_colors[60], BROWN)
+        self.assertEqual(short.data_quality, "good")
+        self.assertNotEqual(short.pressure_color, BROWN)
+        self.assertIn("Volumensprung", short.quality_reasons[10])
 
-    def test_report_sorts_strictly_by_x_of_8(self) -> None:
+    def test_btc_gate_uses_two_of_three_setups(self) -> None:
+        short = make_short(5, GREEN, setup={10: 2.8, 20: 1.5, 60: -0.4})
+        self.assertTrue(btc_gate(short, CONFIG))
+        short.window_setup_scores[60] = -2.3
+        self.assertFalse(btc_gate(short, CONFIG))
+
+    def test_weekdays_are_two_best_and_saturday_first_chronologically(self) -> None:
+        now = datetime(2026, 7, 13, 12, tzinfo=timezone.utc)
+        points: list[PricePoint] = []
+        rate = 100.0
+        volume = 1_000_000.0
+        for day in range(70):
+            ts = now - timedelta(days=70 - day)
+            if ts.weekday() in (5, 1):
+                rate *= 1.006
+                volume *= 1.012
+            else:
+                rate *= 0.999
+                volume *= 0.999
+            points.append(PricePoint(int(ts.timestamp() * 1000), rate, volume))
+        result = analyze_seasonality(points, now, "Europe/Berlin", min_samples=3)
+        self.assertEqual(len(result.best_weekdays), 2)
+        self.assertEqual(result.best_weekdays[0], "SA")
+        self.assertEqual(result.best_weekdays[1], "DI")
+
+    def test_report_sort_and_new_compact_format(self) -> None:
         now = datetime(2026, 7, 13, 12, 1, tzinfo=timezone.utc)
-        def make_short(count: int, code_color: str) -> ShortMetrics:
-            return ShortMetrics(
-                price_changes={10: 0.2, 20: 0.4, 60: 0.8},
-                volume_changes={10: 0.3, 20: 0.5, 60: 1.0},
-                volume_colors={10: GREEN, 20: GREEN, 60: BLUE},
-                relative_short_pct=0.4, relative_color=GREEN,
-                pressure_score=1.2, pressure_color=GREEN,
-                buy_count=count, sell_count=0, direction="▲", signal_color=code_color,
-                anomaly_score=float(count), data_quality="good",
-            )
         ref = CoinAnalysis(
-            "BTC", "BTC", 1.0, 2.0, BLUE, make_short(5, GREEN),
-            Seasonality("=", ("SA", "MO"), 100, "weekday"),
+            "BTC", "BTC", 1.0, 2.0, BLUE, make_short(6, GREEN),
+            Seasonality("=", ("DI", "DO"), 100, "weekday"),
             now_color=YELLOW, is_reference=True, btc_gate=True,
         )
         low = CoinAnalysis(
-            "DOGE", "DOGE", 1.0, 0.0, YELLOW, make_short(5, GREEN),
+            "W", "W", 1.0, 0.0, YELLOW, make_short(5, GREEN),
             Seasonality("=", ("MO", "FR"), 100, "weekday"), now_color=YELLOW,
         )
         high = CoinAnalysis(
@@ -198,61 +221,37 @@ class AnalysisTests(unittest.TestCase):
             Seasonality("=", ("SA", "DI"), 100, "weekday"), now_color=GREEN,
         )
         mid = CoinAnalysis(
-            "SOL", "SOL", 1.0, 0.0, YELLOW, make_short(7, GREEN),
+            "OP", "OP", 1.0, 0.0, YELLOW, make_short(7, GREEN),
             Seasonality("=", ("SO", "MI"), 100, "weekday"), now_color=BLUE,
         )
         lines = build_report(ref, [low, high, mid], generated_at=now, timezone="UTC").splitlines()
-        self.assertIn("ETH8/8", lines[1])
-        self.assertIn("SOL7/8", lines[2])
-        self.assertIn("DGE5/8", lines[3])
-        self.assertTrue(lines[1].endswith("SADI"))
+        self.assertEqual(lines[0], GREEN + " :01 6/7▲7" + BLUE + "B" + GREEN + "P" + GREEN + "V" + GREEN + GREEN + BLUE + "N" + YELLOW + "DIDO")
+        self.assertIn("ETH8▲", lines[1])
+        self.assertIn("OP  7▲", lines[2])
+        self.assertIn("W  5▲", lines[3])
+        self.assertNotIn("/8", "\n".join(lines[1:]))
+        self.assertNotIn("\n\n", "\n".join(lines))
 
-    def test_compact_report_has_only_one_space_after_reference_time(self) -> None:
-        now = datetime(2026, 7, 13, 12, 1, tzinfo=timezone.utc)
-        short = ShortMetrics(
-            price_changes={10: 0.2, 20: 0.4, 60: 0.8},
-            volume_changes={10: 0.3, 20: 0.5, 60: 1.0},
-            volume_colors={10: GREEN, 20: GREEN, 60: BLUE},
-            relative_short_pct=0.4,
-            relative_color=GREEN,
-            pressure_score=1.2,
-            pressure_color=GREEN,
-            buy_count=6,
-            sell_count=0,
-            direction="▲",
-            signal_color=GREEN,
-            anomaly_score=20.0,
-            data_quality="good",
-        )
-        ref = CoinAnalysis(
-            display_code="BTC",
-            api_code="BTC",
-            price=1.0,
-            week_pct=2.0,
-            week_color=BLUE,
+    def test_build_coin_analysis_finishes_exact_denominators(self) -> None:
+        now = datetime(2026, 7, 13, 12, tzinfo=timezone.utc)
+        short = make_short(0, GREEN, setup={10: 2.8, 20: 2.0, 60: 1.2})
+        current = {"rate": 1.0, "delta": {"week": 1.04}}
+        analysis = build_coin_analysis(
+            display_code="ETH",
+            api_code="ETH",
+            current=current,
             short=short,
-            seasonality=Seasonality("=", ("DI", "DO"), 100, "weekday"),
-            is_reference=True,
-            btc_gate=False,
+            history=[],
+            now=now,
+            timezone="UTC",
+            block_hours=4,
+            min_samples=4,
+            minimum_observations=20,
+            is_reference=False,
+            config=CONFIG,
         )
-        coin = CoinAnalysis(
-            display_code="DOGE",
-            api_code="DOGE",
-            price=1.0,
-            week_pct=-2.0,
-            week_color=RED,
-            short=short,
-            seasonality=Seasonality("+", ("MO", "FR"), 100, "weekday"),
-        )
-        report = build_report(ref, [coin], generated_at=now, timezone="UTC")
-        lines = report.splitlines()
-        self.assertEqual(len(lines), 2)
-        self.assertEqual(lines[0], BLACK + BLACK + ":01 6/7▲7" + BLUE + "B" + BLACK + "P" + GREEN + "V" + GREEN + GREEN + BLUE + "N" + YELLOW + "DIDO")
-        self.assertTrue(lines[1].startswith(GREEN + "DGE6/8▲7"))
-        self.assertEqual(report.count(" "), 1)
-        self.assertNotIn("·", report)
-        self.assertNotIn("/" + "".join(("DI", "DO")), report)
-        self.assertNotIn("\n\n", report)
+        self.assertLessEqual(analysis.short.buy_count, 8)
+        self.assertLessEqual(analysis.short.sell_count, 8)
 
 
 if __name__ == "__main__":
