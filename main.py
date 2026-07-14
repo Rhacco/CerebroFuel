@@ -1,4 +1,4 @@
-"""Entry point for crypto-signal-monitor v3.2.6 quality refresh."""
+"""Entry point for crypto-signal-monitor v3.2.6 reliable-cache refresh."""
 
 from __future__ import annotations
 
@@ -24,19 +24,24 @@ from analysis import (
     pre_anomaly_score,
 )
 from daily_context import (
+    STATE_REVISION,
     STATE_VERSION,
+    InsufficientDailyHistory,
     build_daily_coin_context,
     carry_forward_context,
     context_for_coin,
+    context_is_complete,
     load_state,
     local_day_key,
     save_state,
+    state_fingerprint,
 )
 from discord_sender import send_discord
 from lcw_client import LiveCoinWatchClient
 
 ROOT = Path(__file__).resolve().parent
 DAILY_STATE_PATH = ROOT / ".cache" / "seasonality" / "state.json"
+DAILY_SAVE_MARKER = ROOT / ".cache" / "seasonality" / "save_required"
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -210,28 +215,69 @@ def log_weekday_context(display: str, context: dict[str, Any]) -> None:
     )
 
 
+def _daily_retry_due(entry: dict[str, Any] | None, now: datetime, config: dict[str, Any]) -> bool:
+    """Retry early failures quickly, then apply a small credit-saving backoff."""
+    if not entry:
+        return True
+    attempts = int(entry.get("attempt_count", 0))
+    immediate_attempts = int(config.get("daily_retry_immediate_attempts", 3))
+    if attempts < immediate_attempts:
+        return True
+    raw_last = entry.get("last_attempt_at")
+    if not raw_last:
+        return True
+    try:
+        last = datetime.fromisoformat(str(raw_last))
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return True
+    wait_minutes = int(config.get("daily_retry_minutes", 20))
+    return now - last >= timedelta(minutes=wait_minutes)
+
+
 def refresh_daily_state_if_needed(
     *,
     client: LiveCoinWatchClient,
     resolved_all: list[tuple[str, str]],
     now: datetime,
     config: dict[str, Any],
-) -> tuple[dict[str, Any], list[str], int]:
+) -> tuple[dict[str, Any], list[str], int, bool]:
+    """Refresh only missing/incomplete daily contexts and persist every improvement.
+
+    GitHub caches are immutable. The workflow therefore restores the latest
+    matching state and saves each changed state under a unique run key. A failed
+    coin remains retryable; a valid calculation with zero positive weekdays is
+    considered complete and is not queried again that day.
+    """
     timezone_name = str(config.get("timezone", "Europe/Berlin"))
     today = local_day_key(now, timezone_name)
     previous = load_state(DAILY_STATE_PATH)
+    before_fingerprint = state_fingerprint(previous)
     previous_coins = previous.get("coins") if isinstance(previous.get("coins"), dict) else {}
     current_codes = {display: api for display, api in resolved_all}
-    missing = [display for display in current_codes if display not in previous_coins]
-    context_revision = str(config.get("quality_revision", "daily-context-cache-flash-ranking-r3"))
-    version_changed = previous.get("version") != STATE_VERSION
-    revision_changed = previous.get("revision") != context_revision
-    full_refresh = version_changed or previous.get("date") != today or revision_changed
-    refresh_displays = list(current_codes) if full_refresh else missing
+
+    compatible = (
+        previous.get("version") == STATE_VERSION
+        and previous.get("revision") == STATE_REVISION
+    )
+    refresh_displays: list[str] = []
+    for display in current_codes:
+        entry = previous_coins.get(display)
+        if compatible and context_is_complete(entry, today):
+            continue
+        if not compatible or _daily_retry_due(entry if isinstance(entry, dict) else None, now, config):
+            refresh_displays.append(display)
 
     if not refresh_displays:
-        print(f"Tageskontext {today}: Cache vollständig, keine Langzeitabfragen.")
-        return previous, [], 0
+        complete = sum(
+            context_is_complete(previous_coins.get(display), today) for display in current_codes
+        )
+        print(
+            f"Tageskontext {today}: {complete}/{len(current_codes)} vollständig; "
+            "keine Langzeitabfrage fällig."
+        )
+        return previous, [], 0, False
 
     analysis_timezone = ZoneInfo(timezone_name)
     local_midnight = now.astimezone(analysis_timezone).replace(
@@ -240,64 +286,131 @@ def refresh_daily_state_if_needed(
     long_end = local_midnight.astimezone(timezone.utc)
     history_days = int(config.get("daily_history_days", 400))
     long_start = long_end - timedelta(days=history_days)
-    display_to_api = {display: api for display, api in resolved_all if display in refresh_displays}
+    display_to_api = {display: current_codes[display] for display in refresh_displays}
     codes = list(dict.fromkeys(display_to_api.values()))
     print(
-        f"Tageskontext {today}: {len(codes)} Langzeithistorien "
+        f"Tageskontext {today}: {len(codes)} fehlende/ungültige Langzeithistorien "
         f"({history_days} Tage bis {long_end.isoformat()}) ..."
     )
-    histories, failures = refresh_histories(
+    histories, transport_failures = refresh_histories(
         client=client,
         codes=codes,
         start_ms=int(long_start.timestamp() * 1000),
         end_ms=int(long_end.timestamp() * 1000),
-        workers=int(config.get("history_parallel_requests", 8)),
+        workers=int(config.get("daily_history_parallel_requests", 3)),
         label="Tageskontext",
     )
 
     new_coins: dict[str, Any] = dict(previous_coins)
+    failures: list[str] = list(transport_failures)
+    successes = 0
     for display in refresh_displays:
         api_code = current_codes[display]
         prior = previous_coins.get(display) if isinstance(previous_coins, dict) else None
-        # A quality-revision change deliberately reinitializes weekday selection so
-        # a previously empty/over-strict cache cannot suppress a valid first result.
-        if version_changed or revision_changed:
-            prior = None
+        prior_dict = prior if isinstance(prior, dict) else None
+        same_target = prior_dict and (
+            prior_dict.get("target_date") == today or prior_dict.get("computed_for") == today
+        )
+        attempt_count = int(prior_dict.get("attempt_count", 0)) + 1 if same_target else 1
         history = histories.get(api_code)
         if history:
-            new_coins[display] = build_daily_coin_context(
-                display=display,
-                api_code=api_code,
-                history=history,
-                now=now,
-                timezone=timezone_name,
-                config=config,
-                previous=prior,
-            )
-            log_weekday_context(display, new_coins[display])
+            try:
+                new_coins[display] = build_daily_coin_context(
+                    display=display,
+                    api_code=api_code,
+                    history=history,
+                    now=now,
+                    timezone=timezone_name,
+                    config=config,
+                    previous=prior_dict,
+                    computed_for=today,
+                    attempt_count=attempt_count,
+                )
+                successes += 1
+            except InsufficientDailyHistory as exc:
+                reason = str(exc)
+                failures.append(api_code)
+                new_coins[display] = carry_forward_context(
+                    display=display,
+                    api_code=api_code,
+                    previous=prior_dict,
+                    computed_for=today,
+                    now=now,
+                    reason=reason,
+                    attempt_count=attempt_count,
+                )
+                print(f"WARNUNG: Tageskontext {display}: {reason}; erneuter Versuch folgt.", file=sys.stderr)
         else:
+            reason = "LCW-Langzeithistorie nicht verfügbar"
             new_coins[display] = carry_forward_context(
                 display=display,
                 api_code=api_code,
-                previous=prior,
+                previous=prior_dict,
+                computed_for=today,
+                now=now,
+                reason=reason,
+                attempt_count=attempt_count,
             )
-            log_weekday_context(display, new_coins[display])
+        log_weekday_context(display, new_coins[display])
 
-    # Remove coins no longer present in config while preserving all successfully resolved ones.
+    # Remove deleted coins; keep successful/stale contexts for all configured coins.
     new_coins = {display: new_coins[display] for display in current_codes if display in new_coins}
+    complete_count = sum(context_is_complete(new_coins.get(display), today) for display in current_codes)
+    pending = [display for display in current_codes if not context_is_complete(new_coins.get(display), today)]
     state = {
         "version": STATE_VERSION,
-        "revision": context_revision,
+        "revision": STATE_REVISION,
         "date": today,
         "generated_at": now.isoformat(),
         "timezone": timezone_name,
         "coins": new_coins,
-        "failures": failures,
+        "complete_count": complete_count,
+        "pending": pending,
+        "failures": sorted(set(failures)),
     }
     save_state(DAILY_STATE_PATH, state)
-    print(f"Tageskontext gespeichert: {DAILY_STATE_PATH}")
-    return state, failures, len(codes)
+    changed = state_fingerprint(state) != before_fingerprint
+    if changed:
+        DAILY_SAVE_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        DAILY_SAVE_MARKER.write_text(
+            f"{today} complete={complete_count}/{len(current_codes)} successes={successes}\n",
+            encoding="utf-8",
+        )
+    print(
+        f"Tageskontext gespeichert: {complete_count}/{len(current_codes)} vollständig, "
+        f"{len(pending)} offen."
+    )
+    return state, sorted(set(failures)), len(codes), changed
 
+
+def _short_is_displayable(short: ShortMetrics) -> bool:
+    """Only complete 10/20/60-minute analyses may enter the visible Top 8."""
+    if short.data_quality == "insufficient":
+        return False
+    return all(short.window_setup_scores.get(window) is not None for window in (10, 20, 60))
+
+
+def _build_short_for_pair(
+    *,
+    display: str,
+    api_code: str,
+    current_by_code: dict[str, dict[str, Any]],
+    histories: dict[str, list],
+    now_ms: int,
+    btc_short: ShortMetrics,
+    config: dict[str, Any],
+) -> ShortMetrics:
+    short = build_short_metrics(
+        current=current_by_code[api_code],
+        short_history=histories.get(api_code, []),
+        now_ms=now_ms,
+        btc_price_changes=btc_short.price_changes,
+        config=config,
+        is_reference=False,
+        btc_short=btc_short,
+    )
+    log_quality(display, short)
+    return short
 
 def run() -> int:
     args = parse_args()
@@ -309,6 +422,9 @@ def run() -> int:
         raise ValueError("GitHub Secret LCW_API_KEY fehlt.")
     if should_send and not webhook_url:
         raise ValueError("GitHub Secret DISCORD_WEBHOOK_URL fehlt.")
+
+    # A restored marker belongs to an older immutable cache; only this run may recreate it.
+    DAILY_SAVE_MARKER.unlink(missing_ok=True)
 
     reference_pair, pool_pairs = parse_layout(config)
     all_pairs = [reference_pair, *pool_pairs]
@@ -342,37 +458,56 @@ def run() -> int:
         print("WARNUNG: Keine LCW-Daten für: " + ", ".join(unresolved), file=sys.stderr)
 
     resolved_all = [resolved_reference, *resolved_pool]
-    daily_state, daily_failures, daily_request_count = refresh_daily_state_if_needed(
+    daily_state, daily_failures, daily_request_count, _daily_changed = refresh_daily_state_if_needed(
         client=client,
         resolved_all=resolved_all,
         now=now,
         config=config,
     )
 
-    preselect_count = max(
-        int(config.get("top_coin_count", 8)),
-        int(config.get("preselect_coin_count", 22)),
-    )
-    preselected = balanced_preselection(
+    top_count = int(config.get("top_coin_count", 8))
+    initial_count = max(top_count, int(config.get("preselect_coin_count", 22)))
+    candidate_order = balanced_preselection(
         resolved_pool,
         current_by_code,
         reference_current,
-        preselect_count,
+        len(resolved_pool),
         slot=now_ms // (5 * 60_000),
     )
 
     short_minutes = int(config.get("short_history_minutes", 720))
     short_start_ms = int((now - timedelta(minutes=short_minutes)).timestamp() * 1000)
-    short_codes = list(dict.fromkeys([reference_api, *(api for _, api in preselected)]))
-    print(f"Lade frische Kurzzeithistorien für {len(short_codes)} Coins ({short_minutes} Min) ...")
-    short_histories, short_failures = refresh_histories(
-        client=client,
-        codes=short_codes,
-        start_ms=short_start_ms,
-        end_ms=now_ms,
-        workers=int(config.get("history_parallel_requests", 8)),
-        label="Kurzzeit",
-    )
+    short_histories: dict[str, list] = {}
+    short_failures: list[str] = []
+    attempted_pairs: list[tuple[str, str]] = []
+    short_by_code: dict[str, ShortMetrics] = {}
+    short_request_count = 0
+
+    def load_short_batch(pairs: list[tuple[str, str]], *, include_reference: bool = False) -> None:
+        nonlocal short_request_count
+        fresh_pairs = [pair for pair in pairs if pair not in attempted_pairs]
+        attempted_pairs.extend(fresh_pairs)
+        codes = [api for _, api in fresh_pairs]
+        if include_reference and reference_api not in short_histories:
+            codes.insert(0, reference_api)
+        codes = list(dict.fromkeys(codes))
+        if not codes:
+            return
+        print(f"Lade frische Kurzzeithistorien für {len(codes)} Coins ({short_minutes} Min) ...")
+        histories, failures = refresh_histories(
+            client=client,
+            codes=codes,
+            start_ms=short_start_ms,
+            end_ms=now_ms,
+            workers=int(config.get("history_parallel_requests", 5)),
+            label="Kurzzeit",
+        )
+        short_request_count += len(codes)
+        short_histories.update(histories)
+        short_failures.extend(failures)
+
+    initial_pairs = candidate_order[:initial_count]
+    load_short_batch(initial_pairs, include_reference=True)
 
     btc_short = build_short_metrics(
         current=reference_current,
@@ -383,19 +518,73 @@ def run() -> int:
         is_reference=True,
     )
     log_quality(reference_display, btc_short)
-
-    short_by_code: dict[str, ShortMetrics] = {}
-    for display, api_code in preselected:
-        short_by_code[api_code] = build_short_metrics(
-            current=current_by_code[api_code],
-            short_history=short_histories.get(api_code, []),
-            now_ms=now_ms,
-            btc_price_changes=btc_short.price_changes,
-            config=config,
-            is_reference=False,
-            btc_short=btc_short,
+    if not _short_is_displayable(btc_short):
+        # One isolated serial retry prevents a transient history error from producing
+        # a misleading white BTC line. No Discord report is sent if it remains invalid.
+        print("WARNUNG: BTC-Kurzzeitdaten unvollständig; serieller Sicherheitsversuch ...", file=sys.stderr)
+        retry_histories, retry_failures = refresh_histories(
+            client=client,
+            codes=[reference_api],
+            start_ms=int((now - timedelta(minutes=max(short_minutes, 1440))).timestamp() * 1000),
+            end_ms=now_ms,
+            workers=1,
+            label="Kurzzeit-Retry",
         )
-        log_quality(display, short_by_code[api_code])
+        short_request_count += 1
+        short_histories.update(retry_histories)
+        short_failures.extend(retry_failures)
+        btc_short = build_short_metrics(
+            current=reference_current,
+            short_history=short_histories.get(reference_api, []),
+            now_ms=now_ms,
+            btc_price_changes=None,
+            config=config,
+            is_reference=True,
+        )
+        log_quality(reference_display, btc_short)
+    if not _short_is_displayable(btc_short):
+        raise RuntimeError("BTC-Kurzzeitdaten sind nicht vollständig; Bericht aus Sicherheitsgründen verworfen.")
+
+    def analyze_new_pairs(pairs: list[tuple[str, str]]) -> None:
+        for display, api_code in pairs:
+            if api_code in short_by_code:
+                continue
+            short_by_code[api_code] = _build_short_for_pair(
+                display=display,
+                api_code=api_code,
+                current_by_code=current_by_code,
+                histories=short_histories,
+                now_ms=now_ms,
+                btc_short=btc_short,
+                config=config,
+            )
+
+    analyze_new_pairs(initial_pairs)
+    valid_pairs = [
+        pair
+        for pair in attempted_pairs
+        if pair[1] in short_by_code and _short_is_displayable(short_by_code[pair[1]])
+    ]
+    # If LCW omitted one or more detail histories, progressively query the next
+    # map-ranked coins. This normally costs nothing extra and avoids white Top-8 lines.
+    cursor = initial_count
+    fallback_batch_size = max(1, int(config.get("short_fallback_batch_size", 6)))
+    while len(valid_pairs) < top_count and cursor < len(candidate_order):
+        batch = candidate_order[cursor : cursor + fallback_batch_size]
+        cursor += len(batch)
+        load_short_batch(batch)
+        analyze_new_pairs(batch)
+        valid_pairs = [
+            pair
+            for pair in attempted_pairs
+            if pair[1] in short_by_code and _short_is_displayable(short_by_code[pair[1]])
+        ]
+
+    if len(valid_pairs) < top_count:
+        raise RuntimeError(
+            f"Nur {len(valid_pairs)}/{top_count} Coins besitzen vollständige 10/20/60-Minuten-Daten; "
+            "Bericht aus Qualitätsgründen verworfen."
+        )
 
     common = {
         "now": now,
@@ -420,7 +609,7 @@ def run() -> int:
     )
 
     candidate_analyses: list[CoinAnalysis] = []
-    for display, api_code in preselected:
+    for display, api_code in valid_pairs:
         seasonality, week_returns = context_for_coin(daily_state, display)
         candidate_analyses.append(
             build_coin_analysis(
@@ -437,7 +626,6 @@ def run() -> int:
             )
         )
 
-    top_count = int(config.get("top_coin_count", 8))
     top_analyses = sorted(candidate_analyses, key=confidence_sort_key, reverse=True)[:top_count]
     report = build_report(
         reference_analysis,
@@ -453,16 +641,20 @@ def run() -> int:
         json.dumps(
             {
                 "version": "3.2.6",
+                "revision": STATE_REVISION,
                 "generated_at": now.isoformat(),
                 "daily_context_date": daily_state.get("date"),
                 "daily_context_generated_at": daily_state.get("generated_at"),
+                "daily_context_complete": daily_state.get("complete_count"),
+                "daily_context_pending": daily_state.get("pending", []),
                 "reference": analysis_to_dict(reference_analysis),
                 "top_coins": [analysis_to_dict(item) for item in top_analyses],
-                "preselected": [display for display, _ in preselected],
+                "detail_attempted": [display for display, _ in attempted_pairs],
+                "detail_valid": [display for display, _ in valid_pairs],
                 "unresolved": unresolved,
-                "short_history_failures": short_failures,
+                "short_history_failures": sorted(set(short_failures)),
                 "daily_context_failures": daily_failures,
-                "api_requests_expected": 1 + len(short_codes) + daily_request_count,
+                "api_requests_expected": 1 + short_request_count + daily_request_count,
             },
             indent=2,
             ensure_ascii=False,

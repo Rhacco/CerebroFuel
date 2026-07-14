@@ -1,5 +1,5 @@
 function schedulerEnabled(env) {
-  // v3.2.6 quality refresh: ENABLED 1 = aktiv, 2 = pausiert.
+  // v3.2.6 reliable-cache refresh: ENABLED 1 = aktiv, 2 = pausiert.
   return String(env.ENABLED ?? "1").trim() === "1";
 }
 

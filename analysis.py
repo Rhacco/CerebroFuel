@@ -1,4 +1,4 @@
-"""Persistence-aware crypto extreme analysis with stable daily context (v3.2.6 quality refresh)."""
+"""Persistence-aware crypto extreme analysis with stable daily context (v3.2.6 reliable-cache refresh)."""
 
 from __future__ import annotations
 

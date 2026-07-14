@@ -1,4 +1,4 @@
-"""Daily cache, conservative bootstrap and flash-ranking tests for v3.2.6."""
+"""Daily cache, conservative bootstrap and flash-ranking tests for v3.2.6 reliable-cache refresh."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from analysis import CoinAnalysis, Seasonality, confidence_sort_key
-from daily_context import _stable_days, local_day_key, seasonality_from_dict
+from daily_context import _stable_days, context_is_complete, local_day_key, seasonality_from_dict
 from test_analysis import make_short
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,6 +95,33 @@ class DailyContextTests(unittest.TestCase):
         second, _, _, _, _ = _stable_days(raw_none, previous2, enter_days=2, exit_days=2)
         self.assertEqual(second, tuple())
 
+
+    def test_bootstrap_can_use_strong_positive_score_when_strict_list_is_empty(self) -> None:
+        raw = Seasonality(
+            "+",
+            tuple(),
+            350,
+            "test",
+            weekday_scores={"MO": 0.022, "DI": 0.004},
+            weekday_confidence={"MO": 0.56, "DI": 0.70},
+        )
+        selected, _, _, initialized, mode = _stable_days(raw, None, enter_days=2, exit_days=2)
+        self.assertEqual(selected, ("MO",))
+        self.assertTrue(initialized)
+        self.assertEqual(mode, "bootstrap-immediate")
+
+    def test_complete_empty_weekday_result_is_not_retried(self) -> None:
+        self.assertTrue(context_is_complete({"status": "complete", "computed_for": "2026-07-15"}, "2026-07-15"))
+        self.assertFalse(context_is_complete({"status": "stale-retry", "computed_for": "2026-07-14"}, "2026-07-15"))
+
+    def test_visible_short_metrics_require_all_three_windows(self) -> None:
+        import main
+
+        short = make_short(5, "🟢")
+        self.assertTrue(main._short_is_displayable(short))
+        short.window_setup_scores[60] = None
+        self.assertFalse(main._short_is_displayable(short))
+
     def test_local_day_key_uses_configured_timezone(self) -> None:
         now = datetime(2026, 7, 14, 22, 30, tzinfo=timezone.utc)
         self.assertEqual(local_day_key(now, "Europe/Berlin"), "2026-07-15")
@@ -143,8 +170,10 @@ class DailyContextTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "monitor.yml").read_text(encoding="utf-8")
         self.assertIn("actions/cache/restore@v4", workflow)
         self.assertIn("actions/cache/save@v4", workflow)
-        self.assertIn("hashFiles('config.json', 'analysis.py', 'daily_context.py')", workflow)
-        self.assertIn("seasonality-v326q2", workflow)
+        self.assertIn("hashFiles('config.json', 'analysis.py', 'daily_context.py', 'main.py')", workflow)
+        self.assertIn("seasonality-v326q3", workflow)
+        self.assertIn("github.run_id", workflow)
+        self.assertIn("save_required", workflow)
 
 
 class DailyStateIntegrationTests(unittest.TestCase):
@@ -189,26 +218,98 @@ class DailyStateIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = Path(temp_dir) / "state.json"
             with patch.object(main, "DAILY_STATE_PATH", state_path):
-                first, failures, count = main.refresh_daily_state_if_needed(
+                first, failures, count, changed = main.refresh_daily_state_if_needed(
                     client=client,
                     resolved_all=[("BTC", "BTC"), ("ETH", "ETH")],
                     now=now,
                     config=config,
                 )
                 self.assertEqual(count, 2)
+                self.assertTrue(changed)
                 self.assertFalse(failures)
                 self.assertEqual(first["date"], "2026-07-15")
                 calls_after_first = client.calls
-                second, failures2, count2 = main.refresh_daily_state_if_needed(
+                second, failures2, count2, changed2 = main.refresh_daily_state_if_needed(
                     client=client,
                     resolved_all=[("BTC", "BTC"), ("ETH", "ETH")],
                     now=now,
                     config=config,
                 )
                 self.assertEqual(count2, 0)
+                self.assertFalse(changed2)
                 self.assertFalse(failures2)
                 self.assertEqual(client.calls, calls_after_first)
                 self.assertEqual(second["date"], first["date"])
+
+    def test_failed_coin_is_retried_same_day_and_successes_are_kept(self) -> None:
+        import tempfile
+        from unittest.mock import patch
+
+        import main
+
+        class FlakyClient:
+            def __init__(self) -> None:
+                self.calls: dict[str, int] = {}
+
+            def get_history(self, code: str, start_ms: int, end_ms: int):
+                self.calls[code] = self.calls.get(code, 0) + 1
+                if code == "ETH" and self.calls[code] == 1:
+                    raise RuntimeError("temporary")
+                rows = []
+                rate = 100.0
+                volume = 1_000_000.0
+                for index in range(401):
+                    timestamp = start_ms + index * 86_400_000
+                    if timestamp > end_ms:
+                        break
+                    rate *= 1.0005 if index % 7 == 2 else 0.9999
+                    volume *= 1.001 if index % 7 == 2 else 0.9998
+                    rows.append({"date": timestamp, "rate": rate, "volume": volume, "cap": 1e9})
+                return rows
+
+        config = {
+            "timezone": "Europe/Berlin",
+            "daily_history_days": 400,
+            "daily_history_parallel_requests": 2,
+            "time_block_hours": 4,
+            "seasonality_min_samples": 20,
+            "seasonality_min_observations": 180,
+            "seasonality_lookback_days": 365,
+            "weekday_enter_confirmations": 2,
+            "weekday_exit_confirmations": 2,
+            "daily_retry_immediate_attempts": 3,
+        }
+        now = datetime(2026, 7, 15, 10, 0, tzinfo=timezone.utc)
+        client = FlakyClient()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.json"
+            marker_path = Path(temp_dir) / "save_required"
+            with patch.object(main, "DAILY_STATE_PATH", state_path), patch.object(
+                main, "DAILY_SAVE_MARKER", marker_path
+            ):
+                first, failures1, count1, changed1 = main.refresh_daily_state_if_needed(
+                    client=client,
+                    resolved_all=[("BTC", "BTC"), ("ETH", "ETH")],
+                    now=now,
+                    config=config,
+                )
+                self.assertEqual(count1, 2)
+                self.assertTrue(changed1)
+                self.assertIn("ETH", first["pending"])
+                self.assertEqual(first["complete_count"], 1)
+                second, failures2, count2, changed2 = main.refresh_daily_state_if_needed(
+                    client=client,
+                    resolved_all=[("BTC", "BTC"), ("ETH", "ETH")],
+                    now=now,
+                    config=config,
+                )
+                self.assertEqual(count2, 1)
+                self.assertTrue(changed2)
+                self.assertFalse(failures2)
+                self.assertEqual(second["complete_count"], 2)
+                self.assertEqual(second["pending"], [])
+                self.assertEqual(client.calls["BTC"], 1)
+                self.assertEqual(client.calls["ETH"], 2)
 
 
 if __name__ == "__main__":

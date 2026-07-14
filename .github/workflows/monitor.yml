@@ -1,6 +1,6 @@
 name: Crypto Signal Monitor
 
-# v3.2.6 quality refresh: stable daily context with conservative bootstrap
+# v3.2.6: immutable retryable daily context + complete short-data Top 8
 
 on:
   workflow_dispatch:
@@ -21,7 +21,7 @@ concurrency:
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
 
     steps:
       - name: Repository laden
@@ -39,14 +39,15 @@ jobs:
         run: |
           echo "day=$(TZ=Europe/Berlin date +%F)" >> "$GITHUB_OUTPUT"
 
-      - name: Täglichen Markt-Kontext wiederherstellen
+      - name: Letzten Tageskontext wiederherstellen
         id: context-cache
         uses: actions/cache/restore@v4
         with:
           path: .cache/seasonality
-          key: seasonality-v326q2-${{ runner.os }}-${{ steps.context-key.outputs.day }}-${{ hashFiles('config.json', 'analysis.py', 'daily_context.py') }}
+          key: seasonality-v326q3-${{ runner.os }}-${{ steps.context-key.outputs.day }}-${{ hashFiles('config.json', 'analysis.py', 'daily_context.py', 'main.py') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            seasonality-v326q2-${{ runner.os }}-
+            seasonality-v326q3-${{ runner.os }}-${{ steps.context-key.outputs.day }}-${{ hashFiles('config.json', 'analysis.py', 'daily_context.py', 'main.py') }}-
+            seasonality-v326q3-${{ runner.os }}-
 
       - name: Abhängigkeiten installieren
         run: python -m pip install --upgrade pip && pip install -r requirements.txt
@@ -58,30 +59,19 @@ jobs:
           SEND_DISCORD: ${{ inputs.send_discord }}
         run: python main.py
 
-      - name: Tageskontext prüfen
-        id: context-ready
+      - name: Neuen Tageskontext erkennen
+        id: context-save
         if: always()
         shell: bash
         run: |
-          python - <<'PY'
-          import json, os
-          from datetime import datetime
-          from pathlib import Path
-          from zoneinfo import ZoneInfo
-          path = Path('.cache/seasonality/state.json')
-          ready = False
-          try:
-              state = json.loads(path.read_text(encoding='utf-8'))
-              today = datetime.now(ZoneInfo('Europe/Berlin')).date().isoformat()
-              ready = state.get('version') == '3.2.6' and state.get('date') == today
-          except Exception:
-              pass
-          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as handle:
-              handle.write(f"ready={'true' if ready else 'false'}\n")
-          PY
+          if [[ -f .cache/seasonality/save_required && -f .cache/seasonality/state.json ]]; then
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "required=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Neuen Tageskontext speichern
-        if: always() && steps.context-ready.outputs.ready == 'true' && steps.context-cache.outputs.cache-hit != 'true'
+      - name: Verbesserten Tageskontext speichern
+        if: always() && steps.context-save.outputs.required == 'true'
         uses: actions/cache/save@v4
         with:
           path: .cache/seasonality

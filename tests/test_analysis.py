@@ -1,4 +1,4 @@
-"""Deterministic quality tests for crypto-signal-monitor v3.2.6 quality refresh."""
+"""Deterministic quality tests for crypto-signal-monitor v3.2.6 reliable-cache refresh."""
 
 from __future__ import annotations
 
