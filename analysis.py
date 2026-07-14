@@ -1,4 +1,4 @@
-"""Deterministic high-confidence crypto extreme analysis for Discord (v3.2.5)."""
+"""Conservative, persistence-aware crypto extreme analysis for Discord (v3.2.5 quality refresh)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import bisect
 import math
 import statistics
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Iterable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
@@ -122,6 +122,17 @@ class TimeObservation:
     score: float
 
 
+@dataclass(frozen=True)
+class DailyObservation:
+    timestamp_ms: int
+    date_ordinal: int
+    weekday: int
+    score: float
+    price_pct: float
+    volume_pct: float | None
+    reliability: float
+
+
 @dataclass
 class TemporalContext:
     axes: dict[int, float | None] = field(default_factory=dict)
@@ -137,6 +148,8 @@ class TemporalContext:
     positive_confirmed: bool = False
     negative_confirmed: bool = False
     reversal_guard: bool = False
+    consensus: float = 0.0
+    opposite_count: int = 0
     samples: int = 0
 
 
@@ -720,6 +733,11 @@ def _temporal_context(
     current_pressure: float,
     config: Mapping[str, Any],
 ) -> TemporalContext:
+    """Reconstruct recent states and apply hysteresis without external state.
+
+    Strong colors need a persistent run. A fresh opposite impulse is treated as a
+    possible transition, not as an immediate reversal.
+    """
     offsets = tuple(int(value) for value in config.get("temporal_offsets_minutes", [5, 10, 15, 20, 25, 30]))
     axes: dict[int, float | None] = {}
     pressures: dict[int, float | None] = {}
@@ -729,55 +747,86 @@ def _temporal_context(
         pressures[offset] = snapshot[1] if snapshot else None
 
     sequence = [current_axis] + [axes[offset] for offset in offsets]
-    clear = float(config.get("temporal_axis_clear", 0.18))
-    strong = float(config.get("temporal_axis_strong", 0.34))
+    usable = [float(value) for value in sequence if value is not None]
+    clear = float(config.get("temporal_axis_clear", 0.20))
+    strong = float(config.get("temporal_axis_strong", 0.42))
+    guard_threshold = float(config.get("temporal_guard_threshold", clear * 0.70))
+    min_confirmations = int(config.get("temporal_confirmation_points", 4))
+
     positive_streak = _streak(sequence, positive=True, threshold=clear)
     negative_streak = _streak(sequence, positive=False, threshold=clear)
-    recent_values_20 = [axes[offset] for offset in offsets if offset <= 20 and axes[offset] is not None]
-    recent_values_30 = [axes[offset] for offset in offsets if offset <= 30 and axes[offset] is not None]
-    positive_votes = sum(value >= clear for value in sequence if value is not None)
-    negative_votes = sum(value <= -clear for value in sequence if value is not None)
-    recent_positive = any(value >= strong for value in recent_values_30)
-    recent_negative = any(value <= -strong for value in recent_values_30)
+    positive_votes = sum(value >= clear for value in usable)
+    negative_votes = sum(value <= -clear for value in usable)
+    neutral_votes = len(usable) - positive_votes - negative_votes
+    consensus = abs(positive_votes - negative_votes) / max(len(usable), 1)
+
+    recent20 = [axes[offset] for offset in offsets if offset <= 20 and axes[offset] is not None]
+    recent30 = [axes[offset] for offset in offsets if offset <= 30 and axes[offset] is not None]
+    recent_positive = any(value >= guard_threshold for value in recent30)
+    recent_negative = any(value <= -guard_threshold for value in recent30)
     current_positive = current_axis >= clear
     current_negative = current_axis <= -clear
-    opposite_20 = (
-        current_positive and any(value <= -clear for value in recent_values_20)
-    ) or (
-        current_negative and any(value >= clear for value in recent_values_20)
-    )
-    min_confirmations = int(config.get("temporal_confirmation_points", 3))
+
     positive_confirmed = (
         positive_streak >= min_confirmations
-        and not any(value <= -clear for value in recent_values_20)
+        and positive_votes >= min_confirmations
+        and not any(value <= -clear for value in recent20)
     )
     negative_confirmed = (
         negative_streak >= min_confirmations
-        and not any(value >= clear for value in recent_values_20)
+        and negative_votes >= min_confirmations
+        and not any(value >= clear for value in recent20)
     )
-    reversal_guard = opposite_20 or (
+    opposite_count = (
+        sum(value <= -clear for value in recent30) if current_positive
+        else sum(value >= clear for value in recent30) if current_negative
+        else min(positive_votes, negative_votes)
+    )
+    reversal_guard = (
         current_positive and recent_negative and not positive_confirmed
     ) or (
         current_negative and recent_positive and not negative_confirmed
+    ) or (
+        current_positive and any(value <= -guard_threshold for value in recent20)
+    ) or (
+        current_negative and any(value >= guard_threshold for value in recent20)
     )
 
-    weights = [0.38, 0.24, 0.15, 0.10, 0.06, 0.04, 0.03]
+    # Current data matters, but a robust median prevents one five-minute point
+    # from dominating the whole state.
+    weights = [0.25, 0.20, 0.16, 0.13, 0.10, 0.07, 0.05, 0.04]
     weighted_axes: list[tuple[float, float]] = []
-    weighted_pressures: list[tuple[float, float]] = [(current_pressure, weights[0])]
+    weighted_pressures: list[tuple[float, float]] = []
     for index, value in enumerate(sequence):
         if value is not None:
             weighted_axes.append((float(value), weights[min(index, len(weights) - 1)]))
-    for index, offset in enumerate(offsets, start=1):
-        value = pressures.get(offset)
+    pressure_sequence = [current_pressure] + [pressures[offset] for offset in offsets]
+    for index, value in enumerate(pressure_sequence):
         if value is not None:
             weighted_pressures.append((float(value), weights[min(index, len(weights) - 1)]))
-    axis_weight = sum(weight for _, weight in weighted_axes)
-    pressure_weight = sum(weight for _, weight in weighted_pressures)
-    smoothed_axis = sum(value * weight for value, weight in weighted_axes) / max(axis_weight, 1e-9)
-    smoothed_pressure = sum(value * weight for value, weight in weighted_pressures) / max(pressure_weight, 1e-9)
+
+    def robust_temporal(values: list[tuple[float, float]]) -> float:
+        if not values:
+            return 0.0
+        total = sum(weight for _, weight in values)
+        mean = sum(value * weight for value, weight in values) / max(total, 1e-9)
+        median = _weighted_median(values)
+        return 0.48 * mean + 0.52 * median
+
+    smoothed_axis = robust_temporal(weighted_axes)
+    smoothed_pressure = robust_temporal(weighted_pressures)
+
+    # Mixed votes shrink the score; an unresolved reversal is capped near neutral.
+    agreement_factor = 0.55 + 0.45 * consensus
+    smoothed_axis *= agreement_factor
+    smoothed_pressure *= agreement_factor
     if reversal_guard:
+        smoothed_axis = _clamp(smoothed_axis, -0.24, 0.24)
+        smoothed_pressure = _clamp(smoothed_pressure, -0.30, 0.30)
+    elif neutral_votes >= 3 and consensus < 0.35:
         smoothed_axis *= 0.72
         smoothed_pressure *= 0.78
+
     return TemporalContext(
         axes=axes,
         pressures=pressures,
@@ -792,6 +841,8 @@ def _temporal_context(
         positive_confirmed=positive_confirmed,
         negative_confirmed=negative_confirmed,
         reversal_guard=reversal_guard,
+        consensus=consensus,
+        opposite_count=opposite_count,
         samples=sum(value is not None for value in axes.values()),
     )
 
@@ -842,7 +893,7 @@ def _strict_accumulation_extreme(
         return False
     if aggregate < 84.0 or not temporal.positive_confirmed or temporal.recent_negative:
         return False
-    if temporal.smoothed_axis < 0.55 or temporal.positive_streak < 3:
+    if temporal.smoothed_axis < 0.55 or temporal.positive_streak < int(config.get("temporal_confirmation_points", 4)):
         return False
     if sum((accumulation.get(window) or 0.0) >= 78.0 for window in WINDOWS) < 2:
         return False
@@ -878,7 +929,7 @@ def _strict_distribution_extreme(
         return False
     if aggregate < 84.0 or not temporal.negative_confirmed or temporal.recent_positive:
         return False
-    if temporal.smoothed_axis > -0.55 or temporal.negative_streak < 3:
+    if temporal.smoothed_axis > -0.55 or temporal.negative_streak < int(config.get("temporal_confirmation_points", 4)):
         return False
     if sum((distribution.get(window) or 0.0) >= 76.0 for window in WINDOWS) < 2:
         return False
@@ -914,21 +965,20 @@ def _pattern_color(
         return RED
     axis = temporal.smoothed_axis
     if temporal.reversal_guard:
-        if axis >= 0.28:
+        if axis >= 0.16:
             return BLUE
-        if axis <= -0.20:
+        if axis <= -0.16:
             return ORANGE
         return YELLOW
-    if axis >= 0.50 and temporal.positive_confirmed:
+    if axis >= 0.52 and temporal.positive_confirmed and temporal.consensus >= 0.55:
         return GREEN
-    if axis >= 0.18:
+    if axis >= 0.20 and temporal.positive_votes >= 3:
         return BLUE
-    if axis <= -0.48 and temporal.negative_streak >= 2:
+    if axis <= -0.52 and temporal.negative_confirmed and temporal.consensus >= 0.55:
         return ORANGE
-    if axis <= -0.16:
+    if axis <= -0.20 and temporal.negative_votes >= 3:
         return ORANGE
     return YELLOW
-
 
 def _relative_color(scores: Mapping[int, float | None], *, reference: bool = False) -> str:
     values = [value for value in scores.values() if value is not None]
@@ -969,34 +1019,37 @@ def _pressure_color(
     values = [value for value in window_pressures.values() if value is not None]
     if len(values) < 2 or score is None:
         return BROWN if quality == "uncertain" else WHITE
-    purple = (
+    if (
         strict_accumulation
         and temporal.positive_confirmed
+        and temporal.consensus >= 0.70
         and min(values) >= 1.25
         and sum(value >= 2.1 for value in values) >= 2
-    )
-    red = (
+    ):
+        return PURPLE
+    if (
         strict_distribution
         and temporal.negative_confirmed
+        and temporal.consensus >= 0.70
         and max(values) <= -0.45
         and score <= -2.0
-    )
-    if purple:
-        return PURPLE
-    if red:
+    ):
         return RED
-    if temporal.reversal_guard and score > 0:
-        return BLUE if score >= 1.0 else YELLOW
-    if score >= 1.25 and temporal.positive_streak >= 3:
+    if temporal.reversal_guard:
+        if score >= 0.65:
+            return BLUE
+        if score <= -0.65:
+            return ORANGE
+        return YELLOW
+    if score >= 1.35 and temporal.positive_confirmed and temporal.consensus >= 0.50:
         return GREEN
-    if score >= 0.35:
+    if score >= 0.45 and temporal.positive_votes >= 3:
         return BLUE
-    if score <= -1.15:
+    if score <= -1.25 and temporal.negative_confirmed and temporal.consensus >= 0.50:
         return ORANGE
-    if score <= -0.35:
+    if score <= -0.45 and temporal.negative_votes >= 3:
         return ORANGE
     return YELLOW
-
 
 def _quality_factor(quality: str, good_windows: int) -> float:
     if quality == "insufficient":
@@ -1017,31 +1070,62 @@ def _condition_counts(
     volume_jump_share: Mapping[int, float],
     temporal: TemporalContext,
 ) -> tuple[int, int]:
+    """Count eight conservative confirmations, not eight correlated colors."""
     acc = {window: accumulation.get(window) or 0.0 for window in WINDOWS}
     dist = {window: distribution.get(window) or 0.0 for window in WINDOWS}
     all_good = all(quality.get(window) == "good" for window in WINDOWS)
+    persistent_path = sum(
+        volume_continuity.get(window, 0.0) >= 0.60
+        and volume_jump_share.get(window, 1.0) <= 0.70
+        for window in WINDOWS
+    ) >= 2
+    stable_price_path = sum(price_continuity.get(window, 0.0) >= 0.54 for window in WINDOWS) >= 2
     buy_conditions = [
-        acc[10] >= 58.0,
-        acc[20] >= 58.0,
-        acc[60] >= 52.0,
-        sum(value >= 55.0 for value in acc.values()) >= 2 and max(dist.values()) < 48.0,
-        sum(volume_continuity.get(window, 0.0) >= 0.58 and volume_jump_share.get(window, 1.0) <= 0.72 for window in WINDOWS) >= 2,
-        temporal.positive_confirmed,
-        not temporal.recent_negative and not (temporal.reversal_guard and temporal.smoothed_axis > 0),
+        acc[10] >= 62.0,
+        acc[20] >= 62.0,
+        acc[60] >= 56.0,
+        sum(value >= 58.0 for value in acc.values()) >= 2 and max(dist.values()) < 42.0,
+        persistent_path,
+        temporal.positive_confirmed and temporal.consensus >= 0.50,
+        temporal.positive_votes >= 5 and not temporal.recent_negative and not temporal.reversal_guard,
         all_good and relative_color in {BLUE, GREEN, PURPLE},
     ]
     sell_conditions = [
-        dist[10] >= 58.0,
-        dist[20] >= 58.0,
-        dist[60] >= 52.0,
-        sum(value >= 55.0 for value in dist.values()) >= 2 and max(acc.values()) < 48.0,
-        sum(price_continuity.get(window, 0.0) >= 0.52 for window in WINDOWS) >= 2,
-        temporal.negative_confirmed,
-        not temporal.recent_positive and not (temporal.reversal_guard and temporal.smoothed_axis < 0),
+        dist[10] >= 62.0,
+        dist[20] >= 62.0,
+        dist[60] >= 56.0,
+        sum(value >= 58.0 for value in dist.values()) >= 2 and max(acc.values()) < 42.0,
+        stable_price_path,
+        temporal.negative_confirmed and temporal.consensus >= 0.50,
+        temporal.negative_votes >= 5 and not temporal.recent_positive and not temporal.reversal_guard,
         all_good and relative_color in {ORANGE, RED},
     ]
     return sum(buy_conditions), sum(sell_conditions)
 
+
+def _reference_confirmation_scores(
+    price_strengths: Mapping[int, float | None],
+    volume_strengths: Mapping[int, float | None],
+    window_pressures: Mapping[int, float | None],
+) -> dict[int, float | None]:
+    """BTC B-field: own price move only counts when volume/pressure do not contradict it."""
+    result: dict[int, float | None] = {}
+    for window in WINDOWS:
+        price = price_strengths.get(window)
+        volume = volume_strengths.get(window)
+        pressure = window_pressures.get(window)
+        if price is None or volume is None:
+            result[window] = None
+            continue
+        p = float(price)
+        v = float(volume)
+        q = float(pressure or 0.0) / 3.25
+        if p >= 0:
+            score = 0.58 * p + (0.27 * min(v, 3.0) if v >= 0 else 0.48 * v) + 0.15 * q
+        else:
+            score = 0.62 * p + (0.32 * v if v <= 0 else -0.38 * v) + 0.06 * q
+        result[window] = _clamp(score, -5.0, 5.0)
+    return result
 
 def _weighted_relative_pct(
     price_changes: Mapping[int, float | None], btc_price_changes: Mapping[int, float | None]
@@ -1173,8 +1257,8 @@ def build_short_metrics(
     # The effective score deliberately retains recent warnings instead of treating every run as a reset.
     positive_temporal = max(temporal.smoothed_axis, 0.0) * 100.0
     negative_temporal = max(-temporal.smoothed_axis, 0.0) * 100.0
-    acc_score = 0.64 * raw_acc_score + 0.36 * positive_temporal
-    dist_score = 0.64 * raw_dist_score + 0.36 * negative_temporal
+    acc_score = 0.55 * raw_acc_score + 0.45 * positive_temporal
+    dist_score = 0.55 * raw_dist_score + 0.45 * negative_temporal
     if temporal.reversal_guard:
         if current_axis > 0:
             acc_score *= 0.62
@@ -1212,7 +1296,9 @@ def build_short_metrics(
 
     relative_scores: dict[int, float | None] = {}
     if is_reference:
-        relative_scores = {window: price_strengths.get(window) for window in WINDOWS}
+        relative_scores = _reference_confirmation_scores(
+            price_strengths, volume_strengths, window_pressures
+        )
         relative_short = 0.0
         relative_color = _relative_color(relative_scores, reference=True)
     else:
@@ -1279,7 +1365,8 @@ def build_short_metrics(
         temporal=temporal,
     )
     quality_factor = _quality_factor(quality, good_windows)
-    persistence_factor = 0.62 + 0.10 * min(max(temporal.positive_streak, temporal.negative_streak), 3)
+    persistence_factor = 0.54 + 0.09 * min(max(temporal.positive_streak, temporal.negative_streak), 4)
+    persistence_factor *= 0.70 + 0.30 * temporal.consensus
     if temporal.reversal_guard:
         persistence_factor *= 0.72
     proximity = max(acc_score, dist_score) * quality_factor * persistence_factor
@@ -1343,98 +1430,143 @@ def build_short_metrics(
     )
 
 
-def _return_observations(points: list[PricePoint], timezone: str, block_hours: int) -> tuple[list[TimeObservation], float | None]:
-    if len(points) < 2:
-        return [], None
-    intervals = [
-        (current.timestamp_ms - previous.timestamp_ms) / 3_600_000
-        for previous, current in zip(points, points[1:])
-        if current.timestamp_ms > previous.timestamp_ms
-    ]
-    median_interval = _median(intervals)
-    if median_interval is None:
-        return [], None
-    lower = max(5 / 60, median_interval * 0.25)
-    upper = min(72.0, median_interval * 4.0)
-    raw: list[tuple[int, int, int | None, float, float | None]] = []
+def _wilson_lower_bound(successes: float, total: float, z: float = 1.2816) -> float:
+    """One-sided Wilson lower bound (about 90% confidence)."""
+    if total <= 0:
+        return 0.0
+    p = _clamp(successes / total, 0.0, 1.0)
+    denominator = 1.0 + z * z / total
+    centre = p + z * z / (2.0 * total)
+    margin = z * math.sqrt((p * (1.0 - p) + z * z / (4.0 * total)) / total)
+    return _clamp((centre - margin) / denominator, 0.0, 1.0)
+
+
+def _completed_daily_observations(
+    points: list[PricePoint],
+    now: datetime,
+    timezone: str,
+    lookback_days: int,
+) -> list[DailyObservation]:
+    """Build exactly one observation per completed local calendar day.
+
+    The current day and the partial first day are excluded. This makes weekday
+    output identical throughout the day and avoids counting many correlated
+    intraday points as independent samples.
+    """
+    if len(points) < 3:
+        return []
     tz = ZoneInfo(timezone)
-    for previous, current in zip(points, points[1:]):
-        elapsed_hours = (current.timestamp_ms - previous.timestamp_ms) / 3_600_000
-        if elapsed_hours < lower or elapsed_hours > upper or previous.rate <= 0:
+    local_now = now.astimezone(tz)
+    today = local_now.date()
+    cutoff_ordinal = today.toordinal()
+    earliest_ordinal = cutoff_ordinal - max(lookback_days + 3, 10)
+
+    closes: dict[int, PricePoint] = {}
+    for point in points:
+        local = datetime.fromtimestamp(point.timestamp_ms / 1000, tz=tz)
+        ordinal = local.date().toordinal()
+        if ordinal >= cutoff_ordinal or ordinal < earliest_ordinal:
             continue
-        price_change = (current.rate / previous.rate - 1.0) * 100.0 / max(math.sqrt(elapsed_hours), 1.0)
-        volume_change: float | None = None
-        if previous.volume is not None and current.volume is not None and previous.volume > 0:
-            candidate = (current.volume / previous.volume - 1.0) * 100.0
-            if math.isfinite(candidate) and abs(candidate) <= 1500:
-                volume_change = candidate / max(math.sqrt(elapsed_hours), 1.0)
-        local = datetime.fromtimestamp(current.timestamp_ms / 1000, tz=tz)
-        block = (local.hour // block_hours) * block_hours if median_interval <= 8.0 else None
-        raw.append((current.timestamp_ms, local.weekday(), block, price_change, volume_change))
-    if not raw:
-        return [], median_interval
-    price_scale = _robust_baseline([item[3] for item in raw], 0.01)
-    volume_scale = _robust_baseline([item[4] for item in raw if item[4] is not None], 0.10)
-    observations: list[TimeObservation] = []
-    combined_values: list[float] = []
-    for timestamp, weekday, block, price_value, volume_value in raw:
-        p = _clamp((price_value - price_scale.median) / price_scale.scale, -3.5, 3.5)
-        if volume_value is None:
-            score = p * 0.55
+        previous = closes.get(ordinal)
+        if previous is None or point.timestamp_ms > previous.timestamp_ms:
+            closes[ordinal] = point
+    ordered = sorted(closes.items())
+    raw: list[tuple[int, int, int, float, float | None, float]] = []
+    for (previous_day, previous), (current_day, current) in zip(ordered, ordered[1:]):
+        gap_days = current_day - previous_day
+        if gap_days < 1 or gap_days > 2 or previous.rate <= 0:
+            continue
+        price_pct = _pct(current.rate, previous.rate)
+        volume_pct = _pct(current.volume, previous.volume)
+        if price_pct is None or not math.isfinite(price_pct):
+            continue
+        if volume_pct is not None and (not math.isfinite(volume_pct) or abs(volume_pct) > 1500):
+            volume_pct = None
+        # Consecutive daily closes are most reliable; a two-day gap is retained
+        # with reduced weight instead of pretending it is a normal day.
+        reliability = 1.0 if gap_days == 1 else 0.62
+        timestamp_ms = current.timestamp_ms
+        weekday = datetime.fromtimestamp(timestamp_ms / 1000, tz=tz).weekday()
+        raw.append((timestamp_ms, current_day, weekday, price_pct, volume_pct, reliability))
+
+    if len(raw) < 14:
+        return []
+    price_base = _robust_baseline([row[3] for row in raw], 0.25)
+    volume_base = _robust_baseline([row[4] for row in raw if row[4] is not None], 0.75)
+    scored: list[DailyObservation] = []
+    raw_scores: list[float] = []
+    staged: list[tuple[tuple[int, int, int, float, float | None, float], float]] = []
+    for row in raw:
+        timestamp_ms, ordinal, weekday, price_pct, volume_pct, reliability = row
+        pz = _clamp(_robust_z(price_pct, price_base) or 0.0, -3.5, 3.5)
+        if volume_pct is None:
+            score = 0.55 * pz
+            reliability *= 0.76
         else:
-            v = _clamp((volume_value - volume_scale.median) / volume_scale.scale, -3.5, 3.5)
-            # Weekday quality rewards positive price with confirming volume and stable price with demand.
-            if abs(p) <= 0.65 and v > 0:
-                score = 0.72 * v
-            elif p > 0 and v >= 0:
-                score = 0.62 * p + 0.38 * v
-            elif p > 0 and v < 0:
-                score = 0.55 * p + 0.45 * v
-            elif p < 0 and v > 0:
-                score = 0.70 * p - 0.30 * v
+            vz = _clamp(_robust_z(volume_pct, volume_base) or 0.0, -3.5, 3.5)
+            if abs(pz) <= 0.40 and vz > 0:
+                score = 0.18 * pz + 0.82 * vz
+            elif pz > 0 and vz >= 0:
+                score = 0.66 * pz + 0.34 * vz
+            elif pz > 0 and vz < 0:
+                score = 0.52 * pz + 0.78 * vz
+            elif pz < 0 and vz > 0:
+                score = 0.74 * pz - 0.48 * vz
             else:
-                score = 0.72 * p + 0.28 * v
-        combined_values.append(score)
-        observations.append(TimeObservation(timestamp, weekday, block, score))
-    baseline = 0.60 * statistics.median(combined_values) + 0.40 * _trimmed_mean(combined_values)
-    centered = [TimeObservation(item.timestamp_ms, item.weekday, item.block, item.score - baseline) for item in observations]
-    # Keep recurring weekday extremes; robust medians/weighted checks below handle isolated outliers.
-    return centered, median_interval
+                score = 0.72 * pz + 0.28 * vz
+        score = _clamp(score * reliability, -4.0, 4.0)
+        staged.append((row, score))
+        raw_scores.append(score)
+
+    global_centre = 0.60 * statistics.median(raw_scores) + 0.40 * _trimmed_mean(raw_scores)
+    for row, score in staged:
+        timestamp_ms, ordinal, weekday, price_pct, volume_pct, reliability = row
+        scored.append(
+            DailyObservation(
+                timestamp_ms=timestamp_ms,
+                date_ordinal=ordinal,
+                weekday=weekday,
+                score=score - global_centre,
+                price_pct=price_pct,
+                volume_pct=volume_pct,
+                reliability=reliability,
+            )
+        )
+    # Keep exactly the requested number of completed local days.
+    minimum_ordinal = cutoff_ordinal - lookback_days
+    return [item for item in scored if item.date_ordinal >= minimum_ordinal]
 
 
-def _recency_weight(timestamp_ms: int, now_ms: int, half_life_days: float = 35.0) -> float:
+def _recency_weight(timestamp_ms: int, now_ms: int, half_life_days: float = 50.0) -> float:
     age_days = max(0.0, (now_ms - timestamp_ms) / 86_400_000)
     return 0.5 ** (age_days / max(half_life_days, 1.0))
 
 
-def _day_metrics(items: list[TimeObservation], now_ms: int) -> tuple[float, float, float, float]:
-    weighted = [(item.score, _recency_weight(item.timestamp_ms, now_ms)) for item in items]
+def _daily_group_metrics(items: Sequence[DailyObservation], now_ms: int) -> tuple[float, float, float, float, float]:
+    if not items:
+        return 0.0, 0.0, 9.0, 0.0, 0.0
+    weighted = [
+        (item.score, _recency_weight(item.timestamp_ms, now_ms, half_life_days=50.0) * item.reliability)
+        for item in items
+    ]
+    total_weight = max(sum(weight for _, weight in weighted), 1e-9)
     median_value = _weighted_median(weighted)
-    weighted_mean = sum(value * weight for value, weight in weighted) / max(sum(weight for _, weight in weighted), 1e-9)
-    central = 0.65 * median_value + 0.35 * weighted_mean
-    hit_rate = sum(weight for value, weight in weighted if value > 0) / max(sum(weight for _, weight in weighted), 1e-9)
-    dispersion = _robust_baseline([item.score for item in items], 0.10).scale
+    mean_value = sum(value * weight for value, weight in weighted) / total_weight
+    central = 0.72 * median_value + 0.28 * mean_value
+    hit_weight = sum(weight for value, weight in weighted if value > 0)
+    hit_rate = hit_weight / total_weight
+    dispersion = _robust_baseline([item.score for item in items], 0.12).scale
     consistency = _clamp(abs(hit_rate - 0.5) * 2.0, 0.0, 1.0)
-    return central, hit_rate, dispersion, consistency
+    wilson = _wilson_lower_bound(hit_weight, total_weight)
+    return central, hit_rate, dispersion, consistency, wilson
 
 
-def _time_summary(values: list[TimeObservation], now_ms: int, min_samples: int) -> tuple[str, float, float]:
-    if len(values) < min_samples:
-        return "?", 0.0, min(1.0, len(values) / max(min_samples, 1))
-    central, hit_rate, dispersion, consistency = _day_metrics(values, now_ms)
-    sample_confidence = min(1.0, len(values) / max(min_samples * 1.5, 1.0))
-    confidence = sample_confidence * (0.55 + 0.45 * consistency) * (1.0 / (1.0 + 0.12 * dispersion))
-    if confidence < 0.44:
-        return "?", central, confidence
-    if central >= 1.0 and hit_rate >= 0.68 and confidence >= 0.62:
-        return "++", central, confidence
-    if central >= 0.30 and hit_rate >= 0.58 and confidence >= 0.48:
-        return "+", central, confidence
-    if central <= -1.0 and hit_rate <= 0.32 and confidence >= 0.62:
-        return "--", central, confidence
-    if central <= -0.30 and hit_rate <= 0.42 and confidence >= 0.48:
-        return "-", central, confidence
-    return "=", central, confidence
+def _leave_extremes_out_central(items: Sequence[DailyObservation], now_ms: int) -> float:
+    if len(items) < 5:
+        return 0.0
+    ordered = sorted(items, key=lambda item: item.score)
+    trimmed = ordered[1:-1]
+    return _daily_group_metrics(trimmed, now_ms)[0]
 
 
 def analyze_seasonality(
@@ -1444,60 +1576,108 @@ def analyze_seasonality(
     block_hours: int = 4,
     min_samples: int = 12,
     minimum_observations: int = 60,
+    lookback_days: int = 120,
 ) -> Seasonality:
-    observations, _ = _return_observations(points, timezone, block_hours)
+    del block_hours  # Kept for API compatibility; only completed calendar days are used.
+    observations = _completed_daily_observations(points, now, timezone, lookback_days)
     if len(observations) < minimum_observations:
-        return Seasonality("?", tuple(), len(observations), "insufficient")
-    now_ms = int(now.timestamp() * 1000)
-    recent_cutoff = now_ms - 45 * 86_400_000
-    by_weekday: dict[int, list[TimeObservation]] = {}
-    by_slot: dict[tuple[int, int], list[TimeObservation]] = {}
+        return Seasonality("?", tuple(), len(observations), "completed-days-insufficient")
+
+    local_now = now.astimezone(ZoneInfo(timezone))
+    local_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    now_ms = int(local_midnight.timestamp() * 1000)
+    local_today = local_now.date().toordinal()
+    recent60_cutoff = local_today - 60
+    recent30_cutoff = local_today - 30
+    by_weekday: dict[int, list[DailyObservation]] = {}
     for item in observations:
         by_weekday.setdefault(item.weekday, []).append(item)
-        if item.block is not None:
-            by_slot.setdefault((item.weekday, item.block), []).append(item)
 
+    required = max(12, min_samples)
     candidates: list[tuple[int, float, float]] = []
     weekday_scores: dict[str, float] = {}
     weekday_confidence: dict[str, float] = {}
-    required = max(12, min_samples)
-    for weekday, items in by_weekday.items():
-        recent = [item for item in items if item.timestamp_ms >= recent_cutoff]
-        if len(items) < required or len(recent) < 4:
+    day_summaries: dict[int, tuple[float, float]] = {}
+
+    for weekday in range(7):
+        items = by_weekday.get(weekday, [])
+        recent60 = [item for item in items if item.date_ordinal >= recent60_cutoff]
+        recent30 = [item for item in items if item.date_ordinal >= recent30_cutoff]
+        if len(items) < required or len(recent60) < 6 or len(recent30) < 3:
             continue
-        full_central, full_hit, full_dispersion, full_consistency = _day_metrics(items, now_ms)
-        recent_central, recent_hit, _, recent_consistency = _day_metrics(recent, now_ms)
-        same_positive = full_central > 0 and recent_central > 0
-        sample_factor = min(1.0, len(items) / 18.0)
-        confidence = sample_factor * (0.40 + 0.30 * full_consistency + 0.30 * recent_consistency)
-        confidence *= 1.0 / (1.0 + 0.10 * full_dispersion)
-        conservative = min(full_central, recent_central)
-        quality = conservative * confidence * (0.55 + 0.25 * full_hit + 0.20 * recent_hit)
+        full = _daily_group_metrics(items, now_ms)
+        r60 = _daily_group_metrics(recent60, now_ms)
+        r30 = _daily_group_metrics(recent30, now_ms)
+        leave_out = _leave_extremes_out_central(items, now_ms)
+        full_central, full_hit, full_dispersion, full_consistency, full_wilson = full
+        r60_central, r60_hit, _, r60_consistency, r60_wilson = r60
+        r30_central, r30_hit, _, _, _ = r30
+
+        sample_factor = min(1.0, len(items) / 17.0)
+        confidence = sample_factor
+        confidence *= 0.40 + 0.25 * full_consistency + 0.25 * r60_consistency + 0.10 * min(1.0, len(recent30) / 5.0)
+        confidence *= 1.0 / (1.0 + 0.12 * full_dispersion)
+        conservative = min(full_central, r60_central, max(r30_central, -0.02), leave_out)
+        hit_support = min(full_hit, r60_hit)
+        quality = conservative * confidence * (0.55 + 0.25 * hit_support + 0.20 * min(full_wilson, r60_wilson))
         name = DAY_NAMES[weekday]
         weekday_scores[name] = round(quality, 4)
         weekday_confidence[name] = round(confidence, 4)
-        if same_positive and full_hit >= 0.55 and recent_hit >= 0.55 and confidence >= 0.48 and quality > 0.08:
+        day_summaries[weekday] = (conservative, confidence)
+
+        qualifies = (
+            full_central > 0.10
+            and r60_central > 0.08
+            and r30_central >= -0.02
+            and leave_out > 0.05
+            and full_hit >= 0.56
+            and r60_hit >= 0.56
+            and r30_hit >= 0.50
+            and full_wilson >= 0.40
+            and r60_wilson >= 0.36
+            and confidence >= 0.54
+            and quality > 0.055
+        )
+        if qualifies:
             candidates.append((weekday, quality, confidence))
-    candidates.sort(key=lambda item: (item[1], item[2]), reverse=True)
-    selected = [weekday for weekday, _, _ in candidates[:2]]
+
+    # Avoid unstable second places: the runner-up must be independently solid,
+    # not merely the least weak day.
+    candidates.sort(key=lambda item: (round(item[1], 3), round(item[2], 3)), reverse=True)
+    selected: list[int] = []
+    if candidates:
+        selected.append(candidates[0][0])
+    if len(candidates) >= 2:
+        first_quality = candidates[0][1]
+        second_quality = candidates[1][1]
+        if second_quality >= max(0.060, first_quality * 0.62):
+            selected.append(candidates[1][0])
     selected.sort(key=DISPLAY_WEEK_ORDER.index)
     best_days = tuple(DAY_NAMES[weekday] for weekday in selected)
 
-    local_now = now.astimezone(ZoneInfo(timezone))
-    current_block = (local_now.hour // block_hours) * block_hours
-    slot = by_slot.get((local_now.weekday(), current_block), [])
-    if len(slot) >= max(12, min_samples):
-        current, score, confidence = _time_summary(slot, now_ms, max(12, min_samples))
-        source = "weekday-block"
+    current_weekday = now.astimezone(ZoneInfo(timezone)).weekday()
+    current_summary = day_summaries.get(current_weekday)
+    if current_summary is None:
+        current, score, confidence = "?", 0.0, 0.0
     else:
-        day = by_weekday.get(local_now.weekday(), [])
-        current, score, confidence = _time_summary(day, now_ms, max(12, min_samples))
-        source = "weekday" if day else "insufficient"
+        score, confidence = current_summary
+        if confidence < 0.54:
+            current = "?"
+        elif score >= 0.80:
+            current = "++"
+        elif score >= 0.12:
+            current = "+"
+        elif score <= -0.80:
+            current = "--"
+        elif score <= -0.12:
+            current = "-"
+        else:
+            current = "="
     return Seasonality(
         current=current,
         best_weekdays=best_days,
         samples=len(observations),
-        source=source,
+        source="completed-calendar-days",
         current_score=score,
         current_confidence=confidence,
         weekday_scores=weekday_scores,
@@ -1585,67 +1765,80 @@ def current_now_signal(
     valid = [value for value in short.window_setup_scores.values() if value is not None]
     if len(valid) < 2:
         return None, BROWN if short.data_quality == "uncertain" else WHITE
+
     pattern_axis = short.temporal_score
     pressure = (short.pressure_score or 0.0) / 3.25
     relative = color_level(short.relative_color) / 3.0
     week = color_level(week_signal) / 3.0
     historical = 0.0
-    if seasonality.current_score is not None and seasonality.current_confidence >= 0.52:
-        historical = _clamp(seasonality.current_score / 1.2, -1.0, 1.0) * seasonality.current_confidence
+    if seasonality.current_score is not None and seasonality.current_confidence >= 0.58:
+        historical = _clamp(seasonality.current_score / 1.5, -1.0, 1.0) * seasonality.current_confidence
+
     score = (
-        0.54 * pattern_axis
-        + 0.24 * pressure
-        + (0.0 if is_reference else 0.12 * relative)
+        0.62 * pattern_axis
+        + 0.20 * pressure
+        + 0.10 * relative
         + 0.05 * week
-        + 0.05 * historical
+        + 0.03 * historical
     ) * 3.0
 
+    component_signs = [
+        1 if pattern_axis >= 0.20 else -1 if pattern_axis <= -0.20 else 0,
+        1 if pressure >= 0.20 else -1 if pressure <= -0.20 else 0,
+        1 if relative >= 0.34 else -1 if relative <= -0.34 else 0,
+    ]
+    if 1 in component_signs and -1 in component_signs:
+        score *= 0.58
+
     three_good = all(short.window_quality.get(window) == "good" for window in WINDOWS)
-    purple = (
-        three_good
-        and short.signal_color == PURPLE
-        and short.pressure_color == PURPLE
-        and short.positive_streak >= 3
+    positive_support = (
+        short.signal_color in {GREEN, PURPLE}
+        and short.pressure_color in {GREEN, PURPLE}
+        and short.relative_color not in {ORANGE, RED}
+        and short.positive_streak >= int(config.get("temporal_confirmation_points", 4))
+        and short.pattern_confidence >= 0.58
         and not short.reversal_guard
-        and score >= 1.85
     )
-    red = (
-        three_good
-        and short.signal_color == RED
-        and short.pressure_color == RED
-        and short.negative_streak >= 3
+    negative_support = (
+        short.signal_color in {ORANGE, RED}
+        and short.pressure_color in {ORANGE, RED}
+        and short.relative_color not in {BLUE, GREEN, PURPLE}
+        and short.negative_streak >= int(config.get("temporal_confirmation_points", 4))
+        and short.pattern_confidence >= 0.58
         and not short.reversal_guard
-        and score <= -1.85
     )
+    purple = three_good and short.signal_color == PURPLE and short.pressure_color == PURPLE and positive_support and score >= 1.95
+    red = three_good and short.signal_color == RED and short.pressure_color == RED and negative_support and score <= -1.95
     if purple:
         return score, PURPLE
     if red:
         return score, RED
     if short.reversal_guard:
-        if score >= 0.85:
+        if score >= 0.70:
             return score, BLUE
-        if score <= -0.40:
+        if score <= -0.55:
             return score, ORANGE
         return score, YELLOW
-    if score >= 1.15 and short.positive_streak >= 3:
+    if score >= 1.20 and positive_support:
         return score, GREEN
-    if score >= 0.35:
+    if score >= 0.45 and short.temporal_score >= 0.16 and short.positive_streak >= 2:
         return score, BLUE
-    if score <= -1.05 and short.negative_streak >= 2:
+    if score <= -1.15 and negative_support:
         return score, ORANGE
-    if score <= -0.30:
+    if score <= -0.45 and short.temporal_score <= -0.16 and short.negative_streak >= 2:
         return score, ORANGE
     return score, YELLOW
-
 
 def btc_gate(short: ShortMetrics, config: Mapping[str, Any]) -> bool:
     return (
         short.signal_color in {GREEN, PURPLE}
-        and short.positive_streak >= 3
+        and short.pressure_color in {GREEN, PURPLE}
+        and short.relative_color in {BLUE, GREEN, PURPLE}
+        and short.positive_streak >= int(config.get("temporal_confirmation_points", 4))
+        and short.pattern_confidence >= 0.58
         and not short.reversal_guard
         and short.data_quality == "good"
     )
-
 
 def build_coin_analysis(
     *,
@@ -1670,6 +1863,7 @@ def build_coin_analysis(
         block_hours=block_hours,
         min_samples=min_samples,
         minimum_observations=minimum_observations,
+        lookback_days=int(config.get("seasonality_lookback_days", 120)),
     )
     week_signal, percentile, week_confidence = _week_context(week_pct, history)
     now_score, now_color = current_now_signal(
@@ -1679,9 +1873,7 @@ def build_coin_analysis(
         is_reference=is_reference,
         week_signal=week_signal,
     )
-    # Keep X/8 focused on the two requested short-term extremes; long-term fields do not inflate it.
-    if is_reference:
-        short.relative_color = _relative_color(short.price_strengths, reference=True)
+    # Counts remain focused on the requested short-term extremes; long-term fields do not inflate them.
     return CoinAnalysis(
         display_code=display_code,
         api_code=api_code,
@@ -1708,17 +1900,19 @@ def confidence_sort_key(item: CoinAnalysis) -> tuple[float, ...]:
     count = strength_count(item)
     margin = abs(item.short.accumulation_score - item.short.distribution_score)
     persistence = max(item.short.positive_streak, item.short.negative_streak)
+    # Buckets prevent tiny floating-point/API changes from reshuffling equal candidates.
+    proximity_bucket = math.floor(item.short.extreme_proximity / 5.0)
+    confidence_bucket = math.floor(item.short.pattern_confidence * 10.0)
     return (
-        float(item.short.extreme_proximity),
-        float(item.short.pattern_confidence),
+        float(count),
+        float(proximity_bucket),
+        float(confidence_bucket),
         float(persistence),
         0.0 if item.short.reversal_guard else 1.0,
         quality_rank,
-        float(count),
-        float(margin),
-        float(item.short.anomaly_score),
+        float(math.floor(margin / 5.0)),
+        float(math.floor(item.short.anomaly_score / 5.0)),
     )
-
 
 def format_line(item: CoinAnalysis, *, generated_at: datetime, timezone: str) -> str:
     volumes = "".join(item.short.volume_colors.get(window, WHITE) for window in WINDOWS)

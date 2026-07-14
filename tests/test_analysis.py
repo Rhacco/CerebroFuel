@@ -1,4 +1,4 @@
-"""Focused deterministic tests for crypto-signal-monitor v3.2.5."""
+"""Deterministic quality tests for crypto-signal-monitor v3.2.5 refresh."""
 
 from __future__ import annotations
 
@@ -384,7 +384,7 @@ class AnalysisTests(unittest.TestCase):
         self.assertTrue(lines[1].endswith("SADIETH"))
         self.assertNotIn(" ", report)
 
-    def test_sorting_prioritizes_extreme_proximity_before_count(self) -> None:
+    def test_sorting_prioritizes_confirmed_count_before_small_proximity_difference(self) -> None:
         high_proximity = CoinAnalysis(
             "WIF", "WIF", 1.0, 0.0, YELLOW, make_short(6, RED, proximity=94, direction="▼"),
             Seasonality("=", tuple(), 100, "weekday"),
@@ -393,7 +393,73 @@ class AnalysisTests(unittest.TestCase):
             "ETH", "ETH", 1.0, 0.0, YELLOW, make_short(8, GREEN, proximity=65),
             Seasonality("=", tuple(), 100, "weekday"),
         )
-        self.assertGreater(confidence_sort_key(high_proximity), confidence_sort_key(high_count))
+        self.assertGreater(confidence_sort_key(high_count), confidence_sort_key(high_proximity))
+
+
+    def test_weekdays_are_identical_during_same_calendar_day(self) -> None:
+        now = datetime(2026, 7, 13, 9, 1, tzinfo=timezone.utc)
+        points: list[PricePoint] = []
+        rate = 100.0
+        volume = 1_000_000.0
+        for day in range(128):
+            timestamp = now - timedelta(days=128 - day)
+            if timestamp.weekday() in {1, 5}:
+                rate *= 1.006
+                volume *= 1.011
+            else:
+                rate *= 0.999
+                volume *= 0.998
+            points.append(PricePoint(int(timestamp.timestamp() * 1000), rate, volume))
+        morning = analyze_seasonality(points, now, "Europe/Berlin", min_samples=12, minimum_observations=60)
+        # Add a wild point from the still-open current day and move the clock by five minutes.
+        noisy = points + [PricePoint(int((now + timedelta(hours=3)).timestamp() * 1000), rate * 1.20, volume * 5.0)]
+        later = analyze_seasonality(
+            noisy, now + timedelta(minutes=5), "Europe/Berlin", min_samples=12, minimum_observations=60
+        )
+        self.assertEqual(morning.best_weekdays, later.best_weekdays)
+        self.assertEqual(morning.weekday_scores, later.weekday_scores)
+        self.assertEqual(morning.source, "completed-calendar-days")
+
+    def test_btc_b_needs_volume_confirmation(self) -> None:
+        history = calm_history()
+        # Price is slightly positive, but rolling volume is clearly falling.
+        current = {
+            "rate": 100.30,
+            "volume": 970_000.0,
+            "delta": {"hour": 1.003, "day": 1.0, "week": 1.0},
+        }
+        short = build_short_metrics(
+            current=current,
+            short_history=history,
+            now_ms=NOW_MS,
+            btc_price_changes=None,
+            config=CONFIG,
+            is_reference=True,
+        )
+        self.assertNotIn(short.relative_color, {GREEN, PURPLE})
+
+    def test_small_current_noise_cannot_create_strong_color(self) -> None:
+        history = calm_history()
+        first = build_short_metrics(
+            current={"rate": 100.04, "volume": 1_001_000.0, "delta": {"week": 1.0}},
+            short_history=history,
+            now_ms=NOW_MS,
+            btc_price_changes={10: 0.0, 20: 0.0, 60: 0.0},
+            config=CONFIG,
+            is_reference=False,
+        )
+        second = build_short_metrics(
+            current={"rate": 100.05, "volume": 1_001_500.0, "delta": {"week": 1.0}},
+            short_history=history,
+            now_ms=NOW_MS,
+            btc_price_changes={10: 0.0, 20: 0.0, 60: 0.0},
+            config=CONFIG,
+            is_reference=False,
+        )
+        self.assertNotIn(first.signal_color, {PURPLE, RED})
+        self.assertNotIn(second.signal_color, {PURPLE, RED})
+        self.assertLessEqual(abs(first.buy_count - second.buy_count), 1)
+        self.assertLessEqual(abs(first.sell_count - second.sell_count), 1)
 
     def test_build_coin_analysis_keeps_counts_at_eight(self) -> None:
         now = datetime(2026, 7, 13, 12, tzinfo=timezone.utc)

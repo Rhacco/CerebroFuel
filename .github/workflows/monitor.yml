@@ -1,6 +1,6 @@
 name: Crypto Signal Monitor
 
-# v3.2.5: gleicher externer workflow_dispatch-Start
+# v3.2.5 Qualitätsfassung: gleicher externer workflow_dispatch-Start
 
 on:
   workflow_dispatch:
@@ -36,7 +36,7 @@ jobs:
       - name: Abhängigkeiten installieren
         run: python -m pip install --upgrade pip && pip install -r requirements.txt
 
-      - name: Vollständig frische Analyse ausführen
+      - name: Streng bestätigte frische Analyse ausführen
         env:
           LCW_API_KEY: ${{ secrets.LCW_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}

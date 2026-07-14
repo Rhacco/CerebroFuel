@@ -1,4 +1,4 @@
-"""Entry point for crypto-signal-monitor v3.2.5."""
+"""Entry point for crypto-signal-monitor v3.2.5 quality refresh."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from analysis import (
     CoinAnalysis,
@@ -278,29 +279,42 @@ def run() -> int:
         log_quality(display, short_by_code[api_code])
 
     top_count = int(config.get("top_coin_count", 8))
-    selected = sorted(
-        preselected,
-        key=lambda pair: (
-            short_by_code[pair[1]].extreme_proximity,
-            short_by_code[pair[1]].pattern_confidence,
-            max(short_by_code[pair[1]].positive_streak, short_by_code[pair[1]].negative_streak),
-            0 if short_by_code[pair[1]].reversal_guard else 1,
-            max(short_by_code[pair[1]].buy_count, short_by_code[pair[1]].sell_count),
-            short_by_code[pair[1]].anomaly_score,
-            pre_anomaly_score(current_by_code[pair[1]], reference_current),
-        ),
-        reverse=True,
-    )[:top_count]
+    def stable_short_key(pair: tuple[str, str]) -> tuple[float, ...]:
+        short = short_by_code[pair[1]]
+        count = max(short.buy_count, short.sell_count)
+        persistence = max(short.positive_streak, short.negative_streak)
+        quality_rank = {"good": 2.0, "uncertain": 1.0, "insufficient": 0.0}.get(short.data_quality, 0.0)
+        return (
+            float(count),
+            float(int(short.extreme_proximity // 5)),
+            float(int(short.pattern_confidence * 10)),
+            float(persistence),
+            0.0 if short.reversal_guard else 1.0,
+            quality_rank,
+            float(int(short.anomaly_score // 5)),
+            float(int(pre_anomaly_score(current_by_code[pair[1]], reference_current) // 2)),
+        )
 
-    history_days = int(config.get("history_days", 42))
-    long_start_ms = int((now - timedelta(days=history_days)).timestamp() * 1000)
+    selected = sorted(preselected, key=stable_short_key, reverse=True)[:top_count]
+
+    # Long-history request boundaries are fixed to completed local calendar days.
+    # Every run during one day therefore receives the same weekday dataset.
+    history_days = int(config.get("history_days", 126))
+    analysis_timezone = ZoneInfo(str(config.get("timezone", "Europe/Berlin")))
+    local_midnight = now.astimezone(analysis_timezone).replace(hour=0, minute=0, second=0, microsecond=0)
+    long_end = local_midnight.astimezone(timezone.utc)
+    long_end_ms = int(long_end.timestamp() * 1000)
+    long_start_ms = int((long_end - timedelta(days=history_days)).timestamp() * 1000)
     long_codes = list(dict.fromkeys([reference_api, *(api for _, api in selected)]))
-    print(f"Lade frische Langzeithistorien für {len(long_codes)} Coins ({history_days} Tage) ...")
+    print(
+        f"Lade frische Langzeithistorien für {len(long_codes)} Coins "
+        f"({history_days} abgeschlossene Tage bis {long_end.isoformat()}) ..."
+    )
     long_histories, long_failures = refresh_histories(
         client=client,
         codes=long_codes,
         start_ms=long_start_ms,
-        end_ms=now_ms,
+        end_ms=long_end_ms,
         workers=int(config.get("history_parallel_requests", 8)),
         label="Langzeit",
     )
@@ -348,7 +362,7 @@ def run() -> int:
     (output_dir / "latest_analysis.json").write_text(
         json.dumps(
             {
-                "version": "3.2.5",
+                "version": "3.2.5-quality",
                 "generated_at": now.isoformat(),
                 "reference": analysis_to_dict(reference_analysis),
                 "top_coins": [analysis_to_dict(item) for item in top_analyses],
