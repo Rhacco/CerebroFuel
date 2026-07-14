@@ -1,4 +1,4 @@
-"""Entry point for crypto-signal-monitor v3.2.6."""
+"""Entry point for crypto-signal-monitor v3.2.6 quality refresh."""
 
 from __future__ import annotations
 
@@ -193,6 +193,23 @@ def log_quality(display: str, short: ShortMetrics) -> None:
         )
 
 
+def log_weekday_context(display: str, context: dict[str, Any]) -> None:
+    diagnostics = context.get("weekday_diagnostics") or {}
+    top = diagnostics.get("top") or []
+    detail = " | ".join(
+        f"{item.get('day')} q={float(item.get('score', 0.0)):.3f} "
+        f"c={float(item.get('confidence', 0.0)):.2f}"
+        f"{' ✓' if item.get('qualified') else ''}"
+        for item in top
+    ) or "keine belastbaren Kandidaten"
+    raw = ''.join(diagnostics.get("raw") or []) or "—"
+    stable = ''.join(diagnostics.get("stable") or []) or "—"
+    print(
+        f"Wochentage {display}: Modus={diagnostics.get('mode', '?')} "
+        f"Samples={diagnostics.get('samples', 0)} Roh={raw} Anzeige={stable} | {detail}"
+    )
+
+
 def refresh_daily_state_if_needed(
     *,
     client: LiveCoinWatchClient,
@@ -207,11 +224,9 @@ def refresh_daily_state_if_needed(
     current_codes = {display: api for display, api in resolved_all}
     missing = [display for display in current_codes if display not in previous_coins]
     context_revision = str(config.get("quality_revision", "daily-context-cache-flash-ranking-r3"))
-    full_refresh = (
-        previous.get("version") != STATE_VERSION
-        or previous.get("date") != today
-        or previous.get("revision") != context_revision
-    )
+    version_changed = previous.get("version") != STATE_VERSION
+    revision_changed = previous.get("revision") != context_revision
+    full_refresh = version_changed or previous.get("date") != today or revision_changed
     refresh_displays = list(current_codes) if full_refresh else missing
 
     if not refresh_displays:
@@ -244,6 +259,10 @@ def refresh_daily_state_if_needed(
     for display in refresh_displays:
         api_code = current_codes[display]
         prior = previous_coins.get(display) if isinstance(previous_coins, dict) else None
+        # A quality-revision change deliberately reinitializes weekday selection so
+        # a previously empty/over-strict cache cannot suppress a valid first result.
+        if version_changed or revision_changed:
+            prior = None
         history = histories.get(api_code)
         if history:
             new_coins[display] = build_daily_coin_context(
@@ -255,12 +274,14 @@ def refresh_daily_state_if_needed(
                 config=config,
                 previous=prior,
             )
+            log_weekday_context(display, new_coins[display])
         else:
             new_coins[display] = carry_forward_context(
                 display=display,
                 api_code=api_code,
                 previous=prior,
             )
+            log_weekday_context(display, new_coins[display])
 
     # Remove coins no longer present in config while preserving all successfully resolved ones.
     new_coins = {display: new_coins[display] for display in current_codes if display in new_coins}

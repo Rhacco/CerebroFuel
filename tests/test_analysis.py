@@ -1,4 +1,4 @@
-"""Deterministic quality tests for crypto-signal-monitor v3.2.6."""
+"""Deterministic quality tests for crypto-signal-monitor v3.2.6 quality refresh."""
 
 from __future__ import annotations
 
@@ -418,7 +418,7 @@ class AnalysisTests(unittest.TestCase):
         )
         self.assertEqual(morning.best_weekdays, later.best_weekdays)
         self.assertEqual(morning.weekday_scores, later.weekday_scores)
-        self.assertEqual(morning.source, "completed-calendar-days-365d")
+        self.assertEqual(morning.source, "completed-calendar-days-365d-tiered")
 
     def test_btc_b_needs_volume_confirmation(self) -> None:
         history = calm_history()

@@ -1,4 +1,4 @@
-"""Persistence-aware crypto extreme analysis with daily context and flash ranking (v3.2.6)."""
+"""Persistence-aware crypto extreme analysis with stable daily context (v3.2.6 quality refresh)."""
 
 from __future__ import annotations
 
@@ -1629,7 +1629,7 @@ def analyze_seasonality(
         by_weekday.setdefault(item.weekday, []).append(item)
 
     required = max(24, min_samples)
-    candidates: list[tuple[int, float, float]] = []
+    candidates: list[tuple[int, float, float, int]] = []
     weekday_scores: dict[str, float] = {}
     weekday_confidence: dict[str, float] = {}
     day_summaries: dict[int, tuple[float, float]] = {}
@@ -1688,25 +1688,44 @@ def analyze_seasonality(
         weekday_confidence[name] = round(confidence, 5)
         day_summaries[weekday] = (conservative, confidence)
 
-        qualifies = (
-            full_central > 0.075
-            and c180 > 0.070
-            and c90 > 0.030
-            and c45 >= -0.045
-            and leave_out > 0.045
-            and full_hit >= 0.555
-            and hit180 >= 0.550
-            and hit90 >= 0.520
-            and hit45 >= 0.450
-            and full_wilson >= 0.430
-            and wilson180 >= 0.390
-            and confidence >= 0.575
-            and quality > 0.050
+        strict_qualifies = (
+            full_central > 0.070
+            and c180 > 0.060
+            and c90 > 0.020
+            and c45 >= -0.055
+            and leave_out > 0.040
+            and full_hit >= 0.550
+            and hit180 >= 0.540
+            and hit90 >= 0.510
+            and hit45 >= 0.440
+            and full_wilson >= 0.415
+            and wilson180 >= 0.380
+            and confidence >= 0.555
+            and quality > 0.042
         )
-        if qualifies:
-            candidates.append((weekday, quality, confidence))
+        robust_qualifies = (
+            full_central > 0.025
+            and c180 > 0.020
+            and c90 >= -0.015
+            and c45 >= -0.100
+            and leave_out > 0.015
+            and full_hit >= 0.515
+            and hit180 >= 0.505
+            and hit90 >= 0.470
+            and full_wilson >= 0.350
+            and wilson180 >= 0.320
+            and confidence >= 0.480
+            and quality > 0.012
+        )
+        if strict_qualifies:
+            candidates.append((weekday, quality, confidence, 2))
+        elif robust_qualifies:
+            candidates.append((weekday, quality, confidence, 1))
 
-    candidates.sort(key=lambda item: (round(item[1], 4), round(item[2], 4)), reverse=True)
+    candidates.sort(
+        key=lambda item: (item[3], round(item[1], 5), round(item[2], 5)),
+        reverse=True,
+    )
     selected: list[int] = []
     if candidates:
         selected.append(candidates[0][0])
@@ -1714,8 +1733,12 @@ def analyze_seasonality(
         first_quality = candidates[0][1]
         second_quality = candidates[1][1]
         third_quality = candidates[2][1] if len(candidates) >= 3 else 0.0
-        clear_from_third = second_quality >= third_quality + 0.012
-        independently_strong = second_quality >= max(0.060, first_quality * 0.64)
+        second_tier = candidates[1][3]
+        clear_from_third = second_quality >= third_quality + 0.010
+        independently_strong = (
+            second_tier == 2
+            or (second_quality >= max(0.030, first_quality * 0.68) and candidates[1][2] >= 0.55)
+        )
         if clear_from_third and independently_strong:
             selected.append(candidates[1][0])
     selected.sort(key=DISPLAY_WEEK_ORDER.index)
@@ -1743,7 +1766,7 @@ def analyze_seasonality(
         current=current,
         best_weekdays=best_days,
         samples=len(observations),
-        source="completed-calendar-days-365d",
+        source="completed-calendar-days-365d-tiered",
         current_score=score,
         current_confidence=confidence,
         weekday_scores=weekday_scores,

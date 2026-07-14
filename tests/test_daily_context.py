@@ -1,4 +1,4 @@
-"""Daily cache and flash-ranking tests for v3.2.6."""
+"""Daily cache, conservative bootstrap and flash-ranking tests for v3.2.6."""
 
 from __future__ import annotations
 
@@ -23,12 +23,28 @@ class DailyContextTests(unittest.TestCase):
             weekday_scores={"DI": 0.10},
             weekday_confidence={"DI": 0.74},
         )
-        selected, enter, exit_ = _stable_days(raw, None, enter_days=2, exit_days=2)
+        selected, enter, exit_, initialized, mode = _stable_days(raw, None, enter_days=2, exit_days=2)
         self.assertEqual(selected, ("DI",))
         self.assertEqual(enter["DI"], 1)
         self.assertEqual(exit_["DI"], 0)
 
-    def test_borderline_day_needs_two_daily_confirmations(self) -> None:
+    def test_robust_first_day_initializes_immediately(self) -> None:
+        raw = Seasonality(
+            "+",
+            ("MO",),
+            350,
+            "test",
+            weekday_scores={"MO": 0.030},
+            weekday_confidence={"MO": 0.55},
+        )
+        first, enter, exit_, initialized, mode = _stable_days(raw, None, enter_days=2, exit_days=2)
+        self.assertEqual(first, ("MO",))
+        self.assertTrue(initialized)
+        self.assertEqual(mode, "bootstrap-immediate")
+        self.assertEqual(enter["MO"], 1)
+        self.assertEqual(exit_["MO"], 0)
+
+    def test_new_day_after_initialization_needs_two_daily_confirmations(self) -> None:
         raw = Seasonality(
             "+",
             ("MO",),
@@ -37,35 +53,46 @@ class DailyContextTests(unittest.TestCase):
             weekday_scores={"MO": 0.060},
             weekday_confidence={"MO": 0.61},
         )
-        first, enter, exit_ = _stable_days(raw, None, enter_days=2, exit_days=2)
-        self.assertEqual(first, tuple())
         previous = {
+            "weekday_initialized": True,
+            "stable_best_weekdays": [],
+            "enter_streaks": {},
+            "exit_streaks": {},
+        }
+        first, enter, exit_, initialized, mode = _stable_days(raw, previous, enter_days=2, exit_days=2)
+        self.assertEqual(first, tuple())
+        self.assertTrue(initialized)
+        self.assertEqual(mode, "daily-hysteresis")
+        previous2 = {
+            "weekday_initialized": True,
             "stable_best_weekdays": [],
             "enter_streaks": enter,
             "exit_streaks": exit_,
         }
-        second, _, _ = _stable_days(raw, previous, enter_days=2, exit_days=2)
+        second, _, _, _, _ = _stable_days(raw, previous2, enter_days=2, exit_days=2)
         self.assertEqual(second, ("MO",))
 
     def test_selected_day_needs_two_daily_failures_to_disappear(self) -> None:
         raw_none = Seasonality("=", tuple(), 350, "test")
         previous = {
+            "weekday_initialized": True,
             "stable_best_weekdays": ["FR"],
             "enter_streaks": {"FR": 2},
             "exit_streaks": {"FR": 0},
             "weekday_scores": {"FR": 0.08},
             "weekday_confidence": {"FR": 0.65},
         }
-        first, enter, exit_ = _stable_days(raw_none, previous, enter_days=2, exit_days=2)
+        first, enter, exit_, _, _ = _stable_days(raw_none, previous, enter_days=2, exit_days=2)
         self.assertEqual(first, ("FR",))
         previous2 = {
+            "weekday_initialized": True,
             "stable_best_weekdays": list(first),
             "enter_streaks": enter,
             "exit_streaks": exit_,
             "weekday_scores": {"FR": 0.08},
             "weekday_confidence": {"FR": 0.65},
         }
-        second, _, _ = _stable_days(raw_none, previous2, enter_days=2, exit_days=2)
+        second, _, _, _, _ = _stable_days(raw_none, previous2, enter_days=2, exit_days=2)
         self.assertEqual(second, tuple())
 
     def test_local_day_key_uses_configured_timezone(self) -> None:
@@ -117,10 +144,8 @@ class DailyContextTests(unittest.TestCase):
         self.assertIn("actions/cache/restore@v4", workflow)
         self.assertIn("actions/cache/save@v4", workflow)
         self.assertIn("hashFiles('config.json', 'analysis.py', 'daily_context.py')", workflow)
+        self.assertIn("seasonality-v326q2", workflow)
 
-
-if __name__ == "__main__":
-    unittest.main()
 
 class DailyStateIntegrationTests(unittest.TestCase):
     def test_same_day_context_avoids_second_long_history_refresh(self) -> None:
@@ -184,3 +209,7 @@ class DailyStateIntegrationTests(unittest.TestCase):
                 self.assertFalse(failures2)
                 self.assertEqual(client.calls, calls_after_first)
                 self.assertEqual(second["date"], first["date"])
+
+
+if __name__ == "__main__":
+    unittest.main()

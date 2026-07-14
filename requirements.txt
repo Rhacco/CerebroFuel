@@ -1,2 +1,2 @@
-# v3.2.6
+# v3.2.6 quality refresh
 requests>=2.31,<3

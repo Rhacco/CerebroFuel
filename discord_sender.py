@@ -1,4 +1,4 @@
-"""Discord webhook sender with line-safe splitting (v3.2.6)."""
+"""Discord webhook sender with line-safe splitting (v3.2.6 quality refresh)."""
 
 from __future__ import annotations
 

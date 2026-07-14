@@ -1,6 +1,6 @@
 name: Crypto Signal Monitor
 
-# v3.2.6: external workflow_dispatch start; daily long-context cache in GitHub Actions
+# v3.2.6 quality refresh: stable daily context with conservative bootstrap
 
 on:
   workflow_dispatch:
@@ -44,9 +44,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .cache/seasonality
-          key: seasonality-v326-${{ runner.os }}-${{ steps.context-key.outputs.day }}-${{ hashFiles('config.json', 'analysis.py', 'daily_context.py') }}
+          key: seasonality-v326q2-${{ runner.os }}-${{ steps.context-key.outputs.day }}-${{ hashFiles('config.json', 'analysis.py', 'daily_context.py') }}
           restore-keys: |
-            seasonality-v326-${{ runner.os }}-
+            seasonality-v326q2-${{ runner.os }}-
 
       - name: Abhängigkeiten installieren
         run: python -m pip install --upgrade pip && pip install -r requirements.txt

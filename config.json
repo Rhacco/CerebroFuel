@@ -165,9 +165,16 @@
   "temporal_axis_strong": 0.42,
   "temporal_confirmation_points": 4,
   "seasonality_lookback_days": 365,
-  "quality_revision": "daily-context-cache-flash-ranking-r3",
+  "quality_revision": "daily-context-bootstrap-diagnostics-r4",
   "temporal_guard_threshold": 0.14,
   "daily_history_days": 400,
   "weekday_enter_confirmations": 2,
-  "weekday_exit_confirmations": 2
+  "weekday_exit_confirmations": 2,
+  "weekday_bootstrap_min_samples": 300,
+  "weekday_bootstrap_min_score": 0.018,
+  "weekday_bootstrap_min_confidence": 0.5,
+  "weekday_bootstrap_second_min_score": 0.035,
+  "weekday_bootstrap_second_min_confidence": 0.58,
+  "weekday_candidate_min_score": 0.012,
+  "weekday_candidate_min_confidence": 0.48
 }

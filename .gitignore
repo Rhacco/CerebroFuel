@@ -1,4 +1,4 @@
-# v3.2.6 runtime files
+# v3.2.6 quality-refresh runtime files
 __pycache__/
 *.py[cod]
 .env
