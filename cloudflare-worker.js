@@ -1,5 +1,5 @@
 function schedulerEnabled(env) {
-  // Cloudflare-Variable ENABLED: 1 = aktiv, 2 = pausiert.
+  // v3.2.4: ENABLED 1 = aktiv, 2 = pausiert; Verhalten unverändert.
   return String(env.ENABLED ?? "1").trim() === "1";
 }
 
@@ -41,7 +41,7 @@ async function triggerGitHubWithRetry(env, source) {
         Accept: "application/vnd.github+json",
         Authorization: `Bearer ${env.GH_PAT}`,
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "cloudflare-crypto-scheduler-v3.2.3",
+        "User-Agent": "cloudflare-crypto-scheduler-v3.2.4",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({

@@ -1,5 +1,7 @@
 name: Crypto Signal Monitor
 
+# v3.2.4: gleicher externer workflow_dispatch-Start
+
 on:
   workflow_dispatch:
     inputs:

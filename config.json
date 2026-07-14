@@ -1,4 +1,5 @@
 {
+  "schema_version": "3.2.4",
   "reference_coin": "BTC",
   "groups": [
     {
@@ -92,16 +93,16 @@
   "currency": "USD",
   "timezone": "Europe/Berlin",
   "top_coin_count": 8,
-  "preselect_coin_count": 20,
-  "short_history_minutes": 120,
-  "history_days": 42,
+  "preselect_coin_count": 22,
+  "short_history_minutes": 720,
+  "history_days": 120,
   "history_parallel_requests": 8,
   "time_block_hours": 4,
-  "seasonality_min_samples": 4,
-  "seasonality_min_observations": 20,
-  "minimum_short_history_points": 4,
+  "seasonality_min_samples": 12,
+  "seasonality_min_observations": 60,
+  "minimum_short_history_points": 8,
   "minimum_reliable_volume_usd": 500000,
-  "maximum_plausible_volume_jump_pct": 500,
+  "maximum_plausible_volume_jump_pct": 1500,
   "price": {
     "10": {
       "light": 0.1,
@@ -152,4 +153,3 @@
     "strong": 2.2
   }
 }
-

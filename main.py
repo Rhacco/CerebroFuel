@@ -1,4 +1,4 @@
-"""Entry point for crypto-signal-monitor v3.2.3."""
+"""Entry point for crypto-signal-monitor v3.2.4."""
 
 from __future__ import annotations
 
@@ -98,6 +98,53 @@ def resolve_pair(
     return None
 
 
+
+
+def _turnover_pct(row: dict[str, Any]) -> float:
+    volume = max(float(row.get("volume") or 0.0), 0.0)
+    cap = max(float(row.get("cap") or 0.0), 0.0)
+    return volume / cap * 100.0 if cap > 0 else 0.0
+
+
+def balanced_preselection(
+    pool: list[tuple[str, str]],
+    current_by_code: dict[str, dict[str, Any]],
+    reference_current: dict[str, Any],
+    count: int,
+    slot: int,
+) -> list[tuple[str, str]]:
+    """Select movement, high-turnover and rotating candidates within the LCW quota."""
+    ranked = sorted(
+        pool,
+        key=lambda pair: pre_anomaly_score(current_by_code[pair[1]], reference_current),
+        reverse=True,
+    )
+    selected: list[tuple[str, str]] = []
+
+    def add(pair: tuple[str, str]) -> None:
+        if pair not in selected and len(selected) < count:
+            selected.append(pair)
+
+    for pair in ranked[: max(8, count - 5)]:
+        add(pair)
+    for pair in sorted(
+        pool,
+        key=lambda pair: _turnover_pct(current_by_code[pair[1]]),
+        reverse=True,
+    ):
+        if len(selected) >= count - 2:
+            break
+        add(pair)
+    remaining = sorted((pair for pair in pool if pair not in selected), key=lambda pair: pair[0])
+    if remaining:
+        start = slot % len(remaining)
+        for offset in range(min(2, len(remaining))):
+            add(remaining[(start + offset) % len(remaining)])
+    for pair in ranked:
+        add(pair)
+    return selected[:count]
+
+
 def refresh_histories(
     *,
     client: LiveCoinWatchClient,
@@ -180,11 +227,13 @@ def run() -> int:
         int(config.get("top_coin_count", 8)),
         int(config.get("preselect_coin_count", 12)),
     )
-    preselected = sorted(
+    preselected = balanced_preselection(
         resolved_pool,
-        key=lambda pair: pre_anomaly_score(current_by_code[pair[1]], reference_current),
-        reverse=True,
-    )[:preselect_count]
+        current_by_code,
+        reference_current,
+        preselect_count,
+        slot=now_ms // (5 * 60_000),
+    )
 
     short_minutes = int(config.get("short_history_minutes", 90))
     short_start_ms = int((now - timedelta(minutes=short_minutes)).timestamp() * 1000)
@@ -218,6 +267,7 @@ def run() -> int:
             btc_price_changes=btc_short.price_changes,
             config=config,
             is_reference=False,
+            btc_short=btc_short,
         )
         log_quality(display, short_by_code[api_code])
 
@@ -225,6 +275,9 @@ def run() -> int:
     selected = sorted(
         preselected,
         key=lambda pair: (
+            short_by_code[pair[1]].extreme_proximity,
+            short_by_code[pair[1]].pattern_confidence,
+            max(short_by_code[pair[1]].buy_count, short_by_code[pair[1]].sell_count),
             short_by_code[pair[1]].anomaly_score,
             pre_anomaly_score(current_by_code[pair[1]], reference_current),
         ),
@@ -287,7 +340,7 @@ def run() -> int:
     (output_dir / "latest_analysis.json").write_text(
         json.dumps(
             {
-                "version": "3.2.3",
+                "version": "3.2.4",
                 "generated_at": now.isoformat(),
                 "reference": analysis_to_dict(reference_analysis),
                 "top_coins": [analysis_to_dict(item) for item in top_analyses],
