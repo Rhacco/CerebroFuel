@@ -1,5 +1,5 @@
 {
-  "schema_version": "3.2.5-quality",
+  "schema_version": "3.2.6",
   "reference_coin": "BTC",
   "groups": [
     {
@@ -98,8 +98,8 @@
   "history_days": 126,
   "history_parallel_requests": 8,
   "time_block_hours": 4,
-  "seasonality_min_samples": 12,
-  "seasonality_min_observations": 70,
+  "seasonality_min_samples": 20,
+  "seasonality_min_observations": 180,
   "minimum_short_history_points": 8,
   "minimum_reliable_volume_usd": 500000,
   "maximum_plausible_volume_jump_pct": 1500,
@@ -164,7 +164,10 @@
   "temporal_axis_clear": 0.2,
   "temporal_axis_strong": 0.42,
   "temporal_confirmation_points": 4,
-  "seasonality_lookback_days": 120,
-  "quality_revision": "completed-days-hysteresis-r2",
-  "temporal_guard_threshold": 0.14
+  "seasonality_lookback_days": 365,
+  "quality_revision": "daily-context-cache-flash-ranking-r3",
+  "temporal_guard_threshold": 0.14,
+  "daily_history_days": 400,
+  "weekday_enter_confirmations": 2,
+  "weekday_exit_confirmations": 2
 }

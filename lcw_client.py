@@ -1,4 +1,4 @@
-"""Small no-cache client for the official Live Coin Watch API (v3.2.5 quality refresh)."""
+"""Small no-cache client for the official Live Coin Watch API (v3.2.6)."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ class LiveCoinWatchClient:
             "cache-control": "no-cache",
             "pragma": "no-cache",
             "x-api-key": api_key,
-            "user-agent": "crypto-signal-monitor/v3.2.5-quality",
+            "user-agent": "crypto-signal-monitor/v3.2.6",
         }
 
     def _post(self, endpoint: str, payload: dict[str, Any]) -> Any:

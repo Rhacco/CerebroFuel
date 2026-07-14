@@ -1,4 +1,4 @@
-"""Deterministic quality tests for crypto-signal-monitor v3.2.5 refresh."""
+"""Deterministic quality tests for crypto-signal-monitor v3.2.6."""
 
 from __future__ import annotations
 
@@ -325,13 +325,13 @@ class AnalysisTests(unittest.TestCase):
         self.assertNotEqual(short.pressure_color, PURPLE)
         self.assertLessEqual(short.buy_count, 3)
 
-    def test_weekdays_need_120_day_consistency_and_only_positive_days(self) -> None:
+    def test_weekdays_need_365_day_consistency_and_only_positive_days(self) -> None:
         now = datetime(2026, 7, 13, 12, tzinfo=timezone.utc)
         points: list[PricePoint] = []
         rate = 100.0
         volume = 1_000_000.0
-        for day in range(130):
-            timestamp = now - timedelta(days=130 - day)
+        for day in range(400):
+            timestamp = now - timedelta(days=400 - day)
             if timestamp.weekday() == 5:  # Samstag
                 rate *= 1.008
                 volume *= 1.015
@@ -358,8 +358,8 @@ class AnalysisTests(unittest.TestCase):
         points: list[PricePoint] = []
         rate = 100.0
         volume = 1_000_000.0
-        for day in range(130):
-            timestamp = now - timedelta(days=130 - day)
+        for day in range(400):
+            timestamp = now - timedelta(days=400 - day)
             rate *= 0.999
             volume *= 0.999
             points.append(PricePoint(int(timestamp.timestamp() * 1000), rate, volume))
@@ -401,8 +401,8 @@ class AnalysisTests(unittest.TestCase):
         points: list[PricePoint] = []
         rate = 100.0
         volume = 1_000_000.0
-        for day in range(128):
-            timestamp = now - timedelta(days=128 - day)
+        for day in range(400):
+            timestamp = now - timedelta(days=400 - day)
             if timestamp.weekday() in {1, 5}:
                 rate *= 1.006
                 volume *= 1.011
@@ -418,7 +418,7 @@ class AnalysisTests(unittest.TestCase):
         )
         self.assertEqual(morning.best_weekdays, later.best_weekdays)
         self.assertEqual(morning.weekday_scores, later.weekday_scores)
-        self.assertEqual(morning.source, "completed-calendar-days")
+        self.assertEqual(morning.source, "completed-calendar-days-365d")
 
     def test_btc_b_needs_volume_confirmation(self) -> None:
         history = calm_history()

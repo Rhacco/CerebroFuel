@@ -1,29 +1,35 @@
-# Crypto Signal Monitor v3.2.5
+# Crypto Signal Monitor v3.2.6
 
-Alle 5 Minuten: frische LiveCoinWatch-Daten → BTC + 8 am stärksten **bestätigte** Akkumulations-/Distributionsmuster → Discord. Keine KI, kein Cache, kein KV.
+Alle 5 Minuten: frische LiveCoinWatch-Daten → BTC + 8 auffälligste Coins → Discord. Keine KI, kein Cloudflare-KV.
 
 ```text
 🟡3=7🔵B🟡P🟡V🟠🟠🟠N🟡FR:01
 🟣8▲7🟢B🟢P🟣V🟣🟢🟢N🟣SADIWIF
-🟠5▼7🟡B🟠P🟠V🟡🟠🟠N🟠APE
 ```
 
-| Feld | Aussage |
+| Feld | Bedeutung |
 |---|---|
-| Anfang | geglättete Nähe: `🟣` bestätigte Akkumulation ↔ `🔴` bestätigte Distribution |
-| `X▲/▼/=` | 0–8 unabhängiger geprüfte Bestätigungen; **keine** Erfolgswahrscheinlichkeit |
+| Anfang | bestätigte Nähe: `🟣` Akkumulation ↔ `🔴` Distribution |
+| `X▲/▼/=` | 0–8 bestätigte Kriterien; keine Erfolgswahrscheinlichkeit |
 | `7` | 7-Tage-Lage relativ zur eigenen Historie |
-| `B` | Coin vs. BTC; bei BTC eigene Preisbewegung **mit** Volumen-/Druckbestätigung |
-| `P` | zeitlich bestätigter Kauf-/Verkaufsdruck |
-| `V` | Änderung des LCW-24h-Rollvolumens über 10/20/60 Min. |
-| `N` | konservatives Gesamtsignal; starke Farbe nur bei Übereinstimmung mehrerer Felder |
-| `SADI` | höchstens 2 robust positive Wochentage aus 120 **abgeschlossenen** Kalendertagen |
-| Ende | Coin-Kürzel; BTC-Zeile endet mit Minute |
+| `B` | Coin vs. BTC; bei BTC eigene Bewegung mit Volumenbestätigung |
+| `P` | geglätteter Kauf-/Verkaufsdruck |
+| `V` | rollierender LCW-Volumentrend für 10/20/60 Minuten |
+| `N` | konservative Gesamtlage aus Muster, Dauer, `B`, `P`, `7` |
+| `SA…FR` | maximal 2 täglich fixierte positive Wochentage |
+| Ende | Coin-Kürzel; bei BTC Ausführungsminute |
 
-Farben: `🟣` nur anhaltendes BUY-Extrem · `🟢` bestätigt positiv · `🔵` positiv, noch nicht vollständig bestätigt · `🟡` neutral/uneinig · `🟠` bestätigte Warnung · `🔴` nur anhaltendes SELL-Extrem · `🟤` fragliches Fenster · `⚪` Daten fehlen.
+`🟣` extrem positiv · `🟢` klar positiv · `🔵` leicht positiv · `🟡` neutral · `🟠` Warnung · `🔴` extrem negativ · `🟤` unsicher · `⚪` fehlend
 
-Qualität: 10/20/60-Min.-Muster + rekonstruierte Zustände von vor 5–35 Min.; starke Farben benötigen mindestens 4 fortlaufende Bestätigungen, hohe Datenqualität, stabile Pfade und kein ungelöstes Gegensignal. Ein einzelner Volumensprung kann kein starkes Signal erzeugen. Rangfolge: bestätigte Bedingungen → Extremnähe in stabilen Stufen → Beständigkeit/Datenqualität.
+**Reaktion + Sicherheit:** Flash-Rangfolge kann neue 5–15-Minuten-Auffälligkeiten sofort nach oben holen. Farben und Zahl bleiben streng zeitlich bestätigt; einzelne Sprünge erzeugen kein Extrem.
 
-Wochentage: nur abgeschlossene Tage, je Datum genau 1 Beobachtung; 120 Tage + 60-/30-Tage-Bestätigung, robuste Medianwerte, Ausreißertest und Mindesttrefferquote. Die Anzeige bleibt während eines Kalendertags unverändert; bei zu schwacher Evidenz erscheint kein Tag.
+**Wochentage:** einmal täglich für alle Coins aus abgeschlossenen Kalendertagen berechnet; 365/180/90/45 Tage, robuste Mediane, Ausreißertest, Mindesttrefferquote und 2-Tage-Ein-/Austrittsbremse. Innerhalb eines Tages unverändert. Bei API-Fehler bleibt die letzte gültige Auswahl bestehen.
 
-Betrieb: GitHub-Secrets `LCW_API_KEY`, `DISCORD_WEBHOOK_URL` · Cloudflare unverändert: `ENABLED=1` aktiv, `2` Pause · Cron `1,6,11,16,21,26,31,36,41,46,51,56 * * * *`.
+## Installation
+
+1. ZIP-Inhalt ins Repository kopieren und überschreiben.
+2. Secrets behalten: `LCW_API_KEY`, `DISCORD_WEBHOOK_URL`.
+3. Einmal manuell über **Actions → Crypto Signal Monitor → Run workflow** testen.
+4. Cloudflare bleibt unverändert (`ENABLED=1` aktiv, `2` pausiert).
+
+Der erste Lauf eines Tages lädt Langzeithistorien für alle Coins. Danach werden nur Map-Daten und Kurzzeithistorien geladen; GitHub Actions speichert den Tageskontext automatisch.

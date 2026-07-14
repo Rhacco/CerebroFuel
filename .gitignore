@@ -1,6 +1,7 @@
-# v3.2.5 quality refresh
+# v3.2.6 runtime files
 __pycache__/
 *.py[cod]
 .env
+.cache/
 output/latest_report.txt
 output/latest_analysis.json

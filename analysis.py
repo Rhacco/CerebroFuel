@@ -1,4 +1,4 @@
-"""Conservative, persistence-aware crypto extreme analysis for Discord (v3.2.5 quality refresh)."""
+"""Persistence-aware crypto extreme analysis with daily context and flash ranking (v3.2.6)."""
 
 from __future__ import annotations
 
@@ -95,6 +95,8 @@ class ShortMetrics:
     negative_streak: int = 0
     temporal_samples: int = 0
     reversal_guard: bool = False
+    flash_score: float = 0.0
+    flash_direction: str = "="
 
 
 @dataclass
@@ -112,6 +114,8 @@ class CoinAnalysis:
     btc_gate: bool = False
     week_percentile: float | None = None
     week_confidence: float = 0.0
+    flash_score: float = 0.0
+    ranking_score: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -1385,6 +1389,27 @@ def build_short_metrics(
         + abs(temporal.smoothed_axis) * 18.0
     )
 
+    # Flash ranking reacts to a fresh 5–15 minute setup without granting a strong color.
+    # Persistence-aware signal colors and X-counts remain the confirmation layer.
+    fresh_weights = {10: 0.62, 20: 0.28, 60: 0.10}
+    flash_acc = sum((accumulation.get(window) or 0.0) * fresh_weights[window] for window in WINDOWS)
+    flash_dist = sum((distribution.get(window) or 0.0) * fresh_weights[window] for window in WINDOWS)
+    recent_jump_penalty = 1.0
+    if volume_jump_share.get(10, 0.0) > 0.72 or price_jump_share.get(10, 0.0) > 0.72:
+        recent_jump_penalty *= 0.72
+    if window_quality.get(10) != "good":
+        recent_jump_penalty *= 0.72
+    flash_raw = max(flash_acc, flash_dist)
+    flash_margin = abs(flash_acc - flash_dist)
+    flash_score = _clamp(
+        (0.72 * flash_raw + 0.20 * flash_margin + 0.08 * abs(acceleration))
+        * quality_factor
+        * recent_jump_penalty,
+        0.0,
+        100.0,
+    )
+    flash_direction = "▲" if flash_acc > flash_dist + 4.0 else ("▼" if flash_dist > flash_acc + 4.0 else "=")
+
     return ShortMetrics(
         price_changes=price_changes,
         volume_changes=volume_changes,
@@ -1427,6 +1452,8 @@ def build_short_metrics(
         negative_streak=temporal.negative_streak,
         temporal_samples=temporal.samples,
         reversal_guard=temporal.reversal_guard,
+        flash_score=flash_score,
+        flash_direction=flash_direction,
     )
 
 
@@ -1574,11 +1601,16 @@ def analyze_seasonality(
     now: datetime,
     timezone: str,
     block_hours: int = 4,
-    min_samples: int = 12,
-    minimum_observations: int = 60,
-    lookback_days: int = 120,
+    min_samples: int = 24,
+    minimum_observations: int = 240,
+    lookback_days: int = 365,
 ) -> Seasonality:
-    del block_hours  # Kept for API compatibility; only completed calendar days are used.
+    """Conservative weekday statistics from independent completed local days.
+
+    A weekday must be positive across the long sample and recent market regimes.
+    Selection hysteresis is applied by the daily cache layer, not here.
+    """
+    del block_hours
     observations = _completed_daily_observations(points, now, timezone, lookback_days)
     if len(observations) < minimum_observations:
         return Seasonality("?", tuple(), len(observations), "completed-days-insufficient")
@@ -1587,13 +1619,16 @@ def analyze_seasonality(
     local_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
     now_ms = int(local_midnight.timestamp() * 1000)
     local_today = local_now.date().toordinal()
-    recent60_cutoff = local_today - 60
-    recent30_cutoff = local_today - 30
+    cutoffs = {
+        180: local_today - 180,
+        90: local_today - 90,
+        45: local_today - 45,
+    }
     by_weekday: dict[int, list[DailyObservation]] = {}
     for item in observations:
         by_weekday.setdefault(item.weekday, []).append(item)
 
-    required = max(12, min_samples)
+    required = max(24, min_samples)
     candidates: list[tuple[int, float, float]] = []
     weekday_scores: dict[str, float] = {}
     weekday_confidence: dict[str, float] = {}
@@ -1601,75 +1636,106 @@ def analyze_seasonality(
 
     for weekday in range(7):
         items = by_weekday.get(weekday, [])
-        recent60 = [item for item in items if item.date_ordinal >= recent60_cutoff]
-        recent30 = [item for item in items if item.date_ordinal >= recent30_cutoff]
-        if len(items) < required or len(recent60) < 6 or len(recent30) < 3:
+        windows = {
+            days: [item for item in items if item.date_ordinal >= cutoff]
+            for days, cutoff in cutoffs.items()
+        }
+        if (
+            len(items) < required
+            or len(windows[180]) < 12
+            or len(windows[90]) < 6
+            or len(windows[45]) < 3
+        ):
             continue
+
         full = _daily_group_metrics(items, now_ms)
-        r60 = _daily_group_metrics(recent60, now_ms)
-        r30 = _daily_group_metrics(recent30, now_ms)
+        r180 = _daily_group_metrics(windows[180], now_ms)
+        r90 = _daily_group_metrics(windows[90], now_ms)
+        r45 = _daily_group_metrics(windows[45], now_ms)
         leave_out = _leave_extremes_out_central(items, now_ms)
         full_central, full_hit, full_dispersion, full_consistency, full_wilson = full
-        r60_central, r60_hit, _, r60_consistency, r60_wilson = r60
-        r30_central, r30_hit, _, _, _ = r30
+        c180, hit180, _, consistency180, wilson180 = r180
+        c90, hit90, _, consistency90, _ = r90
+        c45, hit45, _, _, _ = r45
 
-        sample_factor = min(1.0, len(items) / 17.0)
+        sample_factor = min(1.0, len(items) / 48.0)
         confidence = sample_factor
-        confidence *= 0.40 + 0.25 * full_consistency + 0.25 * r60_consistency + 0.10 * min(1.0, len(recent30) / 5.0)
-        confidence *= 1.0 / (1.0 + 0.12 * full_dispersion)
-        conservative = min(full_central, r60_central, max(r30_central, -0.02), leave_out)
-        hit_support = min(full_hit, r60_hit)
-        quality = conservative * confidence * (0.55 + 0.25 * hit_support + 0.20 * min(full_wilson, r60_wilson))
+        confidence *= (
+            0.34
+            + 0.20 * full_consistency
+            + 0.20 * consistency180
+            + 0.16 * consistency90
+            + 0.10 * min(1.0, len(windows[45]) / 7.0)
+        )
+        confidence *= 1.0 / (1.0 + 0.10 * full_dispersion)
+
+        # A recent weak regime may dampen a day, but a single 45-day wobble cannot
+        # erase a strong 365/180/90-day result by itself.
+        conservative = min(
+            full_central,
+            c180,
+            max(c90, -0.025),
+            max(c45, -0.075),
+            leave_out,
+        )
+        hit_support = min(full_hit, hit180, max(hit90, 0.48))
+        lower_bound = min(full_wilson, wilson180)
+        quality = conservative * confidence * (
+            0.52 + 0.28 * hit_support + 0.20 * lower_bound
+        )
         name = DAY_NAMES[weekday]
-        weekday_scores[name] = round(quality, 4)
-        weekday_confidence[name] = round(confidence, 4)
+        weekday_scores[name] = round(quality, 5)
+        weekday_confidence[name] = round(confidence, 5)
         day_summaries[weekday] = (conservative, confidence)
 
         qualifies = (
-            full_central > 0.10
-            and r60_central > 0.08
-            and r30_central >= -0.02
-            and leave_out > 0.05
-            and full_hit >= 0.56
-            and r60_hit >= 0.56
-            and r30_hit >= 0.50
-            and full_wilson >= 0.40
-            and r60_wilson >= 0.36
-            and confidence >= 0.54
-            and quality > 0.055
+            full_central > 0.075
+            and c180 > 0.070
+            and c90 > 0.030
+            and c45 >= -0.045
+            and leave_out > 0.045
+            and full_hit >= 0.555
+            and hit180 >= 0.550
+            and hit90 >= 0.520
+            and hit45 >= 0.450
+            and full_wilson >= 0.430
+            and wilson180 >= 0.390
+            and confidence >= 0.575
+            and quality > 0.050
         )
         if qualifies:
             candidates.append((weekday, quality, confidence))
 
-    # Avoid unstable second places: the runner-up must be independently solid,
-    # not merely the least weak day.
-    candidates.sort(key=lambda item: (round(item[1], 3), round(item[2], 3)), reverse=True)
+    candidates.sort(key=lambda item: (round(item[1], 4), round(item[2], 4)), reverse=True)
     selected: list[int] = []
     if candidates:
         selected.append(candidates[0][0])
     if len(candidates) >= 2:
         first_quality = candidates[0][1]
         second_quality = candidates[1][1]
-        if second_quality >= max(0.060, first_quality * 0.62):
+        third_quality = candidates[2][1] if len(candidates) >= 3 else 0.0
+        clear_from_third = second_quality >= third_quality + 0.012
+        independently_strong = second_quality >= max(0.060, first_quality * 0.64)
+        if clear_from_third and independently_strong:
             selected.append(candidates[1][0])
     selected.sort(key=DISPLAY_WEEK_ORDER.index)
     best_days = tuple(DAY_NAMES[weekday] for weekday in selected)
 
-    current_weekday = now.astimezone(ZoneInfo(timezone)).weekday()
+    current_weekday = local_now.weekday()
     current_summary = day_summaries.get(current_weekday)
     if current_summary is None:
         current, score, confidence = "?", 0.0, 0.0
     else:
         score, confidence = current_summary
-        if confidence < 0.54:
+        if confidence < 0.575:
             current = "?"
-        elif score >= 0.80:
+        elif score >= 0.85:
             current = "++"
-        elif score >= 0.12:
+        elif score >= 0.14:
             current = "+"
-        elif score <= -0.80:
+        elif score <= -0.85:
             current = "--"
-        elif score <= -0.12:
+        elif score <= -0.14:
             current = "-"
         else:
             current = "="
@@ -1677,7 +1743,7 @@ def analyze_seasonality(
         current=current,
         best_weekdays=best_days,
         samples=len(observations),
-        source="completed-calendar-days",
+        source="completed-calendar-days-365d",
         current_score=score,
         current_confidence=confidence,
         weekday_scores=weekday_scores,
@@ -1685,7 +1751,7 @@ def analyze_seasonality(
     )
 
 
-def _rolling_week_returns(points: list[PricePoint]) -> list[float]:
+def rolling_week_returns(points: list[PricePoint]) -> list[float]:
     if len(points) < 10:
         return []
     results: list[float] = []
@@ -1703,8 +1769,9 @@ def _rolling_week_returns(points: list[PricePoint]) -> list[float]:
     return results
 
 
-def _week_context(week_pct: float, points: list[PricePoint]) -> tuple[str, float | None, float]:
-    samples = _rolling_week_returns(points)
+def week_context_from_samples(week_pct: float, samples: Sequence[float]) -> tuple[str, float | None, float]:
+    samples = [float(value) for value in samples if math.isfinite(float(value))]
+
     if len(samples) < 12:
         # Conservative fallback: no extreme colors without enough own-history samples.
         if week_pct >= 4.0:
@@ -1731,6 +1798,10 @@ def _week_context(week_pct: float, points: list[PricePoint]) -> tuple[str, float
     if percentile <= 0.45 and week_pct < 0:
         return ORANGE, percentile, confidence
     return YELLOW, percentile, confidence
+
+
+def _week_context(week_pct: float, points: list[PricePoint]) -> tuple[str, float | None, float]:
+    return week_context_from_samples(week_pct, rolling_week_returns(points))
 
 
 def time_color(mark: str) -> str:
@@ -1854,18 +1925,26 @@ def build_coin_analysis(
     minimum_observations: int,
     is_reference: bool,
     config: Mapping[str, Any],
+    seasonality_override: Seasonality | None = None,
+    week_samples_override: Sequence[float] | None = None,
+    map_flash_score: float = 0.0,
 ) -> CoinAnalysis:
     week_pct = delta_to_pct((current.get("delta") or {}).get("week"))
-    seasonality = analyze_seasonality(
+    seasonality = seasonality_override or analyze_seasonality(
         history,
         now,
         timezone,
         block_hours=block_hours,
         min_samples=min_samples,
         minimum_observations=minimum_observations,
-        lookback_days=int(config.get("seasonality_lookback_days", 120)),
+        lookback_days=int(config.get("seasonality_lookback_days", 365)),
     )
-    week_signal, percentile, week_confidence = _week_context(week_pct, history)
+    if week_samples_override is not None:
+        week_signal, percentile, week_confidence = week_context_from_samples(
+            week_pct, week_samples_override
+        )
+    else:
+        week_signal, percentile, week_confidence = _week_context(week_pct, history)
     now_score, now_color = current_now_signal(
         short,
         seasonality,
@@ -1873,7 +1952,25 @@ def build_coin_analysis(
         is_reference=is_reference,
         week_signal=week_signal,
     )
-    # Counts remain focused on the requested short-term extremes; long-term fields do not inflate them.
+
+    count = max(short.buy_count, short.sell_count)
+    persistence = max(short.positive_streak, short.negative_streak)
+    confirmed = (
+        count * 11.0
+        + short.extreme_proximity * 0.62
+        + short.pattern_confidence * 24.0
+        + persistence * 3.5
+        + (4.0 if not short.reversal_guard else -7.0)
+    )
+    # Map flash keeps every configured coin eligible; detailed flash reacts to
+    # the newest 10/20-minute shape. Neither changes the conservative colors.
+    flash = max(short.flash_score, min(100.0, map_flash_score))
+    ranking_score = 0.74 * confirmed + 0.52 * flash
+    if short.data_quality == "uncertain":
+        ranking_score *= 0.86
+    elif short.data_quality == "insufficient":
+        ranking_score *= 0.55
+
     return CoinAnalysis(
         display_code=display_code,
         api_code=api_code,
@@ -1888,6 +1985,8 @@ def build_coin_analysis(
         btc_gate=btc_gate(short, config) if is_reference else False,
         week_percentile=percentile,
         week_confidence=week_confidence,
+        flash_score=flash,
+        ranking_score=ranking_score,
     )
 
 
@@ -1898,21 +1997,20 @@ def strength_count(item: CoinAnalysis) -> int:
 def confidence_sort_key(item: CoinAnalysis) -> tuple[float, ...]:
     quality_rank = {"good": 2.0, "uncertain": 1.0, "insufficient": 0.0}.get(item.short.data_quality, 0.0)
     count = strength_count(item)
-    margin = abs(item.short.accumulation_score - item.short.distribution_score)
     persistence = max(item.short.positive_streak, item.short.negative_streak)
-    # Buckets prevent tiny floating-point/API changes from reshuffling equal candidates.
-    proximity_bucket = math.floor(item.short.extreme_proximity / 5.0)
-    confidence_bucket = math.floor(item.short.pattern_confidence * 10.0)
+    # Ranking score includes the fast flash layer; every visible color/count
+    # remains persistence-confirmed and therefore deliberately slower.
     return (
+        float(math.floor(item.ranking_score / 3.0)),
         float(count),
-        float(proximity_bucket),
-        float(confidence_bucket),
+        float(math.floor(item.flash_score / 5.0)),
+        float(math.floor(item.short.extreme_proximity / 5.0)),
         float(persistence),
         0.0 if item.short.reversal_guard else 1.0,
         quality_rank,
-        float(math.floor(margin / 5.0)),
-        float(math.floor(item.short.anomaly_score / 5.0)),
+        float(math.floor(item.short.pattern_confidence * 10.0)),
     )
+
 
 def format_line(item: CoinAnalysis, *, generated_at: datetime, timezone: str) -> str:
     volumes = "".join(item.short.volume_colors.get(window, WHITE) for window in WINDOWS)

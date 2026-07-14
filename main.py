@@ -1,4 +1,4 @@
-"""Entry point for crypto-signal-monitor v3.2.5 quality refresh."""
+"""Entry point for crypto-signal-monitor v3.2.6."""
 
 from __future__ import annotations
 
@@ -19,13 +19,24 @@ from analysis import (
     build_coin_analysis,
     build_report,
     build_short_metrics,
+    confidence_sort_key,
     normalize_history,
     pre_anomaly_score,
+)
+from daily_context import (
+    STATE_VERSION,
+    build_daily_coin_context,
+    carry_forward_context,
+    context_for_coin,
+    load_state,
+    local_day_key,
+    save_state,
 )
 from discord_sender import send_discord
 from lcw_client import LiveCoinWatchClient
 
 ROOT = Path(__file__).resolve().parent
+DAILY_STATE_PATH = ROOT / ".cache" / "seasonality" / "state.json"
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -99,8 +110,6 @@ def resolve_pair(
     return None
 
 
-
-
 def _turnover_pct(row: dict[str, Any]) -> float:
     volume = max(float(row.get("volume") or 0.0), 0.0)
     cap = max(float(row.get("cap") or 0.0), 0.0)
@@ -114,7 +123,7 @@ def balanced_preselection(
     count: int,
     slot: int,
 ) -> list[tuple[str, str]]:
-    """Select movement, high-turnover and rotating candidates within the LCW quota."""
+    """Every configured coin is map-scored; strongest flash candidates are guaranteed in."""
     ranked = sorted(
         pool,
         key=lambda pair: pre_anomaly_score(current_by_code[pair[1]], reference_current),
@@ -126,16 +135,15 @@ def balanced_preselection(
         if pair not in selected and len(selected) < count:
             selected.append(pair)
 
-    for pair in ranked[: max(8, count - 5)]:
+    # Most slots react immediately to current map anomalies across the complete pool.
+    for pair in ranked[: max(10, count - 5)]:
         add(pair)
-    for pair in sorted(
-        pool,
-        key=lambda pair: _turnover_pct(current_by_code[pair[1]]),
-        reverse=True,
-    ):
+    # High-turnover coins are useful for quiet-price / rising-activity setups.
+    for pair in sorted(pool, key=lambda pair: _turnover_pct(current_by_code[pair[1]]), reverse=True):
         if len(selected) >= count - 2:
             break
         add(pair)
+    # Two rotating slots prevent permanently quiet coins from being ignored.
     remaining = sorted((pair for pair in pool if pair not in selected), key=lambda pair: pair[0])
     if remaining:
         start = slot % len(remaining)
@@ -158,10 +166,7 @@ def refresh_histories(
     histories: dict[str, list] = {}
     failed: list[str] = []
     with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
-        futures = {
-            executor.submit(client.get_history, code, start_ms, end_ms): code
-            for code in codes
-        }
+        futures = {executor.submit(client.get_history, code, start_ms, end_ms): code for code in codes}
         for future in as_completed(futures):
             code = futures[future]
             try:
@@ -173,7 +178,6 @@ def refresh_histories(
     return histories, failed
 
 
-
 def log_quality(display: str, short: ShortMetrics) -> None:
     if short.quality_reasons:
         details = ", ".join(
@@ -182,11 +186,97 @@ def log_quality(display: str, short: ShortMetrics) -> None:
         print(f"Datenhinweis {display}: {details}", file=sys.stderr)
     if short.reversal_guard:
         print(
-            f"Trendwechsel-Schutz {display}: zeitliche Bestätigung fehlt "
+            f"Trendwechsel-Schutz {display}: Bestätigung fehlt "
             f"(Achse={short.temporal_score:+.3f}, "
             f"Streak={short.positive_streak}/{short.negative_streak}).",
             file=sys.stderr,
         )
+
+
+def refresh_daily_state_if_needed(
+    *,
+    client: LiveCoinWatchClient,
+    resolved_all: list[tuple[str, str]],
+    now: datetime,
+    config: dict[str, Any],
+) -> tuple[dict[str, Any], list[str], int]:
+    timezone_name = str(config.get("timezone", "Europe/Berlin"))
+    today = local_day_key(now, timezone_name)
+    previous = load_state(DAILY_STATE_PATH)
+    previous_coins = previous.get("coins") if isinstance(previous.get("coins"), dict) else {}
+    current_codes = {display: api for display, api in resolved_all}
+    missing = [display for display in current_codes if display not in previous_coins]
+    context_revision = str(config.get("quality_revision", "daily-context-cache-flash-ranking-r3"))
+    full_refresh = (
+        previous.get("version") != STATE_VERSION
+        or previous.get("date") != today
+        or previous.get("revision") != context_revision
+    )
+    refresh_displays = list(current_codes) if full_refresh else missing
+
+    if not refresh_displays:
+        print(f"Tageskontext {today}: Cache vollständig, keine Langzeitabfragen.")
+        return previous, [], 0
+
+    analysis_timezone = ZoneInfo(timezone_name)
+    local_midnight = now.astimezone(analysis_timezone).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    long_end = local_midnight.astimezone(timezone.utc)
+    history_days = int(config.get("daily_history_days", 400))
+    long_start = long_end - timedelta(days=history_days)
+    display_to_api = {display: api for display, api in resolved_all if display in refresh_displays}
+    codes = list(dict.fromkeys(display_to_api.values()))
+    print(
+        f"Tageskontext {today}: {len(codes)} Langzeithistorien "
+        f"({history_days} Tage bis {long_end.isoformat()}) ..."
+    )
+    histories, failures = refresh_histories(
+        client=client,
+        codes=codes,
+        start_ms=int(long_start.timestamp() * 1000),
+        end_ms=int(long_end.timestamp() * 1000),
+        workers=int(config.get("history_parallel_requests", 8)),
+        label="Tageskontext",
+    )
+
+    new_coins: dict[str, Any] = dict(previous_coins)
+    for display in refresh_displays:
+        api_code = current_codes[display]
+        prior = previous_coins.get(display) if isinstance(previous_coins, dict) else None
+        history = histories.get(api_code)
+        if history:
+            new_coins[display] = build_daily_coin_context(
+                display=display,
+                api_code=api_code,
+                history=history,
+                now=now,
+                timezone=timezone_name,
+                config=config,
+                previous=prior,
+            )
+        else:
+            new_coins[display] = carry_forward_context(
+                display=display,
+                api_code=api_code,
+                previous=prior,
+            )
+
+    # Remove coins no longer present in config while preserving all successfully resolved ones.
+    new_coins = {display: new_coins[display] for display in current_codes if display in new_coins}
+    state = {
+        "version": STATE_VERSION,
+        "revision": context_revision,
+        "date": today,
+        "generated_at": now.isoformat(),
+        "timezone": timezone_name,
+        "coins": new_coins,
+        "failures": failures,
+    }
+    save_state(DAILY_STATE_PATH, state)
+    print(f"Tageskontext gespeichert: {DAILY_STATE_PATH}")
+    return state, failures, len(codes)
+
 
 def run() -> int:
     args = parse_args()
@@ -230,9 +320,17 @@ def run() -> int:
     if unresolved:
         print("WARNUNG: Keine LCW-Daten für: " + ", ".join(unresolved), file=sys.stderr)
 
+    resolved_all = [resolved_reference, *resolved_pool]
+    daily_state, daily_failures, daily_request_count = refresh_daily_state_if_needed(
+        client=client,
+        resolved_all=resolved_all,
+        now=now,
+        config=config,
+    )
+
     preselect_count = max(
         int(config.get("top_coin_count", 8)),
-        int(config.get("preselect_coin_count", 12)),
+        int(config.get("preselect_coin_count", 22)),
     )
     preselected = balanced_preselection(
         resolved_pool,
@@ -242,7 +340,7 @@ def run() -> int:
         slot=now_ms // (5 * 60_000),
     )
 
-    short_minutes = int(config.get("short_history_minutes", 90))
+    short_minutes = int(config.get("short_history_minutes", 720))
     short_start_ms = int((now - timedelta(minutes=short_minutes)).timestamp() * 1000)
     short_codes = list(dict.fromkeys([reference_api, *(api for _, api in preselected)]))
     print(f"Lade frische Kurzzeithistorien für {len(short_codes)} Coins ({short_minutes} Min) ...")
@@ -278,98 +376,72 @@ def run() -> int:
         )
         log_quality(display, short_by_code[api_code])
 
-    top_count = int(config.get("top_coin_count", 8))
-    def stable_short_key(pair: tuple[str, str]) -> tuple[float, ...]:
-        short = short_by_code[pair[1]]
-        count = max(short.buy_count, short.sell_count)
-        persistence = max(short.positive_streak, short.negative_streak)
-        quality_rank = {"good": 2.0, "uncertain": 1.0, "insufficient": 0.0}.get(short.data_quality, 0.0)
-        return (
-            float(count),
-            float(int(short.extreme_proximity // 5)),
-            float(int(short.pattern_confidence * 10)),
-            float(persistence),
-            0.0 if short.reversal_guard else 1.0,
-            quality_rank,
-            float(int(short.anomaly_score // 5)),
-            float(int(pre_anomaly_score(current_by_code[pair[1]], reference_current) // 2)),
-        )
-
-    selected = sorted(preselected, key=stable_short_key, reverse=True)[:top_count]
-
-    # Long-history request boundaries are fixed to completed local calendar days.
-    # Every run during one day therefore receives the same weekday dataset.
-    history_days = int(config.get("history_days", 126))
-    analysis_timezone = ZoneInfo(str(config.get("timezone", "Europe/Berlin")))
-    local_midnight = now.astimezone(analysis_timezone).replace(hour=0, minute=0, second=0, microsecond=0)
-    long_end = local_midnight.astimezone(timezone.utc)
-    long_end_ms = int(long_end.timestamp() * 1000)
-    long_start_ms = int((long_end - timedelta(days=history_days)).timestamp() * 1000)
-    long_codes = list(dict.fromkeys([reference_api, *(api for _, api in selected)]))
-    print(
-        f"Lade frische Langzeithistorien für {len(long_codes)} Coins "
-        f"({history_days} abgeschlossene Tage bis {long_end.isoformat()}) ..."
-    )
-    long_histories, long_failures = refresh_histories(
-        client=client,
-        codes=long_codes,
-        start_ms=long_start_ms,
-        end_ms=long_end_ms,
-        workers=int(config.get("history_parallel_requests", 8)),
-        label="Langzeit",
-    )
-
     common = {
         "now": now,
         "timezone": str(config.get("timezone", "Europe/Berlin")),
         "block_hours": int(config.get("time_block_hours", 4)),
-        "min_samples": int(config.get("seasonality_min_samples", 4)),
-        "minimum_observations": int(config.get("seasonality_min_observations", 20)),
+        "min_samples": int(config.get("seasonality_min_samples", 24)),
+        "minimum_observations": int(config.get("seasonality_min_observations", 240)),
         "config": config,
     }
+    ref_seasonality, ref_week_returns = context_for_coin(daily_state, reference_display)
     reference_analysis = build_coin_analysis(
         display_code=reference_display,
         api_code=reference_api,
         current=reference_current,
         short=btc_short,
-        history=long_histories.get(reference_api, []),
+        history=[],
         is_reference=True,
+        seasonality_override=ref_seasonality,
+        week_samples_override=ref_week_returns,
+        map_flash_score=pre_anomaly_score(reference_current, reference_current),
         **common,
     )
-    top_analyses: list[CoinAnalysis] = []
-    for display, api_code in selected:
-        top_analyses.append(
+
+    candidate_analyses: list[CoinAnalysis] = []
+    for display, api_code in preselected:
+        seasonality, week_returns = context_for_coin(daily_state, display)
+        candidate_analyses.append(
             build_coin_analysis(
                 display_code=display,
                 api_code=api_code,
                 current=current_by_code[api_code],
                 short=short_by_code[api_code],
-                history=long_histories.get(api_code, []),
+                history=[],
                 is_reference=False,
+                seasonality_override=seasonality,
+                week_samples_override=week_returns,
+                map_flash_score=pre_anomaly_score(current_by_code[api_code], reference_current),
                 **common,
             )
         )
 
+    top_count = int(config.get("top_coin_count", 8))
+    top_analyses = sorted(candidate_analyses, key=confidence_sort_key, reverse=True)[:top_count]
     report = build_report(
         reference_analysis,
         top_analyses,
         generated_at=now,
         timezone=str(config.get("timezone", "Europe/Berlin")),
     )
+
     output_dir = ROOT / "output"
     output_dir.mkdir(exist_ok=True)
     (output_dir / "latest_report.txt").write_text(report + "\n", encoding="utf-8")
     (output_dir / "latest_analysis.json").write_text(
         json.dumps(
             {
-                "version": "3.2.5-quality",
+                "version": "3.2.6",
                 "generated_at": now.isoformat(),
+                "daily_context_date": daily_state.get("date"),
+                "daily_context_generated_at": daily_state.get("generated_at"),
                 "reference": analysis_to_dict(reference_analysis),
                 "top_coins": [analysis_to_dict(item) for item in top_analyses],
+                "preselected": [display for display, _ in preselected],
                 "unresolved": unresolved,
                 "short_history_failures": short_failures,
-                "long_history_failures": long_failures,
-                "api_requests_expected": 1 + len(short_codes) + len(long_codes),
+                "daily_context_failures": daily_failures,
+                "api_requests_expected": 1 + len(short_codes) + daily_request_count,
             },
             indent=2,
             ensure_ascii=False,
@@ -398,4 +470,3 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"FEHLER: {exc}", file=sys.stderr, flush=True)
         sys.exit(1)
-
