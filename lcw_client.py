@@ -1,3 +1,4 @@
+# v3.3.0 adaptive LCW client
 """Adaptive-rate Live Coin Watch client for complete-week monitor v3.2.7."""
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ class LiveCoinWatchClient:
             "cache-control": "no-cache",
             "pragma": "no-cache",
             "x-api-key": api_key,
-            "user-agent": "crypto-signal-monitor/v3.2.7",
+            "user-agent": "crypto-signal-monitor/v3.3.0",
         }
         self._session = requests.Session()
         self._lock = threading.Lock()

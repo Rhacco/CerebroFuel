@@ -1,5 +1,5 @@
-# v3.2.7 complete-week quality refresh
-"""Persistence-aware crypto analysis with complete-week market-adjusted context (v3.2.7)."""
+# v3.3.0 short-term quality engine
+"""Persistence-aware crypto analysis with complete-week market-adjusted context (v3.3.0)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-// v3.2.7 complete-week refresh
+// v3.3.0 scheduler; behavior unchanged
 function schedulerEnabled(env) {
   // v3.2.7: ENABLED 1 = aktiv, 2 = pausiert.
   return String(env.ENABLED ?? "1").trim() === "1";

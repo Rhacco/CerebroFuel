@@ -1,9 +1,16 @@
-# Krypto-Monitor v3.2.7
+# Krypto-Monitor v3.3.0
 
-**Ausgabe:** BTC + 8 aktuell auffälligste Coins; frische LCW-Kurs-/Volumendaten, Flash-Rangfolge und streng bestätigte Farben.
+`Kreis Zahl Richtung 7 B P V10/20/60 N Wochentage Coin/Minute`
 
-`🟣/🟢/🔵/🟡/🟠/🔴` = extrem positiv / positiv / leicht positiv / neutral / Warnung / extrem negativ. `🟤` = unsicher, `⚪` = fehlende Daten.
+- Anfangskreis: Nähe zu bestätigter Akkumulation ↔ Distribution
+- Zahl: erfüllte, zeitlich bestätigte Bedingungen; `▲/▼/=` Richtung
+- `7`: 7-Tage-Lage relativ zur eigenen Historie
+- `B`: 10/20/60-Minuten-Stärke zu BTC; bei BTC eigene bestätigte Stärke
+- `P`: Kurs-/Volumendruck
+- `V`: rollierender LCW-Volumentrend für 10/20/60 Minuten
+- `N`: konservative Gesamtlage mit Trendwechsel-Schutz
+- `SA…FR`: höchstens einmal täglich berechnete Top-Tage
 
-`X▲/▼` = bestätigte Bedingungen · `7` = eigener 7-Tage-Kontext · `B` = relativ zu BTC (bei BTC: intern bestätigte Stärke) · `P` = Kurs-/Volumendruck · `V` = 10/20/60-Minuten-Volumentrend · `N` = konservative Gesamtlage.
+Farben: `🟣` Extrem positiv · `🟢` klar positiv · `🔵` leicht positiv · `🟡` neutral · `🟠` Warnung · `🔴` Extrem negativ · `🟤` unsichere · `⚪` fehlende Daten
 
-Wochentage `SA…FR`: maximal 2 positive Tage aus **vollständigen Montag–Sonntag-Wochen**. Altcoins werden zusätzlich um den gemeinsamen BTC-Markteffekt bereinigt. Meist erscheinen 2 Tage; nur bei klarer Dominanz einer einzelnen Tageswirkung bleibt es bei 1. Der Kontext wird aus dem neuesten GitHub-Cache übernommen und höchstens einmal täglich aktualisiert; nach dem ersten Vollauf werden nur neue Historientage ergänzt.
+Wochentage: nur vollständige MO–SO-Wochen; Kurs + Volumen; Altcoins um BTC und Pool-Median bereinigt; meist zwei positive Tage, nur bei deutlicher Dominanz einer; tägliche Hysterese. v3.2.7-Rohhistorien werden lokal migriert und danach inkrementell ergänzt.

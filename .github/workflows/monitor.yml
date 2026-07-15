@@ -1,6 +1,6 @@
 name: Crypto Signal Monitor
 
-# v3.2.7 complete-week cache refresh
+# v3.3.0: prepare exact daily context first, then send one current report.
 on:
   workflow_dispatch:
     inputs:
@@ -37,56 +37,38 @@ jobs:
         shell: bash
         run: echo "day=$(TZ=Europe/Berlin date +%F)" >> "$GITHUB_OUTPUT"
 
-      - name: Neuesten Tageskontext laden
+      - name: Neuesten Roh- und Tageskontext laden
         id: daily-cache
         uses: actions/cache/restore@v5
         with:
           path: .cache/seasonality
-          key: seasonality-v327-complete-weeks-r2-${{ steps.context-key.outputs.day }}
+          key: seasonality-v330-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
           restore-keys: |
+            seasonality-v330-${{ steps.context-key.outputs.day }}-
+            seasonality-v330-
+            seasonality-v327-complete-weeks-r2-${{ steps.context-key.outputs.day }}
             seasonality-v327-complete-weeks-r2-
             seasonality-v327-adaptive-
-            seasonality-v327-
-
-      - name: Vorhandenen Cache erkennen
-        id: cache-state
-        shell: bash
-        run: |
-          if [ -s .cache/seasonality/state.json ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Abhängigkeiten installieren
         run: python -m pip install --disable-pip-version-check -r requirements.txt
 
-      - name: Frische Analyse mit vorhandenem Cache
-        if: steps.cache-state.outputs.present == 'true'
-        env:
-          LCW_API_KEY: ${{ secrets.LCW_API_KEY }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          SEND_DISCORD: ${{ inputs.send_discord }}
-          LCW_RATE_STATE_PATH: .cache/lcw-rate.json
-        run: python main.py --monitor-only
-
-      - name: Complete-Week-Tageskontext aktualisieren
-        if: steps.daily-cache.outputs.cache-hit != 'true' || steps.cache-state.outputs.present != 'true'
+      - name: Exakten v3.3.0-Tageskontext vorbereiten
+        id: prepare-daily
         env:
           LCW_API_KEY: ${{ secrets.LCW_API_KEY }}
           SEND_DISCORD: "false"
           LCW_RATE_STATE_PATH: .cache/lcw-rate.json
         run: python main.py --daily-only --no-send
 
-      - name: Neuen Tageskontext speichern
-        if: steps.daily-cache.outputs.cache-hit != 'true' || steps.cache-state.outputs.present != 'true'
+      - name: Aktualisierten Tageskontext speichern
+        if: steps.prepare-daily.outputs.changed == 'true'
         uses: actions/cache/save@v5
         with:
           path: .cache/seasonality
-          key: seasonality-v327-complete-weeks-r2-${{ steps.context-key.outputs.day }}
+          key: seasonality-v330-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
 
-      - name: Erste Analyse nach initialem Cache-Aufbau
-        if: steps.cache-state.outputs.present != 'true'
+      - name: Frische Analyse ausführen
         env:
           LCW_API_KEY: ${{ secrets.LCW_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
