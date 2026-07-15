@@ -6,7 +6,6 @@ import argparse
 import json
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -61,6 +60,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Kompakter Krypto-Auffälligkeitsmonitor")
     parser.add_argument("--config", default=str(ROOT / "config.json"))
     parser.add_argument("--no-send", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--daily-only", action="store_true")
+    mode.add_argument("--monitor-only", action="store_true")
     return parser.parse_args()
 
 
@@ -164,19 +166,47 @@ def refresh_histories(
     workers: int,
     label: str,
 ) -> tuple[dict[str, list], list[str]]:
+    """Load histories serially; LCW throttles large request bursts."""
+    del workers
     histories: dict[str, list] = {}
     failed: list[str] = []
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
-        futures = {executor.submit(client.get_history, code, start_ms, end_ms): code for code in codes}
-        for future in as_completed(futures):
-            code = futures[future]
-            try:
-                histories[code] = normalize_history(future.result())
-                print(f"{label}: {code} ({len(histories[code])} Punkte)")
-            except Exception as exc:
-                failed.append(code)
-                print(f"WARNUNG: {label} {code} fehlgeschlagen: {exc}", file=sys.stderr)
+    for code in codes:
+        try:
+            histories[code] = normalize_history(client.get_history(code, start_ms, end_ms))
+            print(f"{label}: {code} ({len(histories[code])} Punkte)")
+        except Exception as exc:
+            failed.append(code)
+            print(f"WARNUNG: {label} {code} fehlgeschlagen: {exc}", file=sys.stderr)
     return histories, failed
+
+
+def refresh_chunked_daily_histories(
+    *,
+    client: LiveCoinWatchClient,
+    codes: list[str],
+    start_ms: int,
+    end_ms: int,
+    chunk_days: int,
+    label: str,
+) -> tuple[dict[str, list], list[str], int]:
+    """Load dense long histories in chunks so daily observations really exist."""
+    histories: dict[str, list] = {}
+    failed: list[str] = []
+    request_count = 0
+    for code in codes:
+        try:
+            raw, used = client.get_history_chunked(
+                code, start_ms, end_ms, chunk_days=chunk_days
+            )
+            request_count += used
+            histories[code] = normalize_history(raw)
+            print(
+                f"{label}: {code} ({len(histories[code])} Punkte, {used} Teilabfragen)"
+            )
+        except Exception as exc:
+            failed.append(code)
+            print(f"WARNUNG: {label} {code} fehlgeschlagen: {exc}", file=sys.stderr)
+    return histories, failed, request_count
 
 
 def log_quality(display: str, short: ShortMetrics) -> None:
@@ -233,6 +263,8 @@ def refresh_daily_state_if_needed(
         previous.get("version") == STATE_VERSION
         and previous.get("revision") == STATE_REVISION
     )
+    if not compatible:
+        previous_coins = {}
     current_complete = (
         compatible
         and previous.get("date") == today
@@ -257,12 +289,12 @@ def refresh_daily_state_if_needed(
         f"Tageskontext {today}: einmalige Tagesberechnung für {len(codes)} Coins "
         f"({history_days} Tage bis {long_end.isoformat()}) ..."
     )
-    histories, transport_failures = refresh_histories(
+    histories, transport_failures, daily_requests = refresh_chunked_daily_histories(
         client=client,
         codes=codes,
         start_ms=int(long_start.timestamp() * 1000),
         end_ms=int(long_end.timestamp() * 1000),
-        workers=int(config.get("daily_history_parallel_requests", 6)),
+        chunk_days=int(config.get("daily_history_chunk_days", 100)),
         label="Tageskontext",
     )
 
@@ -326,7 +358,7 @@ def refresh_daily_state_if_needed(
         f"{visible_days} Coins mit positivem Top-Wochentag, "
         f"{len(set(failures))} API-/Auswertungsfehler."
     )
-    return state, sorted(set(failures)), len(codes), True
+    return state, sorted(set(failures)), daily_requests, True
 
 def _short_is_displayable(short: ShortMetrics) -> bool:
     """Only complete 10/20/60-minute analyses may enter the visible Top 8."""
@@ -362,7 +394,7 @@ def run() -> int:
     config = load_config(Path(args.config))
     api_key = os.getenv("LCW_API_KEY", "").strip()
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
-    should_send = env_bool("SEND_DISCORD", True) and not args.no_send
+    should_send = env_bool("SEND_DISCORD", True) and not args.no_send and not args.daily_only
     if not api_key:
         raise ValueError("GitHub Secret LCW_API_KEY fehlt.")
     if should_send and not webhook_url:
@@ -378,6 +410,7 @@ def run() -> int:
         api_key=api_key,
         currency=str(config.get("currency", "USD")),
         timeout=int(config.get("request_timeout_seconds", 30)),
+        request_interval_seconds=float(config.get("request_interval_seconds", 1.55)),
     )
     print(f"Lade frische Map-Daten für {len(candidate_codes)} LCW-Codes ...")
     current_by_code = client.get_coins(candidate_codes)
@@ -400,12 +433,33 @@ def run() -> int:
         print("WARNUNG: Keine LCW-Daten für: " + ", ".join(unresolved), file=sys.stderr)
 
     resolved_all = [resolved_reference, *resolved_pool]
-    daily_state, daily_failures, daily_request_count, _daily_changed = refresh_daily_state_if_needed(
-        client=client,
-        resolved_all=resolved_all,
-        now=now,
-        config=config,
-    )
+    today = local_day_key(now, str(config.get("timezone", "Europe/Berlin")))
+    if args.monitor_only:
+        daily_state = load_state(DAILY_STATE_PATH)
+        if (
+            daily_state.get("version") != STATE_VERSION
+            or daily_state.get("revision") != STATE_REVISION
+            or daily_state.get("date") != today
+        ):
+            raise RuntimeError(
+                "Tageskontext fehlt oder ist veraltet. Der Workflow muss zuerst --daily-only ausführen."
+            )
+        daily_failures = list(daily_state.get("failures") or [])
+        daily_request_count = 0
+        print(f"Tageskontext {today}: aus Cache, 0 Langzeitabfragen.")
+    else:
+        daily_state, daily_failures, daily_request_count, _daily_changed = refresh_daily_state_if_needed(
+            client=client,
+            resolved_all=resolved_all,
+            now=now,
+            config=config,
+        )
+        if args.daily_only:
+            print(
+                f"Tageskontext fertig: {daily_request_count} Langzeitabfragen; "
+                f"{len(daily_failures)} Fehler."
+            )
+            return 0
 
     top_count = int(config.get("top_coin_count", 8))
     initial_count = max(top_count, int(config.get("preselect_coin_count", 22)))

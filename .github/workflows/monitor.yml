@@ -1,6 +1,6 @@
 name: Crypto Signal Monitor
 
-# v3.2.7: daily long-history cache + fresh five-minute short analysis
+# v3.2.7: daily dense weekday context + paced five-minute monitor
 on:
   workflow_dispatch:
     inputs:
@@ -38,19 +38,38 @@ jobs:
         run: echo "day=$(TZ=Europe/Berlin date +%F)" >> "$GITHUB_OUTPUT"
 
       - name: Tageskontext laden
-        uses: actions/cache@v4
+        id: daily-cache
+        uses: actions/cache/restore@v4
         with:
           path: .cache/seasonality
-          key: seasonality-v327-${{ hashFiles('config.json', 'analysis.py', 'daily_context.py') }}-${{ steps.context-key.outputs.day }}
+          key: seasonality-v327-dense-${{ hashFiles('config.json', 'analysis.py', 'daily_context.py', 'lcw_client.py') }}-${{ steps.context-key.outputs.day }}
           restore-keys: |
-            seasonality-v327-${{ hashFiles('config.json', 'analysis.py', 'daily_context.py') }}-
+            seasonality-v327-dense-${{ hashFiles('config.json', 'analysis.py', 'daily_context.py', 'lcw_client.py') }}-
 
       - name: Abhängigkeiten installieren
         run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Tageskontext einmalig berechnen
+        if: steps.daily-cache.outputs.cache-hit != 'true'
+        env:
+          LCW_API_KEY: ${{ secrets.LCW_API_KEY }}
+          SEND_DISCORD: "false"
+        run: python main.py --daily-only --no-send
+
+      - name: Tageskontext speichern
+        if: steps.daily-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/seasonality
+          key: seasonality-v327-dense-${{ hashFiles('config.json', 'analysis.py', 'daily_context.py', 'lcw_client.py') }}-${{ steps.context-key.outputs.day }}
+
+      - name: Kurze LCW-Pause nach Tagesaufbau
+        if: steps.daily-cache.outputs.cache-hit != 'true'
+        run: sleep 5
 
       - name: Frische Analyse ausführen
         env:
           LCW_API_KEY: ${{ secrets.LCW_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           SEND_DISCORD: ${{ inputs.send_discord }}
-        run: python main.py
+        run: python main.py --monitor-only

@@ -96,7 +96,7 @@
   "preselect_coin_count": 22,
   "short_history_minutes": 720,
   "history_days": 126,
-  "history_parallel_requests": 5,
+  "history_parallel_requests": 1,
   "time_block_hours": 4,
   "seasonality_min_samples": 10,
   "seasonality_min_observations": 84,
@@ -165,13 +165,15 @@
   "temporal_axis_strong": 0.42,
   "temporal_confirmation_points": 4,
   "seasonality_lookback_days": 365,
-  "quality_revision": "daily-once-stable-r1",
+  "quality_revision": "daily-chunked-stable-r2",
   "temporal_guard_threshold": 0.14,
   "daily_history_days": 400,
   "weekday_enter_confirmations": 2,
   "weekday_exit_confirmations": 2,
   "weekday_bootstrap_second_min_score": 0.012,
   "weekday_bootstrap_second_min_confidence": 0.5,
-  "daily_history_parallel_requests": 6,
-  "short_fallback_batch_size": 6
+  "daily_history_parallel_requests": 1,
+  "short_fallback_batch_size": 6,
+  "request_interval_seconds": 1.55,
+  "daily_history_chunk_days": 100
 }
