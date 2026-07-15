@@ -1,5 +1,5 @@
-# v3.2.7 adaptive refresh
-"""Persistence-aware crypto extreme analysis with stable daily context (v3.2.7)."""
+# v3.2.7 complete-week quality refresh
+"""Persistence-aware crypto analysis with complete-week market-adjusted context (v3.2.7)."""
 
 from __future__ import annotations
 
@@ -1475,19 +1475,13 @@ def _completed_daily_observations(
     timezone: str,
     lookback_days: int,
 ) -> list[DailyObservation]:
-    """Build exactly one observation per completed local calendar day.
-
-    The current day and the partial first day are excluded. This makes weekday
-    output identical throughout the day and avoids counting many correlated
-    intraday points as independent samples.
-    """
+    """Build one robust observation per completed local calendar day."""
     if len(points) < 3:
         return []
     tz = ZoneInfo(timezone)
     local_now = now.astimezone(tz)
-    today = local_now.date()
-    cutoff_ordinal = today.toordinal()
-    earliest_ordinal = cutoff_ordinal - max(lookback_days + 3, 10)
+    cutoff_ordinal = local_now.date().toordinal()
+    earliest_ordinal = cutoff_ordinal - max(lookback_days + 10, 21)
 
     closes: dict[int, PricePoint] = {}
     for point in points:
@@ -1498,11 +1492,12 @@ def _completed_daily_observations(
         previous = closes.get(ordinal)
         if previous is None or point.timestamp_ms > previous.timestamp_ms:
             closes[ordinal] = point
+
     ordered = sorted(closes.items())
     raw: list[tuple[int, int, int, float, float | None, float]] = []
     for (previous_day, previous), (current_day, current) in zip(ordered, ordered[1:]):
         gap_days = current_day - previous_day
-        if gap_days < 1 or gap_days > 2 or previous.rate <= 0:
+        if gap_days != 1 or previous.rate <= 0:
             continue
         price_pct = _pct(current.rate, previous.rate)
         volume_pct = _pct(current.volume, previous.volume)
@@ -1510,20 +1505,16 @@ def _completed_daily_observations(
             continue
         if volume_pct is not None and (not math.isfinite(volume_pct) or abs(volume_pct) > 1500):
             volume_pct = None
-        # Consecutive daily closes are most reliable; a two-day gap is retained
-        # with reduced weight instead of pretending it is a normal day.
-        reliability = 1.0 if gap_days == 1 else 0.62
         timestamp_ms = current.timestamp_ms
         weekday = datetime.fromtimestamp(timestamp_ms / 1000, tz=tz).weekday()
-        raw.append((timestamp_ms, current_day, weekday, price_pct, volume_pct, reliability))
+        raw.append((timestamp_ms, current_day, weekday, price_pct, volume_pct, 1.0))
 
     if len(raw) < 14:
         return []
     price_base = _robust_baseline([row[3] for row in raw], 0.25)
     volume_base = _robust_baseline([row[4] for row in raw if row[4] is not None], 0.75)
-    scored: list[DailyObservation] = []
-    raw_scores: list[float] = []
     staged: list[tuple[tuple[int, int, int, float, float | None, float], float]] = []
+    raw_scores: list[float] = []
     for row in raw:
         timestamp_ms, ordinal, weekday, price_pct, volume_pct, reliability = row
         pz = _clamp(_robust_z(price_pct, price_base) or 0.0, -3.5, 3.5)
@@ -1547,23 +1538,110 @@ def _completed_daily_observations(
         raw_scores.append(score)
 
     global_centre = 0.60 * statistics.median(raw_scores) + 0.40 * _trimmed_mean(raw_scores)
-    for row, score in staged:
-        timestamp_ms, ordinal, weekday, price_pct, volume_pct, reliability = row
-        scored.append(
-            DailyObservation(
-                timestamp_ms=timestamp_ms,
-                date_ordinal=ordinal,
-                weekday=weekday,
-                score=score - global_centre,
-                price_pct=price_pct,
-                volume_pct=volume_pct,
-                reliability=reliability,
-            )
+    observations = [
+        DailyObservation(
+            timestamp_ms=row[0],
+            date_ordinal=row[1],
+            weekday=row[2],
+            score=score - global_centre,
+            price_pct=row[3],
+            volume_pct=row[4],
+            reliability=row[5],
         )
-    # Keep exactly the requested number of completed local days.
+        for row, score in staged
+    ]
     minimum_ordinal = cutoff_ordinal - lookback_days
-    return [item for item in scored if item.date_ordinal >= minimum_ordinal]
+    return [item for item in observations if item.date_ordinal >= minimum_ordinal]
 
+
+def _complete_week_observations(
+    observations: Sequence[DailyObservation],
+) -> tuple[list[DailyObservation], int]:
+    """Keep only Monday-Sunday weeks containing all seven independent days."""
+    weeks: dict[int, dict[int, DailyObservation]] = {}
+    for item in observations:
+        monday_ordinal = item.date_ordinal - item.weekday
+        weeks.setdefault(monday_ordinal, {})[item.weekday] = item
+    complete = {
+        monday: values
+        for monday, values in weeks.items()
+        if set(values) == set(range(7))
+    }
+    ordered = [
+        complete[monday][weekday]
+        for monday in sorted(complete)
+        for weekday in range(7)
+    ]
+    return ordered, len(complete)
+
+
+def _winsorized(values: Sequence[float], low: float = 0.05, high: float = 0.95) -> list[float]:
+    if not values:
+        return []
+    lo = _percentile(values, low)
+    hi = _percentile(values, high)
+    return [_clamp(float(value), lo, hi) for value in values]
+
+
+def _robust_market_beta(coin: Sequence[float], reference: Sequence[float]) -> float:
+    if len(coin) < 20 or len(reference) != len(coin):
+        return 1.0
+    ys = _winsorized(coin)
+    xs = _winsorized(reference)
+    mx = statistics.mean(xs)
+    my = statistics.mean(ys)
+    variance = sum((value - mx) ** 2 for value in xs)
+    if variance <= 1e-9:
+        return 1.0
+    covariance = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    return _clamp(covariance / variance, 0.0, 3.0)
+
+
+def _market_adjust_complete_weeks(
+    coin: Sequence[DailyObservation],
+    reference: Sequence[DailyObservation] | None,
+) -> tuple[list[DailyObservation], int, float]:
+    coin_complete, coin_weeks = _complete_week_observations(coin)
+    if not reference:
+        return coin_complete, coin_weeks, 0.0
+    reference_complete, _ = _complete_week_observations(reference)
+    ref_by_day = {item.date_ordinal: item for item in reference_complete}
+    common = [item for item in coin_complete if item.date_ordinal in ref_by_day]
+    common_week_starts = {item.date_ordinal - item.weekday for item in common}
+    common_week_starts = {
+        week for week in common_week_starts
+        if sum(1 for item in common if item.date_ordinal - item.weekday == week) == 7
+    }
+    common = [item for item in common if item.date_ordinal - item.weekday in common_week_starts]
+    if len(common) < 28:
+        return common, len(common_week_starts), 1.0
+
+    coin_returns = [item.price_pct for item in common]
+    btc_returns = [ref_by_day[item.date_ordinal].price_pct for item in common]
+    beta = _robust_market_beta(coin_returns, btc_returns)
+    residuals = [
+        item.price_pct - beta * ref_by_day[item.date_ordinal].price_pct
+        for item in common
+    ]
+    residual_base = _robust_baseline(residuals, 0.35)
+    adjusted_raw: list[float] = []
+    for item, residual in zip(common, residuals):
+        relative_z = _clamp(_robust_z(residual, residual_base) or 0.0, -3.5, 3.5)
+        adjusted_raw.append(0.62 * item.score + 0.38 * relative_z)
+    centre = 0.60 * statistics.median(adjusted_raw) + 0.40 * _trimmed_mean(adjusted_raw)
+    adjusted = [
+        DailyObservation(
+            timestamp_ms=item.timestamp_ms,
+            date_ordinal=item.date_ordinal,
+            weekday=item.weekday,
+            score=_clamp(score - centre, -4.0, 4.0),
+            price_pct=item.price_pct,
+            volume_pct=item.volume_pct,
+            reliability=item.reliability,
+        )
+        for item, score in zip(common, adjusted_raw)
+    ]
+    return adjusted, len(common_week_starts), beta
 
 def _recency_weight(timestamp_ms: int, now_ms: int, half_life_days: float = 50.0) -> float:
     age_days = max(0.0, (now_ms - timestamp_ms) / 86_400_000)
@@ -1602,37 +1680,44 @@ def analyze_seasonality(
     now: datetime,
     timezone: str,
     block_hours: int = 4,
-    min_samples: int = 10,
-    minimum_observations: int = 84,
-    lookback_days: int = 365,
+    min_samples: int = 8,
+    minimum_observations: int = 70,
+    lookback_days: int = 294,
+    reference_points: list[PricePoint] | None = None,
 ) -> Seasonality:
-    """Robust weekday ranking from independent completed local calendar days.
+    """Rank weekdays from equal-sized complete weeks with BTC market adjustment.
 
-    The method accepts the real density returned by LCW instead of requiring an
-    unrealistically complete daily series. It still demands long/recent regime
-    agreement, outlier resistance and a positive hit-rate before a day appears.
-    Daily hysteresis is applied by ``daily_context.py``.
+    Only Monday-Sunday weeks available for both the coin and BTC are used. This
+    removes the structural advantage of the most recently completed weekday and
+    reduces shared market-wide weekday effects for altcoins.
     """
     del block_hours
-    observations = _completed_daily_observations(points, now, timezone, lookback_days)
-    if len(observations) < minimum_observations:
-        return Seasonality("?", tuple(), len(observations), "completed-days-insufficient")
+    coin_daily = _completed_daily_observations(points, now, timezone, lookback_days)
+    reference_daily = (
+        _completed_daily_observations(reference_points, now, timezone, lookback_days)
+        if reference_points
+        else None
+    )
+    observations, complete_weeks, market_beta = _market_adjust_complete_weeks(
+        coin_daily, reference_daily
+    )
+    if complete_weeks < max(8, min_samples) or len(observations) < minimum_observations:
+        return Seasonality(
+            "?", tuple(), len(observations),
+            f"complete-weeks-insufficient:{complete_weeks}"
+        )
 
     local_now = now.astimezone(ZoneInfo(timezone))
     local_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
     now_ms = int(local_midnight.timestamp() * 1000)
     local_today = local_now.date().toordinal()
-    cutoffs = {
-        180: local_today - 180,
-        90: local_today - 90,
-        45: local_today - 45,
-    }
+    cutoffs = {182: local_today - 182, 91: local_today - 91, 42: local_today - 42}
     by_weekday: dict[int, list[DailyObservation]] = {}
     for item in observations:
         by_weekday.setdefault(item.weekday, []).append(item)
 
-    required = max(10, min_samples)
-    candidates: list[tuple[int, float, float, int]] = []
+    required = max(8, min_samples)
+    ranked_days: list[tuple[int, float, float, int, float]] = []
     weekday_scores: dict[str, float] = {}
     weekday_confidence: dict[str, float] = {}
     day_summaries: dict[int, tuple[float, float]] = {}
@@ -1643,55 +1728,50 @@ def analyze_seasonality(
             days: [item for item in items if item.date_ordinal >= cutoff]
             for days, cutoff in cutoffs.items()
         }
-        # Approximately 12+ independent occurrences are enough for one weekday;
-        # recent windows may naturally contain fewer points.
         if (
             len(items) < required
-            or len(windows[180]) < 7
-            or len(windows[90]) < 3
-            or len(windows[45]) < 2
+            or len(windows[182]) < 7
+            or len(windows[91]) < 3
+            or len(windows[42]) < 2
         ):
             continue
 
         full = _daily_group_metrics(items, now_ms)
-        r180 = _daily_group_metrics(windows[180], now_ms)
-        r90 = _daily_group_metrics(windows[90], now_ms)
-        r45 = _daily_group_metrics(windows[45], now_ms)
+        r182 = _daily_group_metrics(windows[182], now_ms)
+        r91 = _daily_group_metrics(windows[91], now_ms)
+        r42 = _daily_group_metrics(windows[42], now_ms)
         leave_out = _leave_extremes_out_central(items, now_ms)
         full_central, full_hit, full_dispersion, full_consistency, full_wilson = full
-        c180, hit180, _, consistency180, wilson180 = r180
-        c90, hit90, _, consistency90, _ = r90
-        c45, hit45, _, _, _ = r45
+        c182, hit182, _, consistency182, wilson182 = r182
+        c91, hit91, _, consistency91, _ = r91
+        c42, hit42, _, _, _ = r42
 
-        sample_factor = min(1.0, len(items) / 20.0)
-        coverage_factor = min(1.0, len(observations) / 280.0)
+        sample_factor = min(1.0, len(items) / 32.0)
         confidence = sample_factor * (
             0.34
-            + 0.20 * full_consistency
-            + 0.18 * consistency180
-            + 0.13 * consistency90
-            + 0.10 * min(1.0, len(windows[45]) / 6.0)
-            + 0.05 * coverage_factor
+            + 0.22 * full_consistency
+            + 0.18 * consistency182
+            + 0.14 * consistency91
+            + 0.08 * min(1.0, len(windows[42]) / 6.0)
+            + 0.04 * min(1.0, complete_weeks / 36.0)
         )
         confidence *= 1.0 / (1.0 + 0.085 * full_dispersion)
         confidence = _clamp(confidence, 0.0, 1.0)
 
-        # Long-term evidence dominates, while recent regimes can dampen but not
-        # erase a stable effect because of one weak 45-day sample.
-        regime_effect = 0.40 * full_central + 0.30 * c180 + 0.20 * c90 + 0.10 * c45
-        robust_effect = 0.66 * regime_effect + 0.34 * leave_out
+        regime_effect = 0.42 * full_central + 0.30 * c182 + 0.19 * c91 + 0.09 * c42
+        robust_effect = 0.68 * regime_effect + 0.32 * leave_out
         conflict_penalty = 1.0
-        if c90 < -0.08:
-            conflict_penalty *= 0.72
-        elif c90 < 0:
+        if c91 < -0.08:
+            conflict_penalty *= 0.70
+        elif c91 < 0:
             conflict_penalty *= 0.88
-        if c45 < -0.20:
-            conflict_penalty *= 0.76
-        elif c45 < -0.06:
+        if c42 < -0.20:
+            conflict_penalty *= 0.74
+        elif c42 < -0.06:
             conflict_penalty *= 0.90
 
-        hit_support = min(full_hit, hit180, max(hit90, 0.46))
-        lower_bound = min(full_wilson, wilson180)
+        hit_support = min(full_hit, hit182, max(hit91, 0.46))
+        lower_bound = min(full_wilson, wilson182)
         quality = robust_effect * confidence * (
             0.50 + 0.30 * hit_support + 0.20 * lower_bound
         ) * conflict_penalty
@@ -1700,59 +1780,55 @@ def analyze_seasonality(
         weekday_confidence[name] = round(confidence, 5)
         day_summaries[weekday] = (robust_effect, confidence)
 
-        strong_qualifies = (
-            full_central > 0.070
-            and c180 > 0.050
-            and c90 > -0.010
-            and c45 > -0.100
-            and leave_out > 0.035
-            and full_hit >= 0.545
-            and hit180 >= 0.525
-            and hit90 >= 0.480
-            and full_wilson >= 0.360
-            and confidence >= 0.500
-            and quality > 0.022
+        strong = (
+            robust_effect > 0.060
+            and full_hit >= 0.535
+            and hit182 >= 0.515
+            and hit91 >= 0.47
+            and leave_out > 0.025
+            and confidence >= 0.47
+            and quality > 0.015
         )
-        robust_qualifies = (
-            full_central > 0.018
-            and c180 > 0.010
-            and c90 > -0.070
-            and c45 > -0.220
-            and leave_out > 0.006
-            and full_hit >= 0.500
-            and hit180 >= 0.485
-            and hit90 >= 0.440
-            and full_wilson >= 0.300
-            and confidence >= 0.395
-            and quality > 0.0035
+        usable = (
+            robust_effect > 0.010
+            and full_hit >= 0.495
+            and hit182 >= 0.475
+            and hit91 >= 0.43
+            and leave_out > -0.005
+            and confidence >= 0.34
+            and quality > 0.0015
         )
-        if strong_qualifies:
-            candidates.append((weekday, quality, confidence, 2))
-        elif robust_qualifies:
-            candidates.append((weekday, quality, confidence, 1))
+        tier = 2 if strong else (1 if usable else 0)
+        if quality > 0 and confidence >= 0.30:
+            ranked_days.append((weekday, quality, confidence, tier, robust_effect))
 
-    candidates.sort(
-        key=lambda item: (item[3], round(item[1], 5), round(item[2], 5)),
+    ranked_days.sort(
+        key=lambda item: (item[3], round(item[1], 6), round(item[2], 5), item[4]),
         reverse=True,
     )
     selected: list[int] = []
-    if candidates:
-        selected.append(candidates[0][0])
-    if len(candidates) >= 2:
-        first_quality = candidates[0][1]
-        second_quality = candidates[1][1]
-        third_quality = candidates[2][1] if len(candidates) >= 3 else -999.0
-        second_tier = candidates[1][3]
-        clear_from_third = second_quality >= third_quality + 0.0035
-        independently_strong = (
-            second_tier == 2
-            or (
-                second_quality >= max(0.012, first_quality * 0.58)
-                and candidates[1][2] >= 0.48
-            )
+    if ranked_days and ranked_days[0][3] >= 1:
+        selected.append(ranked_days[0][0])
+    elif ranked_days and ranked_days[0][1] >= 0.0035 and ranked_days[0][2] >= 0.38:
+        selected.append(ranked_days[0][0])
+
+    if selected and len(ranked_days) >= 2:
+        first = ranked_days[0]
+        second = ranked_days[1]
+        first_dominates = (
+            first[1] >= max(0.028, second[1] * 2.8)
+            and first[2] >= second[2] + 0.10
+            and first[4] >= second[4] * 2.2
         )
-        if clear_from_third and independently_strong:
-            selected.append(candidates[1][0])
+        second_is_useful = (
+            second[1] >= 0.0015
+            and second[2] >= 0.32
+            and second[4] > 0.0
+            and (second[3] >= 1 or second[1] >= first[1] * 0.22)
+        )
+        if second_is_useful and not first_dominates:
+            selected.append(second[0])
+
     selected.sort(key=DISPLAY_WEEK_ORDER.index)
     best_days = tuple(DAY_NAMES[weekday] for weekday in selected)
 
@@ -1762,7 +1838,7 @@ def analyze_seasonality(
         current, score, confidence = "?", 0.0, 0.0
     else:
         score, confidence = current_summary
-        if confidence < 0.46:
+        if confidence < 0.42:
             current = "?"
         elif score >= 0.85:
             current = "++"
@@ -1774,11 +1850,16 @@ def analyze_seasonality(
             current = "-"
         else:
             current = "="
+    source = (
+        f"complete-weeks-market-adjusted:{complete_weeks}:beta={market_beta:.3f}"
+        if reference_points
+        else f"complete-weeks-reference:{complete_weeks}"
+    )
     return Seasonality(
         current=current,
         best_weekdays=best_days,
         samples=len(observations),
-        source="completed-calendar-days-adaptive-365d",
+        source=source,
         current_score=score,
         current_confidence=confidence,
         weekday_scores=weekday_scores,

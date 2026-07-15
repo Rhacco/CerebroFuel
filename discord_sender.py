@@ -1,4 +1,4 @@
-# v3.2.7 adaptive refresh
+# v3.2.7 complete-week refresh
 """Discord webhook sender with line-safe splitting (v3.2.7)."""
 
 from __future__ import annotations

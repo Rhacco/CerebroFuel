@@ -1,4 +1,4 @@
-"""Once-daily, stable weekday context for crypto-signal-monitor v3.2.7."""
+"""Stable complete-week weekday context for crypto-signal-monitor v3.2.7."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from analysis import (
 )
 
 STATE_VERSION = "3.2.7"
-STATE_REVISION = "daily-adaptive-partial-r3"
+STATE_REVISION = "complete-weeks-market-r2"
 
 
 def local_day_key(now: datetime, timezone: str) -> str:
@@ -56,6 +56,31 @@ def save_state(path: Path, state: Mapping[str, Any]) -> None:
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temporary.replace(path)
+
+
+def history_from_context(raw: Mapping[str, Any] | None) -> list[PricePoint]:
+    points: list[PricePoint] = []
+    for item in (raw or {}).get("history", []):
+        try:
+            timestamp, rate, volume = item
+            points.append(
+                PricePoint(
+                    int(timestamp),
+                    float(rate),
+                    None if volume is None else float(volume),
+                )
+            )
+        except (TypeError, ValueError):
+            continue
+    return sorted({point.timestamp_ms: point for point in points}.values(), key=lambda p: p.timestamp_ms)
+
+
+def compact_history(points: Sequence[PricePoint], *, keep_after_ms: int) -> list[list[Any]]:
+    return [
+        [point.timestamp_ms, round(point.rate, 12), None if point.volume is None else round(point.volume, 4)]
+        for point in points
+        if point.timestamp_ms >= keep_after_ms
+    ]
 
 
 def _streaks(raw: Mapping[str, Any] | None, field: str) -> dict[str, int]:
@@ -137,10 +162,15 @@ def _stable_days(
             second_score = raw.weekday_scores.get(second, 0.0)
             first_score = raw.weekday_scores.get(first, 0.0)
             second_conf = raw.weekday_confidence.get(second, 0.0)
+            first_dominates = (
+                first_score >= max(0.028, second_score * 2.8)
+                and raw.weekday_confidence.get(first, 0.0) >= second_conf + 0.10
+            )
             if (
-                second_score >= bootstrap_second_score
-                and second_conf >= bootstrap_second_confidence
-                and second_score >= first_score * 0.62
+                second_score >= min(bootstrap_second_score, 0.0015)
+                and second_conf >= min(bootstrap_second_confidence, 0.34)
+                and second_score >= first_score * 0.22
+                and not first_dominates
             ):
                 selected.append(second)
         mode = "bootstrap"
@@ -150,8 +180,19 @@ def _stable_days(
             day for day in previous_days
             if exit_.get(day, 0) < max(1, exit_days)
         ]
-        for day in ranked:
-            if day not in selected and enter.get(day, 0) >= max(1, enter_days):
+        for index, day in enumerate(ranked):
+            if day in selected:
+                continue
+            score = raw.weekday_scores.get(day, 0.0)
+            confidence = raw.weekday_confidence.get(day, 0.0)
+            first_score = raw.weekday_scores.get(ranked[0], 0.0) if ranked else 0.0
+            useful_second = (
+                len(selected) < 2
+                and index <= 1
+                and score >= max(0.0015, first_score * 0.22)
+                and confidence >= 0.34
+            )
+            if useful_second or enter.get(day, 0) >= max(1, enter_days):
                 selected.append(day)
         mode = "daily-hysteresis"
 
@@ -207,6 +248,7 @@ def build_daily_coin_context(
     display: str,
     api_code: str,
     history: Sequence[PricePoint],
+    reference_history: Sequence[PricePoint] | None,
     now: datetime,
     timezone: str,
     config: Mapping[str, Any],
@@ -221,11 +263,12 @@ def build_daily_coin_context(
         block_hours=int(config.get("time_block_hours", 4)),
         min_samples=int(config.get("seasonality_min_samples", 10)),
         minimum_observations=int(config.get("seasonality_min_observations", 84)),
-        lookback_days=int(config.get("seasonality_lookback_days", 365)),
+        lookback_days=int(config.get("seasonality_lookback_days", 280)),
+        reference_points=(list(reference_history) if reference_history else None),
     )
 
     previous_dict = previous if isinstance(previous, Mapping) else None
-    if raw.source == "completed-days-insufficient":
+    if raw.source.startswith("complete-weeks-insufficient") or raw.source == "completed-days-insufficient":
         # Insufficient but technically valid data is final for today. Preserve a
         # previously confirmed weekday instead of repeatedly spending credits.
         if previous_dict and previous_dict.get("stable_best_weekdays"):
@@ -256,7 +299,7 @@ def build_daily_coin_context(
         current=raw.current,
         best_weekdays=stable_days,
         samples=raw.samples,
-        source=f"daily-completed-days-{mode}",
+        source=f"daily-complete-weeks-{mode}",
         current_score=raw.current_score,
         current_confidence=raw.current_confidence,
         weekday_scores=raw.weekday_scores,
@@ -277,6 +320,11 @@ def build_daily_coin_context(
         "weekday_diagnostics": _diagnostics(raw, stable_days, mode),
         "week_returns": [round(float(value), 8) for value in returns[-420:]],
         "history_points": len(history),
+        "history": compact_history(
+            history,
+            keep_after_ms=int((now.timestamp() - (int(config.get("daily_history_days", 280)) + 14) * 86400) * 1000),
+        ),
+        "method_revision": STATE_REVISION,
         "status": "complete",
         "computed_for": computed_for,
         "last_error": None,
@@ -344,6 +392,8 @@ def carry_forward_daily_context(
         },
         "week_returns": [],
         "history_points": 0,
+        "history": [],
+        "method_revision": STATE_REVISION,
         "status": "complete-empty",
         "computed_for": computed_for,
         "last_error": reason,

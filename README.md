@@ -1,16 +1,9 @@
-# Crypto-Signal-Monitor v3.2.7
+# Krypto-Monitor v3.2.7
 
-`🟣/🟢/🔵/🟡/🟠/🔴` = stark positiv bis stark negativ · `🟤` unsicher · `⚪` fehlend
+**Ausgabe:** BTC + 8 aktuell auffälligste Coins; frische LCW-Kurs-/Volumendaten, Flash-Rangfolge und streng bestätigte Farben.
 
-Zeile: `●X▲/▼7●B●P●V●●●N●[Tage][Coin/Minute]`
+`🟣/🟢/🔵/🟡/🟠/🔴` = extrem positiv / positiv / leicht positiv / neutral / Warnung / extrem negativ. `🟤` = unsicher, `⚪` = fehlende Daten.
 
-- Anfang: bestätigte Nähe zu Akkumulation oder Distribution
-- `X`: bestätigte Kriterien · `▲/▼/=` Richtung
-- `7`: 7-Tage-Kontext relativ zur eigenen Historie
-- `B`: Kurzfriststärke gegenüber BTC; bei BTC bestätigte Eigenstärke
-- `P`: Kauf-/Verkaufsdruck aus Kurs + Volumen
-- `V`: Volumentrend 10/20/60 Minuten
-- `N`: konservative Gesamtlage
-- `SA…FR`: höchstens zwei robuste positive Wochentage
+`X▲/▼` = bestätigte Bedingungen · `7` = eigener 7-Tage-Kontext · `B` = relativ zu BTC (bei BTC: intern bestätigte Stärke) · `P` = Kurs-/Volumendruck · `V` = 10/20/60-Minuten-Volumentrend · `N` = konservative Gesamtlage.
 
-Wochentage werden einmal täglich aus bis zu 300 abgeschlossenen Tagen berechnet. Junge Coins nutzen automatisch nur ihre vorhandene Teilhistorie; leere Zeiträume vor dem Listing sind kein Fehler. Kurzzeitwerte werden bei jedem Lauf frisch geladen. Die API-Steuerung erlaubt schnelle normale Läufe, begrenzt aber längere Tagesläufe sicher als gleitendes Request-Fenster.
+Wochentage `SA…FR`: maximal 2 positive Tage aus **vollständigen Montag–Sonntag-Wochen**. Altcoins werden zusätzlich um den gemeinsamen BTC-Markteffekt bereinigt. Meist erscheinen 2 Tage; nur bei klarer Dominanz einer einzelnen Tageswirkung bleibt es bei 1. Der Kontext wird aus dem neuesten GitHub-Cache übernommen und höchstens einmal täglich aktualisiert; nach dem ersten Vollauf werden nur neue Historientage ergänzt.

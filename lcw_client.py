@@ -1,4 +1,4 @@
-"""Rate-aware Live Coin Watch client for crypto-signal-monitor v3.2.7."""
+"""Adaptive-rate Live Coin Watch client for complete-week monitor v3.2.7."""
 
 from __future__ import annotations
 

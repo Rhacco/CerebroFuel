@@ -1,4 +1,4 @@
-"""Entry point for crypto-signal-monitor v3.2.7."""
+"""Entry point for the complete-week crypto-signal-monitor v3.2.7."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ from daily_context import (
     build_daily_coin_context,
     carry_forward_daily_context,
     context_for_coin,
+    history_from_context,
     load_state,
     local_day_key,
     save_state,
@@ -242,6 +243,14 @@ def log_weekday_context(display: str, context: dict[str, Any]) -> None:
     )
 
 
+def _merge_price_points(*series: list) -> list:
+    merged = {}
+    for points in series:
+        for point in points:
+            merged[point.timestamp_ms] = point
+    return [merged[key] for key in sorted(merged)]
+
+
 def refresh_daily_state_if_needed(
     *,
     client: LiveCoinWatchClient,
@@ -249,11 +258,11 @@ def refresh_daily_state_if_needed(
     now: datetime,
     config: dict[str, Any],
 ) -> tuple[dict[str, Any], list[str], int, bool]:
-    """Build the long-term weekday context exactly once per local day.
+    """Build a complete-week context once, then update it incrementally.
 
-    A successful empty result is final for today. Transport failures carry the
-    last valid context forward, so ordinary five-minute runs never repeat all
-    long-history requests and cannot consume ~55 credits each time.
+    The latest GitHub cache is always used as a seed. Caches from earlier v3.2.7
+    revisions supply continuity/fallback context; once this revision has stored
+    raw history, later days need only one recent-history request per coin.
     """
     timezone_name = str(config.get("timezone", "Europe/Berlin"))
     today = local_day_key(now, timezone_name)
@@ -264,8 +273,6 @@ def refresh_daily_state_if_needed(
         previous.get("version") == STATE_VERSION
         and previous.get("revision") == STATE_REVISION
     )
-    if not compatible:
-        previous_coins = {}
     current_complete = (
         compatible
         and previous.get("date") == today
@@ -273,7 +280,7 @@ def refresh_daily_state_if_needed(
     )
     if current_complete:
         print(
-            f"Tageskontext {today}: aus Cache, 0 Langzeitabfragen "
+            f"Tageskontext {today}: aktueller Complete-Week-Cache, 0 Langzeitabfragen "
             f"({len(current_codes)} Coins)."
         )
         return previous, list(previous.get("failures") or []), 0, False
@@ -283,34 +290,94 @@ def refresh_daily_state_if_needed(
         hour=0, minute=0, second=0, microsecond=0
     )
     long_end = local_midnight.astimezone(timezone.utc)
-    history_days = int(config.get("daily_history_days", 400))
-    long_start = long_end - timedelta(days=history_days)
-    codes = list(dict.fromkeys(current_codes.values()))
+    history_days = int(config.get("daily_history_days", 280))
+    long_start = long_end - timedelta(days=history_days + 2)
+    chunk_days = int(config.get("daily_history_chunk_days", 94))
+    incremental_days = int(config.get("daily_incremental_days", 14))
+
     print(
-        f"Tageskontext {today}: einmalige Tagesberechnung für {len(codes)} Coins "
-        f"({history_days} Tage bis {long_end.isoformat()}) ..."
-    )
-    histories, transport_failures, daily_requests = refresh_chunked_daily_histories(
-        client=client,
-        codes=codes,
-        start_ms=int(long_start.timestamp() * 1000),
-        end_ms=int(long_end.timestamp() * 1000),
-        chunk_days=int(config.get("daily_history_chunk_days", 100)),
-        label="Tageskontext",
+        f"Tageskontext {today}: Complete-Week-Aktualisierung für {len(current_codes)} Coins "
+        f"(voriger Cache: {'kompatibel' if compatible else 'Migration/ältere Revision'})."
     )
 
-    new_coins: dict[str, Any] = {}
-    failures: list[str] = list(transport_failures)
+    histories: dict[str, list] = {}
+    failures: list[str] = []
+    daily_requests = 0
     for display, api_code in current_codes.items():
         prior = previous_coins.get(display) if isinstance(previous_coins, dict) else None
         prior_dict = prior if isinstance(prior, dict) else None
-        history = histories.get(api_code)
-        if history is not None:
+        cached = history_from_context(prior_dict)
+        try:
+            if cached:
+                latest_ms = cached[-1].timestamp_ms
+                refresh_start_ms = max(
+                    int(long_start.timestamp() * 1000),
+                    latest_ms - incremental_days * 86_400_000,
+                )
+                raw = client.get_history(
+                    api_code,
+                    refresh_start_ms,
+                    int(long_end.timestamp() * 1000),
+                    allow_empty=True,
+                )
+                daily_requests += 1
+                fresh = normalize_history(raw)
+                merged = _merge_price_points(cached, fresh)
+                minimum_ms = int(long_start.timestamp() * 1000)
+                histories[api_code] = [point for point in merged if point.timestamp_ms >= minimum_ms]
+                print(
+                    f"Tageskontext: {api_code} inkrementell "
+                    f"({len(histories[api_code])} Punkte, 1 Abfrage)."
+                )
+            else:
+                raw, used, _partial_note = client.get_history_chunked(
+                    api_code,
+                    int(long_start.timestamp() * 1000),
+                    int(long_end.timestamp() * 1000),
+                    chunk_days=chunk_days,
+                )
+                daily_requests += used
+                histories[api_code] = normalize_history(raw)
+                print(
+                    f"Tageskontext: {api_code} Erstaufbau "
+                    f"({len(histories[api_code])} Punkte, {used} Abfragen)."
+                )
+        except Exception as exc:
+            if cached:
+                histories[api_code] = cached
+                failures.append(api_code)
+                print(
+                    f"Tageskontext: {api_code} nutzt den letzten gültigen Cache "
+                    f"(Aktualisierung nicht möglich: {exc}).",
+                    file=sys.stderr,
+                )
+            else:
+                histories[api_code] = []
+                failures.append(api_code)
+                print(
+                    f"Tageskontext: {api_code} heute ohne Langzeitkontext ({exc}).",
+                    file=sys.stderr,
+                )
+
+    reference_api = resolved_all[0][1]
+    reference_history = histories.get(reference_api, [])
+    new_coins: dict[str, Any] = {}
+    for display, api_code in current_codes.items():
+        prior = previous_coins.get(display) if isinstance(previous_coins, dict) else None
+        prior_dict = prior if isinstance(prior, dict) else None
+        if prior_dict and not compatible:
+            # Use old cache as fallback/tie context, but do not freeze weekdays
+            # produced by the superseded incomplete-week method.
+            prior_dict = dict(prior_dict)
+            prior_dict["weekday_initialized"] = False
+        history = histories.get(api_code, [])
+        if history:
             try:
                 context = build_daily_coin_context(
                     display=display,
                     api_code=api_code,
                     history=history,
+                    reference_history=(None if api_code == reference_api else reference_history),
                     now=now,
                     timezone=timezone_name,
                     config=config,
@@ -318,7 +385,6 @@ def refresh_daily_state_if_needed(
                     computed_for=today,
                 )
             except Exception as exc:
-                reason = f"Auswertung fehlgeschlagen: {exc}"
                 failures.append(api_code)
                 context = carry_forward_daily_context(
                     display=display,
@@ -326,18 +392,16 @@ def refresh_daily_state_if_needed(
                     previous=prior_dict,
                     computed_for=today,
                     now=now,
-                    reason=reason,
+                    reason=f"Auswertung nicht möglich: {exc}",
                 )
-                print(f"HINWEIS: Tageskontext {display}: {reason}", file=sys.stderr)
         else:
-            reason = "LCW-Langzeithistorie vorübergehend nicht verfügbar"
             context = carry_forward_daily_context(
                 display=display,
                 api_code=api_code,
                 previous=prior_dict,
                 computed_for=today,
                 now=now,
-                reason=reason,
+                reason="keine ausreichende Langzeithistorie",
             )
         new_coins[display] = context
         log_weekday_context(display, context)
@@ -351,13 +415,13 @@ def refresh_daily_state_if_needed(
         "coins": new_coins,
         "complete_count": len(new_coins),
         "failures": sorted(set(failures)),
+        "migrated_from_revision": previous.get("revision"),
     }
     save_state(DAILY_STATE_PATH, state)
-    visible_days = sum(bool((item.get("stable_best_weekdays") or [])) for item in new_coins.values())
+    visible_days = sum(bool(item.get("stable_best_weekdays")) for item in new_coins.values())
     print(
-        f"Tageskontext gespeichert: {len(new_coins)}/{len(current_codes)} abgeschlossen, "
-        f"{visible_days} Coins mit positivem Top-Wochentag, "
-        f"{len(set(failures))} API-/Auswertungsfehler."
+        f"Tageskontext gespeichert: {visible_days}/{len(new_coins)} Coins mit Top-Wochentag, "
+        f"{daily_requests} LCW-Langzeitabfragen."
     )
     return state, sorted(set(failures)), daily_requests, True
 
@@ -440,17 +504,19 @@ def run() -> int:
     today = local_day_key(now, str(config.get("timezone", "Europe/Berlin")))
     if args.monitor_only:
         daily_state = load_state(DAILY_STATE_PATH)
-        if (
-            daily_state.get("version") != STATE_VERSION
-            or daily_state.get("revision") != STATE_REVISION
-            or daily_state.get("date") != today
-        ):
-            raise RuntimeError(
-                "Tageskontext fehlt oder ist veraltet. Der Workflow muss zuerst --daily-only ausführen."
-            )
+        if not isinstance(daily_state.get("coins"), dict) or not daily_state.get("coins"):
+            raise RuntimeError("Noch kein nutzbarer Tageskontext vorhanden.")
         daily_failures = list(daily_state.get("failures") or [])
         daily_request_count = 0
-        print(f"Tageskontext {today}: aus Cache, 0 Langzeitabfragen.")
+        exact = (
+            daily_state.get("version") == STATE_VERSION
+            and daily_state.get("revision") == STATE_REVISION
+            and daily_state.get("date") == today
+        )
+        print(
+            f"Tageskontext: {'aktuell' if exact else 'letzter gültiger GitHub-Cache'}, "
+            "0 Langzeitabfragen im Monitorlauf."
+        )
     else:
         daily_state, daily_failures, daily_request_count, _daily_changed = refresh_daily_state_if_needed(
             client=client,
