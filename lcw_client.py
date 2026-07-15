@@ -1,4 +1,4 @@
-"""Small no-cache LCW client with conservative retries (v3.2.6)."""
+"""Small no-cache LCW client with bounded retries (v3.2.7)."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ class LiveCoinWatchClient:
     BASE_URL = "https://api.livecoinwatch.com"
     TRANSIENT_STATUS = {429, 500, 502, 503, 504}
 
-    def __init__(self, api_key: str, currency: str = "USD", timeout: int = 30) -> None:
+    def __init__(self, api_key: str, currency: str = "USD", timeout: int = 25) -> None:
         if not api_key:
             raise ValueError("LCW_API_KEY fehlt.")
         self.currency = currency
@@ -27,7 +27,7 @@ class LiveCoinWatchClient:
             "cache-control": "no-cache",
             "pragma": "no-cache",
             "x-api-key": api_key,
-            "user-agent": "crypto-signal-monitor/v3.2.6-reliable",
+            "user-agent": "crypto-signal-monitor/v3.2.7",
         }
 
     @staticmethod
@@ -36,15 +36,15 @@ class LiveCoinWatchClient:
             raw = response.headers.get("Retry-After")
             try:
                 if raw is not None:
-                    return min(20.0, max(1.0, float(raw)))
+                    return min(8.0, max(1.0, float(raw)))
             except ValueError:
                 pass
-        return min(8.0, 1.25 * (2**attempt))
+        return min(4.0, 1.0 * (2**attempt))
 
-    def _post(self, endpoint: str, payload: dict[str, Any]) -> Any:
+    def _post(self, endpoint: str, payload: dict[str, Any], *, attempts: int) -> Any:
         url = f"{self.BASE_URL}{endpoint}"
         last_error: Exception | None = None
-        for attempt in range(4):
+        for attempt in range(max(1, attempts)):
             response: requests.Response | None = None
             try:
                 response = requests.post(
@@ -64,7 +64,7 @@ class LiveCoinWatchClient:
                 return data
             except (requests.RequestException, ValueError, LiveCoinWatchError) as exc:
                 last_error = exc
-                if attempt < 3:
+                if attempt + 1 < attempts:
                     time.sleep(self._retry_delay(response, attempt))
         raise LiveCoinWatchError(f"Fehler bei {endpoint}: {last_error}")
 
@@ -83,6 +83,7 @@ class LiveCoinWatchClient:
                 "limit": 0,
                 "meta": False,
             },
+            attempts=3,
         )
         if not isinstance(data, list):
             raise LiveCoinWatchError("Unerwartete Antwort von /coins/map.")
@@ -102,6 +103,7 @@ class LiveCoinWatchClient:
                 "end": end_ms,
                 "meta": False,
             },
+            attempts=2,
         )
         if not isinstance(data, dict) or not isinstance(data.get("history"), list):
             raise LiveCoinWatchError(f"Keine Historie für {code} erhalten.")

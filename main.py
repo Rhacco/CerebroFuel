@@ -1,4 +1,4 @@
-"""Entry point for crypto-signal-monitor v3.2.6 reliable-cache refresh."""
+"""Entry point for crypto-signal-monitor v3.2.7."""
 
 from __future__ import annotations
 
@@ -26,22 +26,18 @@ from analysis import (
 from daily_context import (
     STATE_REVISION,
     STATE_VERSION,
-    InsufficientDailyHistory,
     build_daily_coin_context,
-    carry_forward_context,
+    carry_forward_daily_context,
     context_for_coin,
-    context_is_complete,
     load_state,
     local_day_key,
     save_state,
-    state_fingerprint,
 )
 from discord_sender import send_discord
 from lcw_client import LiveCoinWatchClient
 
 ROOT = Path(__file__).resolve().parent
 DAILY_STATE_PATH = ROOT / ".cache" / "seasonality" / "state.json"
-DAILY_SAVE_MARKER = ROOT / ".cache" / "seasonality" / "save_required"
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -215,27 +211,6 @@ def log_weekday_context(display: str, context: dict[str, Any]) -> None:
     )
 
 
-def _daily_retry_due(entry: dict[str, Any] | None, now: datetime, config: dict[str, Any]) -> bool:
-    """Retry early failures quickly, then apply a small credit-saving backoff."""
-    if not entry:
-        return True
-    attempts = int(entry.get("attempt_count", 0))
-    immediate_attempts = int(config.get("daily_retry_immediate_attempts", 3))
-    if attempts < immediate_attempts:
-        return True
-    raw_last = entry.get("last_attempt_at")
-    if not raw_last:
-        return True
-    try:
-        last = datetime.fromisoformat(str(raw_last))
-        if last.tzinfo is None:
-            last = last.replace(tzinfo=timezone.utc)
-    except ValueError:
-        return True
-    wait_minutes = int(config.get("daily_retry_minutes", 20))
-    return now - last >= timedelta(minutes=wait_minutes)
-
-
 def refresh_daily_state_if_needed(
     *,
     client: LiveCoinWatchClient,
@@ -243,41 +218,32 @@ def refresh_daily_state_if_needed(
     now: datetime,
     config: dict[str, Any],
 ) -> tuple[dict[str, Any], list[str], int, bool]:
-    """Refresh only missing/incomplete daily contexts and persist every improvement.
+    """Build the long-term weekday context exactly once per local day.
 
-    GitHub caches are immutable. The workflow therefore restores the latest
-    matching state and saves each changed state under a unique run key. A failed
-    coin remains retryable; a valid calculation with zero positive weekdays is
-    considered complete and is not queried again that day.
+    A successful empty result is final for today. Transport failures carry the
+    last valid context forward, so ordinary five-minute runs never repeat all
+    long-history requests and cannot consume ~55 credits each time.
     """
     timezone_name = str(config.get("timezone", "Europe/Berlin"))
     today = local_day_key(now, timezone_name)
     previous = load_state(DAILY_STATE_PATH)
-    before_fingerprint = state_fingerprint(previous)
-    previous_coins = previous.get("coins") if isinstance(previous.get("coins"), dict) else {}
     current_codes = {display: api for display, api in resolved_all}
-
+    previous_coins = previous.get("coins") if isinstance(previous.get("coins"), dict) else {}
     compatible = (
         previous.get("version") == STATE_VERSION
         and previous.get("revision") == STATE_REVISION
     )
-    refresh_displays: list[str] = []
-    for display in current_codes:
-        entry = previous_coins.get(display)
-        if compatible and context_is_complete(entry, today):
-            continue
-        if not compatible or _daily_retry_due(entry if isinstance(entry, dict) else None, now, config):
-            refresh_displays.append(display)
-
-    if not refresh_displays:
-        complete = sum(
-            context_is_complete(previous_coins.get(display), today) for display in current_codes
-        )
+    current_complete = (
+        compatible
+        and previous.get("date") == today
+        and all(display in previous_coins for display in current_codes)
+    )
+    if current_complete:
         print(
-            f"Tageskontext {today}: {complete}/{len(current_codes)} vollständig; "
-            "keine Langzeitabfrage fällig."
+            f"Tageskontext {today}: aus Cache, 0 Langzeitabfragen "
+            f"({len(current_codes)} Coins)."
         )
-        return previous, [], 0, False
+        return previous, list(previous.get("failures") or []), 0, False
 
     analysis_timezone = ZoneInfo(timezone_name)
     local_midnight = now.astimezone(analysis_timezone).replace(
@@ -286,10 +252,9 @@ def refresh_daily_state_if_needed(
     long_end = local_midnight.astimezone(timezone.utc)
     history_days = int(config.get("daily_history_days", 400))
     long_start = long_end - timedelta(days=history_days)
-    display_to_api = {display: current_codes[display] for display in refresh_displays}
-    codes = list(dict.fromkeys(display_to_api.values()))
+    codes = list(dict.fromkeys(current_codes.values()))
     print(
-        f"Tageskontext {today}: {len(codes)} fehlende/ungültige Langzeithistorien "
+        f"Tageskontext {today}: einmalige Tagesberechnung für {len(codes)} Coins "
         f"({history_days} Tage bis {long_end.isoformat()}) ..."
     )
     histories, transport_failures = refresh_histories(
@@ -297,25 +262,19 @@ def refresh_daily_state_if_needed(
         codes=codes,
         start_ms=int(long_start.timestamp() * 1000),
         end_ms=int(long_end.timestamp() * 1000),
-        workers=int(config.get("daily_history_parallel_requests", 3)),
+        workers=int(config.get("daily_history_parallel_requests", 6)),
         label="Tageskontext",
     )
 
-    new_coins: dict[str, Any] = dict(previous_coins)
+    new_coins: dict[str, Any] = {}
     failures: list[str] = list(transport_failures)
-    successes = 0
-    for display in refresh_displays:
-        api_code = current_codes[display]
+    for display, api_code in current_codes.items():
         prior = previous_coins.get(display) if isinstance(previous_coins, dict) else None
         prior_dict = prior if isinstance(prior, dict) else None
-        same_target = prior_dict and (
-            prior_dict.get("target_date") == today or prior_dict.get("computed_for") == today
-        )
-        attempt_count = int(prior_dict.get("attempt_count", 0)) + 1 if same_target else 1
         history = histories.get(api_code)
         if history:
             try:
-                new_coins[display] = build_daily_coin_context(
+                context = build_daily_coin_context(
                     display=display,
                     api_code=api_code,
                     history=history,
@@ -324,39 +283,32 @@ def refresh_daily_state_if_needed(
                     config=config,
                     previous=prior_dict,
                     computed_for=today,
-                    attempt_count=attempt_count,
                 )
-                successes += 1
-            except InsufficientDailyHistory as exc:
-                reason = str(exc)
+            except Exception as exc:
+                reason = f"Auswertung fehlgeschlagen: {exc}"
                 failures.append(api_code)
-                new_coins[display] = carry_forward_context(
+                context = carry_forward_daily_context(
                     display=display,
                     api_code=api_code,
                     previous=prior_dict,
                     computed_for=today,
                     now=now,
                     reason=reason,
-                    attempt_count=attempt_count,
                 )
-                print(f"WARNUNG: Tageskontext {display}: {reason}; erneuter Versuch folgt.", file=sys.stderr)
+                print(f"WARNUNG: Tageskontext {display}: {reason}", file=sys.stderr)
         else:
             reason = "LCW-Langzeithistorie nicht verfügbar"
-            new_coins[display] = carry_forward_context(
+            context = carry_forward_daily_context(
                 display=display,
                 api_code=api_code,
                 previous=prior_dict,
                 computed_for=today,
                 now=now,
                 reason=reason,
-                attempt_count=attempt_count,
             )
-        log_weekday_context(display, new_coins[display])
+        new_coins[display] = context
+        log_weekday_context(display, context)
 
-    # Remove deleted coins; keep successful/stale contexts for all configured coins.
-    new_coins = {display: new_coins[display] for display in current_codes if display in new_coins}
-    complete_count = sum(context_is_complete(new_coins.get(display), today) for display in current_codes)
-    pending = [display for display in current_codes if not context_is_complete(new_coins.get(display), today)]
     state = {
         "version": STATE_VERSION,
         "revision": STATE_REVISION,
@@ -364,24 +316,17 @@ def refresh_daily_state_if_needed(
         "generated_at": now.isoformat(),
         "timezone": timezone_name,
         "coins": new_coins,
-        "complete_count": complete_count,
-        "pending": pending,
+        "complete_count": len(new_coins),
         "failures": sorted(set(failures)),
     }
     save_state(DAILY_STATE_PATH, state)
-    changed = state_fingerprint(state) != before_fingerprint
-    if changed:
-        DAILY_SAVE_MARKER.parent.mkdir(parents=True, exist_ok=True)
-        DAILY_SAVE_MARKER.write_text(
-            f"{today} complete={complete_count}/{len(current_codes)} successes={successes}\n",
-            encoding="utf-8",
-        )
+    visible_days = sum(bool((item.get("stable_best_weekdays") or [])) for item in new_coins.values())
     print(
-        f"Tageskontext gespeichert: {complete_count}/{len(current_codes)} vollständig, "
-        f"{len(pending)} offen."
+        f"Tageskontext gespeichert: {len(new_coins)}/{len(current_codes)} abgeschlossen, "
+        f"{visible_days} Coins mit positivem Top-Wochentag, "
+        f"{len(set(failures))} API-/Auswertungsfehler."
     )
-    return state, sorted(set(failures)), len(codes), changed
-
+    return state, sorted(set(failures)), len(codes), True
 
 def _short_is_displayable(short: ShortMetrics) -> bool:
     """Only complete 10/20/60-minute analyses may enter the visible Top 8."""
@@ -422,9 +367,6 @@ def run() -> int:
         raise ValueError("GitHub Secret LCW_API_KEY fehlt.")
     if should_send and not webhook_url:
         raise ValueError("GitHub Secret DISCORD_WEBHOOK_URL fehlt.")
-
-    # A restored marker belongs to an older immutable cache; only this run may recreate it.
-    DAILY_SAVE_MARKER.unlink(missing_ok=True)
 
     reference_pair, pool_pairs = parse_layout(config)
     all_pairs = [reference_pair, *pool_pairs]
@@ -640,7 +582,7 @@ def run() -> int:
     (output_dir / "latest_analysis.json").write_text(
         json.dumps(
             {
-                "version": "3.2.6",
+                "version": "3.2.7",
                 "revision": STATE_REVISION,
                 "generated_at": now.isoformat(),
                 "daily_context_date": daily_state.get("date"),

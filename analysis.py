@@ -1,4 +1,4 @@
-"""Persistence-aware crypto extreme analysis with stable daily context (v3.2.6 reliable-cache refresh)."""
+"""Persistence-aware crypto extreme analysis with stable daily context (v3.2.7)."""
 
 from __future__ import annotations
 
@@ -1601,14 +1601,16 @@ def analyze_seasonality(
     now: datetime,
     timezone: str,
     block_hours: int = 4,
-    min_samples: int = 24,
-    minimum_observations: int = 240,
+    min_samples: int = 10,
+    minimum_observations: int = 84,
     lookback_days: int = 365,
 ) -> Seasonality:
-    """Conservative weekday statistics from independent completed local days.
+    """Robust weekday ranking from independent completed local calendar days.
 
-    A weekday must be positive across the long sample and recent market regimes.
-    Selection hysteresis is applied by the daily cache layer, not here.
+    The method accepts the real density returned by LCW instead of requiring an
+    unrealistically complete daily series. It still demands long/recent regime
+    agreement, outlier resistance and a positive hit-rate before a day appears.
+    Daily hysteresis is applied by ``daily_context.py``.
     """
     del block_hours
     observations = _completed_daily_observations(points, now, timezone, lookback_days)
@@ -1628,7 +1630,7 @@ def analyze_seasonality(
     for item in observations:
         by_weekday.setdefault(item.weekday, []).append(item)
 
-    required = max(24, min_samples)
+    required = max(10, min_samples)
     candidates: list[tuple[int, float, float, int]] = []
     weekday_scores: dict[str, float] = {}
     weekday_confidence: dict[str, float] = {}
@@ -1640,11 +1642,13 @@ def analyze_seasonality(
             days: [item for item in items if item.date_ordinal >= cutoff]
             for days, cutoff in cutoffs.items()
         }
+        # Approximately 12+ independent occurrences are enough for one weekday;
+        # recent windows may naturally contain fewer points.
         if (
             len(items) < required
-            or len(windows[180]) < 12
-            or len(windows[90]) < 6
-            or len(windows[45]) < 3
+            or len(windows[180]) < 7
+            or len(windows[90]) < 3
+            or len(windows[45]) < 2
         ):
             continue
 
@@ -1658,66 +1662,70 @@ def analyze_seasonality(
         c90, hit90, _, consistency90, _ = r90
         c45, hit45, _, _, _ = r45
 
-        sample_factor = min(1.0, len(items) / 48.0)
-        confidence = sample_factor
-        confidence *= (
+        sample_factor = min(1.0, len(items) / 20.0)
+        coverage_factor = min(1.0, len(observations) / 280.0)
+        confidence = sample_factor * (
             0.34
             + 0.20 * full_consistency
-            + 0.20 * consistency180
-            + 0.16 * consistency90
-            + 0.10 * min(1.0, len(windows[45]) / 7.0)
+            + 0.18 * consistency180
+            + 0.13 * consistency90
+            + 0.10 * min(1.0, len(windows[45]) / 6.0)
+            + 0.05 * coverage_factor
         )
-        confidence *= 1.0 / (1.0 + 0.10 * full_dispersion)
+        confidence *= 1.0 / (1.0 + 0.085 * full_dispersion)
+        confidence = _clamp(confidence, 0.0, 1.0)
 
-        # A recent weak regime may dampen a day, but a single 45-day wobble cannot
-        # erase a strong 365/180/90-day result by itself.
-        conservative = min(
-            full_central,
-            c180,
-            max(c90, -0.025),
-            max(c45, -0.075),
-            leave_out,
-        )
-        hit_support = min(full_hit, hit180, max(hit90, 0.48))
+        # Long-term evidence dominates, while recent regimes can dampen but not
+        # erase a stable effect because of one weak 45-day sample.
+        regime_effect = 0.40 * full_central + 0.30 * c180 + 0.20 * c90 + 0.10 * c45
+        robust_effect = 0.66 * regime_effect + 0.34 * leave_out
+        conflict_penalty = 1.0
+        if c90 < -0.08:
+            conflict_penalty *= 0.72
+        elif c90 < 0:
+            conflict_penalty *= 0.88
+        if c45 < -0.20:
+            conflict_penalty *= 0.76
+        elif c45 < -0.06:
+            conflict_penalty *= 0.90
+
+        hit_support = min(full_hit, hit180, max(hit90, 0.46))
         lower_bound = min(full_wilson, wilson180)
-        quality = conservative * confidence * (
-            0.52 + 0.28 * hit_support + 0.20 * lower_bound
-        )
+        quality = robust_effect * confidence * (
+            0.50 + 0.30 * hit_support + 0.20 * lower_bound
+        ) * conflict_penalty
         name = DAY_NAMES[weekday]
         weekday_scores[name] = round(quality, 5)
         weekday_confidence[name] = round(confidence, 5)
-        day_summaries[weekday] = (conservative, confidence)
+        day_summaries[weekday] = (robust_effect, confidence)
 
-        strict_qualifies = (
+        strong_qualifies = (
             full_central > 0.070
-            and c180 > 0.060
-            and c90 > 0.020
-            and c45 >= -0.055
-            and leave_out > 0.040
-            and full_hit >= 0.550
-            and hit180 >= 0.540
-            and hit90 >= 0.510
-            and hit45 >= 0.440
-            and full_wilson >= 0.415
-            and wilson180 >= 0.380
-            and confidence >= 0.555
-            and quality > 0.042
+            and c180 > 0.050
+            and c90 > -0.010
+            and c45 > -0.100
+            and leave_out > 0.035
+            and full_hit >= 0.545
+            and hit180 >= 0.525
+            and hit90 >= 0.480
+            and full_wilson >= 0.360
+            and confidence >= 0.500
+            and quality > 0.022
         )
         robust_qualifies = (
-            full_central > 0.025
-            and c180 > 0.020
-            and c90 >= -0.015
-            and c45 >= -0.100
-            and leave_out > 0.015
-            and full_hit >= 0.515
-            and hit180 >= 0.505
-            and hit90 >= 0.470
-            and full_wilson >= 0.350
-            and wilson180 >= 0.320
-            and confidence >= 0.480
-            and quality > 0.012
+            full_central > 0.018
+            and c180 > 0.010
+            and c90 > -0.070
+            and c45 > -0.220
+            and leave_out > 0.006
+            and full_hit >= 0.500
+            and hit180 >= 0.485
+            and hit90 >= 0.440
+            and full_wilson >= 0.300
+            and confidence >= 0.395
+            and quality > 0.0035
         )
-        if strict_qualifies:
+        if strong_qualifies:
             candidates.append((weekday, quality, confidence, 2))
         elif robust_qualifies:
             candidates.append((weekday, quality, confidence, 1))
@@ -1732,12 +1740,15 @@ def analyze_seasonality(
     if len(candidates) >= 2:
         first_quality = candidates[0][1]
         second_quality = candidates[1][1]
-        third_quality = candidates[2][1] if len(candidates) >= 3 else 0.0
+        third_quality = candidates[2][1] if len(candidates) >= 3 else -999.0
         second_tier = candidates[1][3]
-        clear_from_third = second_quality >= third_quality + 0.010
+        clear_from_third = second_quality >= third_quality + 0.0035
         independently_strong = (
             second_tier == 2
-            or (second_quality >= max(0.030, first_quality * 0.68) and candidates[1][2] >= 0.55)
+            or (
+                second_quality >= max(0.012, first_quality * 0.58)
+                and candidates[1][2] >= 0.48
+            )
         )
         if clear_from_third and independently_strong:
             selected.append(candidates[1][0])
@@ -1750,15 +1761,15 @@ def analyze_seasonality(
         current, score, confidence = "?", 0.0, 0.0
     else:
         score, confidence = current_summary
-        if confidence < 0.575:
+        if confidence < 0.46:
             current = "?"
         elif score >= 0.85:
             current = "++"
-        elif score >= 0.14:
+        elif score >= 0.12:
             current = "+"
         elif score <= -0.85:
             current = "--"
-        elif score <= -0.14:
+        elif score <= -0.12:
             current = "-"
         else:
             current = "="
@@ -1766,13 +1777,12 @@ def analyze_seasonality(
         current=current,
         best_weekdays=best_days,
         samples=len(observations),
-        source="completed-calendar-days-365d-tiered",
+        source="completed-calendar-days-adaptive-365d",
         current_score=score,
         current_confidence=confidence,
         weekday_scores=weekday_scores,
         weekday_confidence=weekday_confidence,
     )
-
 
 def rolling_week_returns(points: list[PricePoint]) -> list[float]:
     if len(points) < 10:

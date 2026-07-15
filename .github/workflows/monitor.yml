@@ -1,7 +1,6 @@
 name: Crypto Signal Monitor
 
-# v3.2.6: immutable retryable daily context + complete short-data Top 8
-
+# v3.2.7: daily long-history cache + fresh five-minute short analysis
 on:
   workflow_dispatch:
     inputs:
@@ -21,7 +20,7 @@ concurrency:
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 12
 
     steps:
       - name: Repository laden
@@ -33,24 +32,21 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Lokalen Cache-Tag bestimmen
+      - name: Lokalen Tag bestimmen
         id: context-key
         shell: bash
-        run: |
-          echo "day=$(TZ=Europe/Berlin date +%F)" >> "$GITHUB_OUTPUT"
+        run: echo "day=$(TZ=Europe/Berlin date +%F)" >> "$GITHUB_OUTPUT"
 
-      - name: Letzten Tageskontext wiederherstellen
-        id: context-cache
-        uses: actions/cache/restore@v4
+      - name: Tageskontext laden
+        uses: actions/cache@v4
         with:
           path: .cache/seasonality
-          key: seasonality-v326q3-${{ runner.os }}-${{ steps.context-key.outputs.day }}-${{ hashFiles('config.json', 'analysis.py', 'daily_context.py', 'main.py') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: seasonality-v327-${{ hashFiles('config.json', 'analysis.py', 'daily_context.py') }}-${{ steps.context-key.outputs.day }}
           restore-keys: |
-            seasonality-v326q3-${{ runner.os }}-${{ steps.context-key.outputs.day }}-${{ hashFiles('config.json', 'analysis.py', 'daily_context.py', 'main.py') }}-
-            seasonality-v326q3-${{ runner.os }}-
+            seasonality-v327-${{ hashFiles('config.json', 'analysis.py', 'daily_context.py') }}-
 
       - name: Abhängigkeiten installieren
-        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
 
       - name: Frische Analyse ausführen
         env:
@@ -58,21 +54,3 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           SEND_DISCORD: ${{ inputs.send_discord }}
         run: python main.py
-
-      - name: Neuen Tageskontext erkennen
-        id: context-save
-        if: always()
-        shell: bash
-        run: |
-          if [[ -f .cache/seasonality/save_required && -f .cache/seasonality/state.json ]]; then
-            echo "required=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "required=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Verbesserten Tageskontext speichern
-        if: always() && steps.context-save.outputs.required == 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: .cache/seasonality
-          key: ${{ steps.context-cache.outputs.cache-primary-key }}
