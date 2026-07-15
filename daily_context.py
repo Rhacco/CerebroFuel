@@ -1,4 +1,4 @@
-"""Daily, cache-backed complete-week context for crypto-signal-monitor v3.3.0."""
+"""Stable daily cache used by v3.2.8; schema stays v3.3.0 to reuse the current GitHub cache."""
 
 from __future__ import annotations
 

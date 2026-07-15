@@ -1,4 +1,4 @@
-"""Entry point for crypto-signal-monitor v3.3.0."""
+"""Entry point for crypto-signal-monitor v3.2.8; compatible with the v3.3.0 daily-cache schema."""
 
 from __future__ import annotations
 
@@ -34,6 +34,7 @@ from daily_context import (
 from discord_sender import send_discord
 from lcw_client import LiveCoinWatchClient
 
+APP_VERSION = "3.2.8"
 ROOT = Path(__file__).resolve().parent
 DAILY_STATE_PATH = ROOT / ".cache" / "seasonality" / "state.json"
 CHANGED_FLAG = ROOT / ".cache" / "seasonality" / "changed.flag"
@@ -448,7 +449,7 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
         and daily_state.get("date") == today
         and isinstance(daily_state.get("coins"), dict)
     ):
-        raise RuntimeError("Kein aktueller v3.3.0-Tageskontext vorhanden; Versand wird verhindert.")
+        raise RuntimeError("Kein aktueller kompatibler Tageskontext vorhanden; Versand wird verhindert.")
     print(
         f"Tageskontext: exact-current {STATE_REVISION}, "
         f"0 Langzeitabfragen im Monitorlauf."
@@ -640,7 +641,8 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
     (output_dir / "latest_analysis.json").write_text(
         json.dumps(
             {
-                "version": STATE_VERSION,
+                "version": APP_VERSION,
+                "cache_version": STATE_VERSION,
                 "revision": STATE_REVISION,
                 "generated_at": now.isoformat(),
                 "daily_context_date": daily_state.get("date"),

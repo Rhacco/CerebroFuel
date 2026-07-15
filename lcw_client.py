@@ -1,3 +1,4 @@
+# v3.2.8 compatibility refresh
 # v3.3.0 adaptive LCW client
 """Adaptive-rate Live Coin Watch client for complete-week monitor v3.2.7."""
 

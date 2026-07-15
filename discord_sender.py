@@ -1,3 +1,4 @@
+# v3.2.8 compatibility refresh
 # v3.3.0 compact Discord sender
 # v3.2.7 complete-week refresh
 """Discord webhook sender with line-safe splitting (v3.2.7)."""

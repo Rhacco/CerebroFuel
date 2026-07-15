@@ -1,6 +1,6 @@
 name: Crypto Signal Monitor
 
-# v3.3.0: prepare exact daily context first, then send one current report.
+# v3.2.8: reuse the exact v3.3.0-compatible daily context, then send the fast balanced report.
 on:
   workflow_dispatch:
     inputs:
@@ -53,7 +53,7 @@ jobs:
       - name: Abhängigkeiten installieren
         run: python -m pip install --disable-pip-version-check -r requirements.txt
 
-      - name: Exakten v3.3.0-Tageskontext vorbereiten
+      - name: Kompatiblen Tageskontext vorbereiten
         id: prepare-daily
         env:
           LCW_API_KEY: ${{ secrets.LCW_API_KEY }}

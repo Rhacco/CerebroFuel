@@ -7,3 +7,4 @@ __pycache__/
 .cache/
 output/latest_report.txt
 output/latest_analysis.json
+# v3.2.8 refresh

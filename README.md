@@ -1,16 +1,13 @@
-# Krypto-Monitor v3.3.0
+# Krypto-Monitor v3.2.8
 
 `Kreis Zahl Richtung 7 B P V10/20/60 N Wochentage Coin/Minute`
 
-- Anfangskreis: Nähe zu bestätigter Akkumulation ↔ Distribution
-- Zahl: erfüllte, zeitlich bestätigte Bedingungen; `▲/▼/=` Richtung
-- `7`: 7-Tage-Lage relativ zur eigenen Historie
-- `B`: 10/20/60-Minuten-Stärke zu BTC; bei BTC eigene bestätigte Stärke
-- `P`: Kurs-/Volumendruck
-- `V`: rollierender LCW-Volumentrend für 10/20/60 Minuten
-- `N`: konservative Gesamtlage mit Trendwechsel-Schutz
-- `SA…FR`: höchstens einmal täglich berechnete Top-Tage
+- Anfang: aktueller Handlungsdruck; `🟣` idealer früher Einstieg, `🔴` abrupter Supportverlust/SELL
+- Zahl: bestätigte Bedingungen `0–8`; `▲/▼/=` Richtung
+- `7`: 7-Tage-Kontext · `B`: Stärke zu BTC · `P`: Kurs-/Volumendruck
+- `V`: rollierender LCW-Volumentrend 10/20/60 Min. · `N`: kombiniertes Gesamtbild
+- Tage: täglich eingefrorene Top-Wochentage aus vollständigen Wochen, BTC- und Pool-bereinigt
 
-Farben: `🟣` Extrem positiv · `🟢` klar positiv · `🔵` leicht positiv · `🟡` neutral · `🟠` Warnung · `🔴` Extrem negativ · `🟤` unsichere · `⚪` fehlende Daten
+`🟣` Optimum · `🟢` nahe am Optimum · `🔵` positive Frühphase · `🟡` ruhig/unklar · `🟠` Warnung · `🔴` zwingendes SELL · `🟤/⚪` unsichere/fehlende Daten
 
-Wochentage: nur vollständige MO–SO-Wochen; Kurs + Volumen; Altcoins um BTC und Pool-Median bereinigt; meist zwei positive Tage, nur bei deutlicher Dominanz einer; tägliche Hysterese. v3.2.7-Rohhistorien werden lokal migriert und danach inkrementell ergänzt.
+Ranking: `🟣/🔴` zuerst, danach `🟢`, `🟠/🔵`; `🟡` nur als Lückenfüller. Der vorhandene v3.3.0-Tagescache wird unverändert weiterverwendet.
