@@ -19,7 +19,7 @@ from analysis import (
 )
 
 STATE_VERSION = "3.2.7"
-STATE_REVISION = "daily-chunked-stable-r2"
+STATE_REVISION = "daily-adaptive-partial-r3"
 
 
 def local_day_key(now: datetime, timezone: str) -> str:

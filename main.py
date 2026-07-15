@@ -189,23 +189,24 @@ def refresh_chunked_daily_histories(
     chunk_days: int,
     label: str,
 ) -> tuple[dict[str, list], list[str], int]:
-    """Load dense long histories in chunks so daily observations really exist."""
+    """Load newest long-history chunks and keep every usable partial result."""
     histories: dict[str, list] = {}
     failed: list[str] = []
     request_count = 0
     for code in codes:
         try:
-            raw, used = client.get_history_chunked(
+            raw, used, partial_note = client.get_history_chunked(
                 code, start_ms, end_ms, chunk_days=chunk_days
             )
             request_count += used
             histories[code] = normalize_history(raw)
+            suffix = f", Teilhistorie: {partial_note}" if partial_note else ""
             print(
-                f"{label}: {code} ({len(histories[code])} Punkte, {used} Teilabfragen)"
+                f"{label}: {code} ({len(histories[code])} Punkte, {used} Teilabfragen{suffix})"
             )
         except Exception as exc:
             failed.append(code)
-            print(f"WARNUNG: {label} {code} fehlgeschlagen: {exc}", file=sys.stderr)
+            print(f"HINWEIS: {label} {code} aktuell nicht verfügbar: {exc}", file=sys.stderr)
     return histories, failed, request_count
 
 
@@ -304,7 +305,7 @@ def refresh_daily_state_if_needed(
         prior = previous_coins.get(display) if isinstance(previous_coins, dict) else None
         prior_dict = prior if isinstance(prior, dict) else None
         history = histories.get(api_code)
-        if history:
+        if history is not None:
             try:
                 context = build_daily_coin_context(
                     display=display,
@@ -327,9 +328,9 @@ def refresh_daily_state_if_needed(
                     now=now,
                     reason=reason,
                 )
-                print(f"WARNUNG: Tageskontext {display}: {reason}", file=sys.stderr)
+                print(f"HINWEIS: Tageskontext {display}: {reason}", file=sys.stderr)
         else:
-            reason = "LCW-Langzeithistorie nicht verfügbar"
+            reason = "LCW-Langzeithistorie vorübergehend nicht verfügbar"
             context = carry_forward_daily_context(
                 display=display,
                 api_code=api_code,
@@ -410,7 +411,10 @@ def run() -> int:
         api_key=api_key,
         currency=str(config.get("currency", "USD")),
         timeout=int(config.get("request_timeout_seconds", 30)),
-        request_interval_seconds=float(config.get("request_interval_seconds", 1.55)),
+        request_interval_seconds=float(config.get("request_interval_seconds", 0.45)),
+        burst_limit=int(config.get("request_burst_limit", 30)),
+        burst_window_seconds=float(config.get("request_burst_window_seconds", 60)),
+        rate_state_path=os.getenv("LCW_RATE_STATE_PATH", str(ROOT / ".cache" / "lcw-rate.json")),
     )
     print(f"Lade frische Map-Daten für {len(candidate_codes)} LCW-Codes ...")
     current_by_code = client.get_coins(candidate_codes)
@@ -430,7 +434,7 @@ def run() -> int:
         else:
             resolved_pool.append(resolved)
     if unresolved:
-        print("WARNUNG: Keine LCW-Daten für: " + ", ".join(unresolved), file=sys.stderr)
+        print("HINWEIS: Aktuell nicht von LCW aufgelöst: " + ", ".join(unresolved), file=sys.stderr)
 
     resolved_all = [resolved_reference, *resolved_pool]
     today = local_day_key(now, str(config.get("timezone", "Europe/Berlin")))
@@ -517,7 +521,7 @@ def run() -> int:
     if not _short_is_displayable(btc_short):
         # One isolated serial retry prevents a transient history error from producing
         # a misleading white BTC line. No Discord report is sent if it remains invalid.
-        print("WARNUNG: BTC-Kurzzeitdaten unvollständig; serieller Sicherheitsversuch ...", file=sys.stderr)
+        print("HINWEIS: BTC-Kurzzeitdaten unvollständig; serieller Sicherheitsversuch ...", file=sys.stderr)
         retry_histories, retry_failures = refresh_histories(
             client=client,
             codes=[reference_api],

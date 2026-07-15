@@ -12,10 +12,28 @@
         "XLM",
         "ADA",
         "HBAR",
-        "SUI",
-        "TAO",
+        {
+          "display": "SUI",
+          "codes": [
+            "_SUI",
+            "SUI"
+          ]
+        },
+        {
+          "display": "TAO",
+          "codes": [
+            "____TAO",
+            "TAO"
+          ]
+        },
         "UNI",
-        "PEPE",
+        {
+          "display": "PEPE",
+          "codes": [
+            "____PEPE",
+            "PEPE"
+          ]
+        },
         "RENDER",
         {
           "display": "TRUMP",
@@ -24,7 +42,13 @@
             "TRUMP"
           ]
         },
-        "BONK",
+        {
+          "display": "BONK",
+          "codes": [
+            "__BONK",
+            "BONK"
+          ]
+        },
         "WIF"
       ]
     },
@@ -61,12 +85,30 @@
         "JTO",
         "CRV",
         "SEI",
-        "ETHFI",
+        {
+          "display": "ETHFI",
+          "codes": [
+            "_ETHFI",
+            "ETHFI"
+          ]
+        },
         "FET",
-        "TIA",
+        {
+          "display": "TIA",
+          "codes": [
+            "_TIA",
+            "TIA"
+          ]
+        },
         "INJ",
         "PUMP",
-        "MORPHO",
+        {
+          "display": "MORPHO",
+          "codes": [
+            "_MORPHO",
+            "MORPHO"
+          ]
+        },
         {
           "display": "WLD",
           "codes": [
@@ -98,8 +140,8 @@
   "history_days": 126,
   "history_parallel_requests": 1,
   "time_block_hours": 4,
-  "seasonality_min_samples": 10,
-  "seasonality_min_observations": 84,
+  "seasonality_min_samples": 8,
+  "seasonality_min_observations": 56,
   "minimum_short_history_points": 8,
   "minimum_reliable_volume_usd": 500000,
   "maximum_plausible_volume_jump_pct": 1500,
@@ -164,16 +206,18 @@
   "temporal_axis_clear": 0.2,
   "temporal_axis_strong": 0.42,
   "temporal_confirmation_points": 4,
-  "seasonality_lookback_days": 365,
-  "quality_revision": "daily-chunked-stable-r2",
+  "seasonality_lookback_days": 300,
+  "quality_revision": "daily-adaptive-partial-r3",
   "temporal_guard_threshold": 0.14,
-  "daily_history_days": 400,
+  "daily_history_days": 300,
   "weekday_enter_confirmations": 2,
   "weekday_exit_confirmations": 2,
   "weekday_bootstrap_second_min_score": 0.012,
   "weekday_bootstrap_second_min_confidence": 0.5,
   "daily_history_parallel_requests": 1,
   "short_fallback_batch_size": 6,
-  "request_interval_seconds": 1.55,
-  "daily_history_chunk_days": 100
+  "request_interval_seconds": 0.45,
+  "daily_history_chunk_days": 100,
+  "request_burst_limit": 30,
+  "request_burst_window_seconds": 60
 }

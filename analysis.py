@@ -1,3 +1,4 @@
+# v3.2.7 adaptive refresh
 """Persistence-aware crypto extreme analysis with stable daily context (v3.2.7)."""
 
 from __future__ import annotations
