@@ -1,5 +1,5 @@
-# v3.2.8 balanced fast-entry/exit engine
-"""Fast but evidence-weighted crypto analysis; daily cache schema stays compatible with v3.3.0."""
+# v3.2.9 full-pool flash-confirmation engine
+"""Evidence-weighted crypto analysis with all-pool snapshot flash confirmation."""
 
 from __future__ import annotations
 
@@ -2295,6 +2295,7 @@ def build_coin_analysis(
     seasonality_override: Seasonality | None = None,
     week_samples_override: Sequence[float] | None = None,
     map_flash_score: float = 0.0,
+    map_flash_direction: str = "=",
 ) -> CoinAnalysis:
     week_pct = delta_to_pct((current.get("delta") or {}).get("week"))
     seasonality = seasonality_override or analyze_seasonality(
@@ -2322,8 +2323,30 @@ def build_coin_analysis(
     contextual_color, attention, _, _, _ = _apply_contextual_setup(
         short, week_signal=week_signal, config=config
     )
+    external_flash = _clamp(float(map_flash_score), 0.0, 100.0)
+
+    # The full-pool map-snapshot scan is an attention layer, not a replacement
+    # for detailed history. A very strong fresh event may lift an otherwise yellow
+    # detailed result to a cautious blue/orange, but never directly to purple/red.
+    if (
+        not is_reference
+        and contextual_color == YELLOW
+        and short.data_quality == "good"
+        and external_flash >= 72.0
+        and map_flash_direction in {"▲", "▼"}
+    ):
+        contextual_color = BLUE if map_flash_direction == "▲" else ORANGE
+        short.signal_color = contextual_color
+        short.direction = map_flash_direction
+        if map_flash_direction == "▲":
+            short.buy_count = max(short.buy_count, 3 if external_flash < 86 else 4)
+        else:
+            short.sell_count = max(short.sell_count, 3 if external_flash < 86 else 4)
+
     # N follows the combined setup unless there is no meaningful setup at all.
     now_color = contextual_color if contextual_color != YELLOW else legacy_now_color
+    if now_color == YELLOW and external_flash >= 78.0 and map_flash_direction in {"▲", "▼"}:
+        now_color = BLUE if map_flash_direction == "▲" else ORANGE
 
     count = max(short.buy_count, short.sell_count)
     persistence = max(short.positive_streak, short.negative_streak)
@@ -2333,9 +2356,10 @@ def build_coin_analysis(
         + short.pattern_confidence * 16.0
         + persistence * 2.0
     )
-    flash = max(short.flash_score, min(100.0, map_flash_score), attention)
+    flash = max(short.flash_score, external_flash, attention)
+    attention = max(attention, external_flash * (0.92 if external_flash >= 70.0 else 0.68))
     color_bonus = {PURPLE: 92.0, RED: 92.0, GREEN: 60.0, BLUE: 35.0, ORANGE: 38.0, YELLOW: 0.0}.get(contextual_color, 0.0)
-    ranking_score = 0.48 * confirmed + 0.86 * attention + 0.24 * flash + color_bonus
+    ranking_score = 0.46 * confirmed + 0.88 * attention + 0.42 * flash + color_bonus
     if contextual_color == YELLOW:
         ranking_score *= 0.56
     if short.data_quality == "uncertain":
@@ -2370,14 +2394,17 @@ def strength_count(item: CoinAnalysis) -> int:
 def confidence_sort_key(item: CoinAnalysis) -> tuple[float, ...]:
     quality_rank = {"good": 2.0, "uncertain": 1.0, "insufficient": 0.0}.get(item.short.data_quality, 0.0)
     count = strength_count(item)
-    color_rank = {PURPLE: 5.0, RED: 5.0, GREEN: 4.0, ORANGE: 3.2, BLUE: 3.0, YELLOW: 1.0}.get(item.short.signal_color, 0.0)
-    # Decisive entries/exits first; yellow is only a fallback when nothing is active.
+    color_rank = {PURPLE: 6.0, RED: 6.0, GREEN: 5.0, ORANGE: 4.3, BLUE: 4.0, YELLOW: 1.0}.get(item.short.signal_color, 0.0)
+    flash_rank = 5.4 if item.flash_score >= 88.0 else (4.7 if item.flash_score >= 74.0 else 0.0)
+    urgency_rank = max(color_rank, flash_rank)
+    # A confirmed extreme remains first. A fresh all-pool flash can outrank quiet
+    # yellow/blue filler rows, ensuring that newly active coins are not hidden.
     return (
-        color_rank,
+        urgency_rank,
         float(math.floor(item.attention_score / 2.0)),
+        float(math.floor(item.flash_score / 4.0)),
         float(count),
         float(math.floor(item.ranking_score / 4.0)),
-        float(math.floor(item.flash_score / 5.0)),
         quality_rank,
         0.0 if item.short.reversal_guard else 1.0,
     )

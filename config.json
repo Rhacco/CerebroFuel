@@ -1,5 +1,5 @@
 {
-  "schema_version": "3.2.8",
+  "schema_version": "3.2.9",
   "reference_coin": "BTC",
   "groups": [
     {
@@ -215,7 +215,7 @@
   "weekday_bootstrap_second_min_score": 0.0015,
   "weekday_bootstrap_second_min_confidence": 0.34,
   "daily_history_parallel_requests": 1,
-  "short_fallback_batch_size": 6,
+  "short_fallback_batch_size": 2,
   "request_interval_seconds": 0.3,
   "daily_history_chunk_days": 100,
   "request_burst_limit": 32,
@@ -225,5 +225,8 @@
   "entry_purple_price_uncertainty": 58.0,
   "exit_red_collapse": 66.0,
   "exit_red_memory": 42.0,
-  "exit_red_score": 68.0
+  "exit_red_score": 68.0,
+  "max_short_detail_requests": 24,
+  "flash_retention_minutes": 780,
+  "flash_snapshot_version": "flash-v329-r1"
 }

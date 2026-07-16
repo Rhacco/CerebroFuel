@@ -1,5 +1,2 @@
-# v3.3.0 runtime
-# v3.2.7 complete-week refresh
-# v3.2.7
+# v3.2.9 runtime
 requests>=2.31,<3
-# v3.2.8: runtime dependencies unchanged.

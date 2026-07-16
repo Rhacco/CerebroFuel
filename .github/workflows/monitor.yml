@@ -1,6 +1,6 @@
 name: Crypto Signal Monitor
 
-# v3.2.8: reuse the exact v3.3.0-compatible daily context, then send the fast balanced report.
+# v3.2.9: restore all-pool map snapshots, reuse v3.3.0 daily context, then confirm the strongest flash candidates.
 on:
   workflow_dispatch:
     inputs:
@@ -50,6 +50,14 @@ jobs:
             seasonality-v327-complete-weeks-r2-
             seasonality-v327-adaptive-
 
+      - name: Letzte Vollpool-Snapshots laden
+        uses: actions/cache/restore@v5
+        with:
+          path: .cache/flash
+          key: flash-v329-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            flash-v329-
+
       - name: Abhängigkeiten installieren
         run: python -m pip install --disable-pip-version-check -r requirements.txt
 
@@ -75,3 +83,10 @@ jobs:
           SEND_DISCORD: ${{ inputs.send_discord }}
           LCW_RATE_STATE_PATH: .cache/lcw-rate.json
         run: python main.py --monitor-only
+
+      - name: Aktualisierte Vollpool-Snapshots speichern
+        if: always() && hashFiles('.cache/flash/state.json') != ''
+        uses: actions/cache/save@v5
+        with:
+          path: .cache/flash
+          key: flash-v329-${{ github.run_id }}-${{ github.run_attempt }}
