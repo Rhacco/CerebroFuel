@@ -1,4 +1,4 @@
-"""Stable daily cache used by v3.2.9; schema stays v3.3.0 to reuse the current GitHub cache."""
+"""Stable v3.3.0 daily cache with reusable histories and weekday context."""
 
 from __future__ import annotations
 
@@ -569,6 +569,40 @@ def build_daily_contexts(
         }
     return result
 
+
+
+def volume_trend_from_context(
+    state: Mapping[str, Any],
+    display: str,
+    *,
+    current_volume: float | None,
+    now_ms: int,
+    days: int = 7,
+) -> float | None:
+    """Compare today's rolling LCW volume with the nearest cached value days ago.
+
+    The daily cache already carries raw volume history, so this adds no monitor
+    request. A broad tolerance is intentional because daily LCW points do not
+    necessarily land at the same minute every day.
+    """
+    if current_volume is None or current_volume <= 0:
+        return None
+    raw = (state.get("coins") or {}).get(display) or {}
+    history = history_from_context(raw)
+    if not history:
+        return None
+    target_ms = int(now_ms - max(1, int(days)) * 86_400_000)
+    tolerance_ms = 40 * 3_600_000
+    candidates = [
+        point for point in history
+        if point.volume is not None
+        and point.volume > 0
+        and abs(point.timestamp_ms - target_ms) <= tolerance_ms
+    ]
+    if not candidates:
+        return None
+    previous = min(candidates, key=lambda point: abs(point.timestamp_ms - target_ms))
+    return (float(current_volume) / float(previous.volume) - 1.0) * 100.0
 
 def context_for_coin(state: Mapping[str, Any], display: str) -> tuple[Seasonality, list[float]]:
     raw = (state.get("coins") or {}).get(display) or {}

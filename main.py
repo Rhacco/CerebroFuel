@@ -1,4 +1,4 @@
-"""Entry point for crypto-signal-monitor v3.2.9 with full-pool map-snapshot flash scanning."""
+"""Entry point for crypto-signal-monitor v3.3.0 volume-priority ranking."""
 
 from __future__ import annotations
 
@@ -30,12 +30,19 @@ from daily_context import (
     load_state,
     local_day_key,
     save_state,
+    volume_trend_from_context,
 )
 from discord_sender import send_discord
 from lcw_client import LiveCoinWatchClient
 from flash_state import update_and_score
+from ranking_context import (
+    btc_performance_context,
+    combined_priority,
+    seven_day_volume_context,
+    small_cap_bonuses,
+)
 
-APP_VERSION = "3.2.9"
+APP_VERSION = "3.3.0"
 ROOT = Path(__file__).resolve().parent
 DAILY_STATE_PATH = ROOT / ".cache" / "seasonality" / "state.json"
 CHANGED_FLAG = ROOT / ".cache" / "seasonality" / "changed.flag"
@@ -413,7 +420,7 @@ def log_quality(display: str, short: ShortMetrics) -> None:
 def _short_is_displayable(short: ShortMetrics) -> bool:
     if short.data_quality == "insufficient":
         return False
-    return all(short.window_setup_scores.get(window) is not None for window in (10, 20, 60))
+    return all(short.window_setup_scores.get(window) is not None for window in (10, 30, 60))
 
 
 def _build_short_for_pair(
@@ -481,7 +488,7 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
         print("HINWEIS: Aktuell nicht von LCW aufgelöst: " + ", ".join(unresolved), file=sys.stderr)
 
     # One fresh /coins/map response checks the complete configured pool. The
-    # persisted map snapshots produce true 10/20/60-minute flash scores for every
+    # persisted map snapshots produce true 10/30/60-minute flash scores for every
     # coin without spending one additional LCW credit.
     flash_signals, flash_stats = update_and_score(
         path=FLASH_STATE_PATH,
@@ -494,22 +501,67 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
     )
     print(
         f"Flash-Vollscan: {flash_stats.get('coins', 0)} Coins, "
-        f"{flash_stats.get('full_windows', 0)} mit 10/20/60m, "
+        f"{flash_stats.get('full_windows', 0)} mit 10/30/60m, "
         f"Abdeckung={float(flash_stats.get('coverage', 0.0)) * 100:.0f}% "
         f"(0 zusätzliche LCW-Requests)."
     )
+
+    # Secondary context is calculated for the whole pool before detail selection.
+    # None of these bounded bonuses can overpower the primary 30-minute gap.
+    rows_by_display = {
+        display: current_by_code[api_code]
+        for display, api_code in [resolved_reference, *resolved_pool]
+    }
+    raw_volume_7d: dict[str, float | None] = {}
+    for display, api_code in [resolved_reference, *resolved_pool]:
+        raw_volume = current_by_code[api_code].get("volume")
+        current_volume = None if raw_volume in (None, "") else float(raw_volume)
+        raw_volume_7d[display] = volume_trend_from_context(
+            daily_state,
+            display,
+            current_volume=current_volume,
+            now_ms=now_ms,
+            days=7,
+        )
+    volume_7d_context = seven_day_volume_context(raw_volume_7d)
+    cap_bonuses = small_cap_bonuses(
+        rows_by_display,
+        minimum_reliable_volume=float(config.get("minimum_reliable_volume_usd", 500_000)),
+    )
+    btc_context = {
+        display: btc_performance_context(
+            current_by_code[api_code],
+            reference_current,
+            is_reference=(display == reference_display),
+        )
+        for display, api_code in [resolved_reference, *resolved_pool]
+    }
 
     top_count = int(config.get("top_coin_count", 8))
     initial_count = max(top_count, int(config.get("preselect_coin_count", 22)))
     max_detail_requests = max(initial_count, int(config.get("max_short_detail_requests", 26)))
 
-    def flash_order_key(pair: tuple[str, str]) -> tuple[float, float, float, str]:
+    def flash_order_key(pair: tuple[str, str]) -> tuple[float, float, float, float, str]:
         display, api_code = pair
         signal = flash_signals.get(display)
-        flash_score = signal.score if signal else 0.0
-        quality = signal.quality if signal else 0.0
         fallback = pre_anomaly_score(current_by_code[api_code], reference_current)
-        return (flash_score, quality, fallback, display)
+        primary = max(signal.score if signal else 0.0, fallback * 0.45)
+        volume_context = volume_7d_context.get(display) or {}
+        priority = combined_priority(
+            primary_gap_score=primary,
+            volume_7d_bonus=float(volume_context.get("bonus") or 0.0),
+            market_cap_bonus=float(cap_bonuses.get(display, 0.0)),
+            volatility_score=float(signal.volatility_score if signal else 0.0),
+            recovery_score=float(signal.recovery_score if signal else 0.0),
+            quality=float(signal.quality if signal else 0.35),
+        )
+        return (
+            float(int(primary // 8.0)),
+            priority,
+            primary,
+            float(signal.quality if signal else 0.0),
+            display,
+        )
 
     candidate_order = sorted(resolved_pool, key=flash_order_key, reverse=True)
 
@@ -626,6 +678,27 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
         "minimum_observations": int(config.get("seasonality_min_observations", 70)),
         "config": config,
     }
+    def ranking_context_kwargs(display: str, api_code: str) -> dict[str, Any]:
+        signal = flash_signals.get(display)
+        volume_context = volume_7d_context.get(display) or {}
+        btc24, btc24_color, btc7, btc7_color = btc_context[display]
+        fallback = pre_anomaly_score(current_by_code[api_code], reference_current) * 0.45
+        return {
+            "map_flash_score": max(float(signal.score if signal else 0.0), fallback),
+            "map_flash_direction": signal.direction if signal else "=",
+            "map_volatility_score": float(signal.volatility_score if signal else 0.0),
+            "map_recovery_score": float(signal.recovery_score if signal else 0.0),
+            "map_recovery_color": signal.recovery_color if signal else "🟡",
+            "volume_7d_pct": volume_context.get("pct"),
+            "volume_7d_color": str(volume_context.get("color") or "⚪"),
+            "volume_7d_bonus": float(volume_context.get("bonus") or 0.0),
+            "btc_24h_pct": float(btc24),
+            "btc_24h_color": btc24_color,
+            "btc_7d_pct": float(btc7),
+            "btc_7d_color": btc7_color,
+            "market_cap_bonus": float(cap_bonuses.get(display, 0.0)),
+        }
+
     ref_seasonality, ref_week_returns = context_for_coin(daily_state, reference_display)
     reference_analysis = build_coin_analysis(
         display_code=reference_display,
@@ -636,15 +709,7 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
         is_reference=True,
         seasonality_override=ref_seasonality,
         week_samples_override=ref_week_returns,
-        map_flash_score=max(
-            pre_anomaly_score(reference_current, reference_current),
-            flash_signals.get(reference_display).score if flash_signals.get(reference_display) else 0.0,
-        ),
-        map_flash_direction=(
-            flash_signals.get(reference_display).direction
-            if flash_signals.get(reference_display)
-            else "="
-        ),
+        **ranking_context_kwargs(reference_display, reference_api),
         **common,
     )
 
@@ -661,18 +726,20 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
                 is_reference=False,
                 seasonality_override=seasonality,
                 week_samples_override=week_returns,
-                map_flash_score=max(
-                    pre_anomaly_score(current_by_code[api_code], reference_current),
-                    flash_signals.get(display).score if flash_signals.get(display) else 0.0,
-                ),
-                map_flash_direction=(
-                    flash_signals.get(display).direction if flash_signals.get(display) else "="
-                ),
+                **ranking_context_kwargs(display, api_code),
                 **common,
             )
         )
 
     top_analyses = sorted(analyses, key=confidence_sort_key, reverse=True)[:top_count]
+    for item in top_analyses:
+        print(
+            f"Priorität {item.display_code}: Gesamt={item.ranking_score:.2f} "
+            f"Schere30={item.short.divergence_30 if item.short.divergence_30 is not None else 0.0:+.2f} "
+            f"Primär={item.flash_score:.1f} V7={item.volume_7d_bonus:.1f} "
+            f"Cap={item.market_cap_bonus:.1f} Volatilität={item.volatility_bonus:.1f} "
+            f"Recovery={item.recovery_bonus:.1f}."
+        )
     report = build_report(
         reference_analysis,
         top_analyses,
@@ -702,6 +769,17 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
                     for display, signal in sorted(flash_signals.items())
                 },
                 "flash_stats": flash_stats,
+                "volume_7d_context": volume_7d_context,
+                "market_cap_bonuses": cap_bonuses,
+                "btc_performance": {
+                    display: {
+                        "relative_24h_pct": values[0],
+                        "relative_24h_color": values[1],
+                        "relative_7d_pct": values[2],
+                        "relative_7d_color": values[3],
+                    }
+                    for display, values in btc_context.items()
+                },
                 "api_requests_expected": 1 + short_request_count,
                 "api_request_cap": 1 + max_detail_requests + 1,
             },

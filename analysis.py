@@ -1,5 +1,5 @@
-# v3.2.9 full-pool flash-confirmation engine
-"""Evidence-weighted crypto analysis with all-pool snapshot flash confirmation."""
+# v3.3.0 volume-priority analysis engine
+"""Volume-first crypto analysis with 30-minute divergence priority."""
 
 from __future__ import annotations
 
@@ -11,10 +11,12 @@ from datetime import datetime, timedelta
 from typing import Any, Iterable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
+from ranking_context import combined_priority
+
 DAY_NAMES = ["MO", "DI", "MI", "DO", "FR", "SA", "SO"]
 DISPLAY_WEEK_ORDER = (5, 6, 0, 1, 2, 3, 4)
-WINDOWS = (10, 20, 60)
-WINDOW_WEIGHTS = {10: 0.45, 20: 0.35, 60: 0.20}
+WINDOWS = (10, 30, 60)
+WINDOW_WEIGHTS = {10: 0.20, 30: 0.65, 60: 0.15}
 
 PURPLE = "🟣"
 GREEN = "🟢"
@@ -105,6 +107,12 @@ class ShortMetrics:
     recent_positive_memory: float = 0.0
     entry_setup_score: float = 0.0
     exit_setup_score: float = 0.0
+    divergence_30: float | None = None
+    divergence_score: float = 0.0
+    volatility_score: float = 0.0
+    recovery_score: float = 0.0
+    recovery_color: str = YELLOW
+    recent_crash_pct: float = 0.0
 
 
 @dataclass
@@ -125,6 +133,16 @@ class CoinAnalysis:
     flash_score: float = 0.0
     ranking_score: float = 0.0
     attention_score: float = 0.0
+    volume_7d_pct: float | None = None
+    volume_7d_color: str = WHITE
+    volume_7d_bonus: float = 0.0
+    btc_24h_pct: float = 0.0
+    btc_24h_color: str = YELLOW
+    btc_7d_pct: float = 0.0
+    btc_7d_color: str = YELLOW
+    market_cap_bonus: float = 0.0
+    volatility_bonus: float = 0.0
+    recovery_bonus: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -890,10 +908,10 @@ def _pattern_aggregate(
     if sum(value >= 55 for value in dist_values) >= 2:
         dist += 7.0
     acc_acceleration = (accumulation.get(10) or 0.0) - statistics.mean(
-        [value for window in (20, 60) if (value := accumulation.get(window)) is not None] or [0.0]
+        [value for window in (30, 60) if (value := accumulation.get(window)) is not None] or [0.0]
     )
     dist_acceleration = (distribution.get(10) or 0.0) - statistics.mean(
-        [value for window in (20, 60) if (value := distribution.get(window)) is not None] or [0.0]
+        [value for window in (30, 60) if (value := distribution.get(window)) is not None] or [0.0]
     )
     acc += _clamp(acc_acceleration, 0.0, 20.0) * 0.18
     dist += _clamp(dist_acceleration, 0.0, 20.0) * 0.18
@@ -1106,7 +1124,7 @@ def _condition_counts(
     stable_price_path = sum(price_continuity.get(window, 0.0) >= 0.54 for window in WINDOWS) >= 2
     buy_conditions = [
         acc[10] >= 62.0,
-        acc[20] >= 62.0,
+        acc[30] >= 62.0,
         acc[60] >= 56.0,
         sum(value >= 58.0 for value in acc.values()) >= 2 and max(dist.values()) < 42.0,
         persistent_path,
@@ -1116,7 +1134,7 @@ def _condition_counts(
     ]
     sell_conditions = [
         dist[10] >= 62.0,
-        dist[20] >= 62.0,
+        dist[30] >= 62.0,
         dist[60] >= 56.0,
         sum(value >= 58.0 for value in dist.values()) >= 2 and max(acc.values()) < 42.0,
         stable_price_path,
@@ -1206,7 +1224,7 @@ def _recent_setup_scores(
     """Return surge, health, collapse, price-uncertainty, memory, entry and exit.
 
     The scores deliberately separate *attention* from confirmed colors: a fresh
-    10–20 minute event can rank immediately, while the strongest colors still
+    10–30 minute event can rank immediately, while the strongest colors still
     need several independent confirmations.
     """
     usable = [window for window in WINDOWS if quality.get(window) == "good"]
@@ -1227,10 +1245,10 @@ def _recent_setup_scores(
     abs_price = _weighted({w: None if price_strengths.get(w) is None else abs(float(price_strengths[w])) for w in WINDOWS})
 
     v10 = float(volume_strengths.get(10) or 0.0)
-    v20 = float(volume_strengths.get(20) or 0.0)
+    v30 = float(volume_strengths.get(30) or 0.0)
     v60 = float(volume_strengths.get(60) or 0.0)
-    acceleration_up = max(0.0, v10 - 0.60 * v20 - 0.40 * v60)
-    acceleration_down = max(0.0, 0.60 * v20 + 0.40 * v60 - v10)
+    acceleration_up = max(0.0, v10 - 0.55 * v30 - 0.45 * v60)
+    acceleration_down = max(0.0, 0.55 * v30 + 0.45 * v60 - v10)
     positive_windows = sum((volume_strengths.get(w) or 0.0) >= 0.55 for w in WINDOWS)
     negative_windows = sum((volume_strengths.get(w) or 0.0) <= -0.55 for w in WINDOWS)
     continuity = _weighted({w: volume_continuity.get(w, 0.0) for w in WINDOWS})
@@ -1303,6 +1321,114 @@ def _recent_setup_scores(
         100.0,
     )
     return surge, health, collapse, price_uncertainty, recent_positive_memory, entry, exit_score
+
+
+def _volume_divergence_metrics(
+    *,
+    price_strengths: Mapping[int, float | None],
+    volume_strengths: Mapping[int, float | None],
+    volume_continuity: Mapping[int, float],
+    window_quality: Mapping[int, str],
+) -> tuple[float | None, float, str]:
+    """Primary v3.3.0 signal: volume-trend minus price-trend over 30m.
+
+    The 10m and 60m windows only corroborate the dominant 30m gap.  This keeps
+    the ranking aligned with the user's requested hierarchy instead of allowing
+    BTC, weekdays or legacy pressure to dominate it.
+    """
+    gaps: dict[int, float | None] = {}
+    for window in WINDOWS:
+        price = price_strengths.get(window)
+        volume = volume_strengths.get(window)
+        gaps[window] = None if price is None or volume is None else float(volume) - float(price)
+    gap30 = gaps.get(30)
+    usable = [(float(gaps[w]), WINDOW_WEIGHTS[w]) for w in WINDOWS if gaps.get(w) is not None]
+    weighted_gap = (
+        sum(value * weight for value, weight in usable) / sum(weight for _, weight in usable)
+        if usable else 0.0
+    )
+    axis = float(gap30) if gap30 is not None else weighted_gap
+    primary = 100.0 * _clamp(abs(axis) / 3.20, 0.0, 1.0)
+    corroboration = sum(
+        100.0 * _clamp(abs(float(gaps[w])) / 3.20, 0.0, 1.0) * WINDOW_WEIGHTS[w]
+        for w in WINDOWS if gaps.get(w) is not None
+    )
+    volume_intensity = _weighted({
+        w: None if volume_strengths.get(w) is None else abs(float(volume_strengths[w]))
+        for w in WINDOWS
+    })
+    intensity = 100.0 * _clamp(volume_intensity / 2.80, 0.0, 1.0)
+    continuity = volume_continuity.get(30, 0.55)
+    good = sum(window_quality.get(window) == "good" for window in WINDOWS)
+    quality = {0: 0.25, 1: 0.55, 2: 0.82, 3: 1.0}[good]
+    score = (0.72 * primary + 0.18 * corroboration + 0.10 * intensity)
+    score *= (0.78 + 0.22 * continuity) * (0.72 + 0.28 * quality)
+    direction = "▲" if axis >= 0.18 else ("▼" if axis <= -0.18 else "=")
+    return gap30, _clamp(score, 0.0, 100.0), direction
+
+
+def _recent_volatility_score(series: Sequence[PricePoint], now_ms: int) -> float:
+    cutoff = now_ms - 180 * 60_000
+    recent = [point for point in series if point.timestamp_ms >= cutoff]
+    changes: list[float] = []
+    for previous, current in zip(recent, recent[1:]):
+        change = _pct(current.rate, previous.rate)
+        if change is not None and abs(change) <= 20.0:
+            changes.append(change)
+    if len(changes) < 4:
+        return 0.0
+    rms = math.sqrt(sum(value * value for value in changes) / len(changes))
+    return 100.0 * _clamp((rms - 0.05) / 0.90, 0.0, 1.0)
+
+
+def _crash_recovery_metrics(
+    series: Sequence[PricePoint],
+    *,
+    now_ms: int,
+    price_changes: Mapping[int, float | None],
+    volume_strengths: Mapping[int, float | None],
+) -> tuple[float, str, float]:
+    cutoff = now_ms - 360 * 60_000
+    recent = [point for point in series if point.timestamp_ms >= cutoff]
+    if len(recent) < 8:
+        return 0.0, YELLOW, 0.0
+    peak_index = max(range(len(recent)), key=lambda index: recent[index].rate)
+    after_peak = recent[peak_index:]
+    if len(after_peak) < 3:
+        return 0.0, YELLOW, 0.0
+    low_local = min(range(len(after_peak)), key=lambda index: after_peak[index].rate)
+    low_index = peak_index + low_local
+    peak = recent[peak_index].rate
+    low = recent[low_index].rate
+    current = recent[-1].rate
+    crash_pct = (low / peak - 1.0) * 100.0 if peak > 0 else 0.0
+    rebound_pct = (current / low - 1.0) * 100.0 if low > 0 else 0.0
+    severity = _clamp((-crash_pct - 0.65) / 5.0, 0.0, 1.0)
+    price30 = float(price_changes.get(30) or 0.0)
+    stable_price = _clamp(1.0 - abs(price30) / 1.20, 0.0, 1.0)
+    after_low = low_index < len(recent) - 2
+    rebound = _clamp(rebound_pct / max(-crash_pct * 0.35, 0.45), 0.0, 1.0) if crash_pct < 0 else 0.0
+    v10 = float(volume_strengths.get(10) or 0.0)
+    v30 = float(volume_strengths.get(30) or 0.0)
+    v60 = float(volume_strengths.get(60) or 0.0)
+    volume_support = _clamp((0.45 * v10 + 0.40 * v30 + 0.15 * v60 + 0.25) / 2.30, 0.0, 1.0)
+    stabilization = _clamp(0.52 * stable_price + 0.48 * rebound, 0.0, 1.0) if after_low else 0.0
+    score = 100.0 * severity * (0.45 * stabilization + 0.55 * volume_support)
+    ongoing = severity >= 0.25 and not after_low and price30 < -0.35
+    if score >= 78.0:
+        color = PURPLE
+    elif score >= 58.0:
+        color = GREEN
+    elif score >= 34.0:
+        color = BLUE
+    elif ongoing and volume_support < 0.30:
+        color = RED
+    elif ongoing:
+        color = ORANGE
+    else:
+        color = YELLOW
+    return score, color, crash_pct
+
 
 def build_short_metrics(
     *,
@@ -1544,7 +1670,7 @@ def build_short_metrics(
 
     # Flash ranking reacts to a fresh 5–15 minute setup without granting a strong color.
     # Persistence-aware signal colors and X-counts remain the confirmation layer.
-    fresh_weights = {10: 0.62, 20: 0.28, 60: 0.10}
+    fresh_weights = {10: 0.22, 30: 0.68, 60: 0.10}
     flash_acc = sum((accumulation.get(window) or 0.0) * fresh_weights[window] for window in WINDOWS)
     flash_dist = sum((distribution.get(window) or 0.0) * fresh_weights[window] for window in WINDOWS)
     recent_jump_penalty = 1.0
@@ -1566,6 +1692,24 @@ def build_short_metrics(
         100.0,
     )
     flash_direction = "▲" if flash_acc > flash_dist + 4.0 else ("▼" if flash_dist > flash_acc + 4.0 else "=")
+
+    divergence_30, divergence_score, divergence_direction = _volume_divergence_metrics(
+        price_strengths=price_strengths,
+        volume_strengths=volume_strengths,
+        volume_continuity=volume_continuity,
+        window_quality=window_quality,
+    )
+    volatility_score = _recent_volatility_score(series, now_ms)
+    recovery_score, recovery_color, recent_crash_pct = _crash_recovery_metrics(
+        series,
+        now_ms=now_ms,
+        price_changes=price_changes,
+        volume_strengths=volume_strengths,
+    )
+    # v3.3.0: the 30-minute volume/price gap is the dominant flash layer.
+    flash_score = max(flash_score * 0.35, divergence_score)
+    if divergence_direction != "=":
+        flash_direction = divergence_direction
 
     return ShortMetrics(
         price_changes=price_changes,
@@ -1618,6 +1762,12 @@ def build_short_metrics(
         recent_positive_memory=recent_positive_memory,
         entry_setup_score=entry_setup_score,
         exit_setup_score=exit_setup_score,
+        divergence_30=divergence_30,
+        divergence_score=divergence_score,
+        volatility_score=volatility_score,
+        recovery_score=recovery_score,
+        recovery_color=recovery_color,
+        recent_crash_pct=recent_crash_pct,
     )
 
 
@@ -2194,73 +2344,59 @@ def _apply_contextual_setup(
     *,
     week_signal: str,
     config: Mapping[str, Any],
+    primary_override: float = 0.0,
+    direction_override: str = "=",
 ) -> tuple[str, float, int, int, str]:
-    """Combine fresh volume shape with 7/B/P context for decisive ranking."""
-    week_level = color_level(week_signal)
-    relative_level = color_level(short.relative_color)
-    pressure_level = color_level(short.pressure_color)
-    positive_parts = sum(value > 0 for value in (week_level, relative_level, pressure_level))
-    negative_parts = sum(value < 0 for value in (week_level, relative_level, pressure_level))
+    """Map the dominant 30-minute volume/price gap to the first circle.
+
+    Seven-day volume, market cap, volatility and BTC are ranking bonuses only;
+    they cannot manufacture a strong first-circle color when the fresh gap is weak.
+    """
+    del week_signal  # kept in the signature for compatibility with older callers
+    detailed = float(short.divergence_score)
+    external = max(0.0, min(100.0, float(primary_override)))
+    use_external = external > detailed + 6.0 and direction_override in {"▲", "▼"}
+    score = max(detailed, external)
+    direction = direction_override if use_external else short.flash_direction
+    if direction not in {"▲", "▼"}:
+        direction = "▲" if (short.divergence_30 or 0.0) >= 0.18 else (
+            "▼" if (short.divergence_30 or 0.0) <= -0.18 else "="
+        )
+
     good_windows = sum(short.window_quality.get(window) == "good" for window in WINDOWS)
     quality_ok = short.data_quality == "good" and good_windows >= 2
+    v30 = float(short.volume_strengths.get(30) or 0.0)
+    positive_volume_windows = sum((short.volume_strengths.get(window) or 0.0) >= 0.25 for window in WINDOWS)
+    negative_volume_windows = sum((short.volume_strengths.get(window) or 0.0) <= -0.25 for window in WINDOWS)
 
-    perfect_entry = (
-        quality_ok
-        and short.volume_surge_score >= float(config.get("entry_purple_surge", 72.0))
-        and short.price_uncertainty_score >= float(config.get("entry_purple_price_uncertainty", 58.0))
-        and week_level > 0
-        and relative_level > 0
-        and pressure_level > 0
-        and short.exit_setup_score < 55.0
-    )
-    urgent_exit = (
-        quality_ok
-        and short.volume_collapse_score >= float(config.get("exit_red_collapse", 66.0))
-        and short.recent_positive_memory >= float(config.get("exit_red_memory", 42.0))
-        and (short.exit_setup_score >= float(config.get("exit_red_score", 68.0)) or pressure_level < 0)
-        and short.entry_setup_score < 62.0
-    )
-
-    entry_context = _clamp(
-        short.entry_setup_score
-        + 7.0 * positive_parts
-        - 8.0 * negative_parts
-        + (6.0 if week_level > 0 and relative_level > 0 else 0.0),
-        0.0,
-        100.0,
-    )
-    exit_context = _clamp(
-        short.exit_setup_score
-        + 7.0 * negative_parts
-        + (8.0 if short.recent_positive_memory >= 45.0 else 0.0)
-        + (8.0 if short.volume_collapse_score >= 60.0 else 0.0),
-        0.0,
-        100.0,
-    )
-
-    if perfect_entry:
-        color, direction, attention = PURPLE, "▲", max(96.0, entry_context)
-        buy, sell = max(short.buy_count, 8), short.sell_count
-    elif urgent_exit:
-        color, direction, attention = RED, "▼", max(96.0, exit_context)
-        buy, sell = short.buy_count, max(short.sell_count, 8)
-    elif entry_context >= 63.0 and short.volume_health_score >= 48.0 and positive_parts >= 2:
-        color, direction, attention = GREEN, "▲", entry_context
-        buy, sell = max(short.buy_count, min(7, max(5, round(entry_context / 12.5)))), short.sell_count
-    elif exit_context >= 58.0 and (short.volume_collapse_score >= 42.0 or negative_parts >= 1):
-        color, direction, attention = ORANGE, "▼", exit_context
-        buy, sell = short.buy_count, max(short.sell_count, min(7, max(5, round(exit_context / 12.5))))
-    elif entry_context >= 38.0 and entry_context >= exit_context:
-        color, direction, attention = BLUE, "▲", entry_context
-        buy, sell = max(short.buy_count, min(5, max(3, round(entry_context / 15.0)))), short.sell_count
-    elif exit_context >= 36.0:
-        color, direction, attention = ORANGE, "▼", exit_context
-        buy, sell = short.buy_count, max(short.sell_count, min(5, max(3, round(exit_context / 15.0))))
+    if direction == "▲":
+        if quality_ok and score >= 78.0 and v30 >= 0.45 and positive_volume_windows >= 2:
+            color = PURPLE
+        elif score >= 56.0 and v30 >= -0.10:
+            color = GREEN
+        elif score >= 30.0:
+            color = BLUE
+        else:
+            color = YELLOW
+    elif direction == "▼":
+        if quality_ok and score >= 76.0 and (v30 <= -0.35 or short.volume_collapse_score >= 48.0):
+            color = RED
+        elif score >= 32.0 or negative_volume_windows >= 2:
+            color = ORANGE
+        else:
+            color = YELLOW
     else:
-        color, direction, attention = YELLOW, short.direction, max(entry_context, exit_context) * 0.72
-        buy, sell = short.buy_count, short.sell_count
+        color = YELLOW
 
-    # P is the most direct price/volume field and should mirror decisive setups.
+    count = 0 if color == YELLOW else min(8, max(2, int(round(score / 12.5))))
+    if direction == "▲":
+        short.buy_count, short.sell_count = count, min(short.sell_count, 2)
+    elif direction == "▼":
+        short.buy_count, short.sell_count = min(short.buy_count, 2), count
+    else:
+        short.buy_count = short.sell_count = 0
+
+    # P remains a secondary diagnostic, but decisive gap signals are reflected.
     if color == PURPLE:
         short.pressure_color = PURPLE
     elif color == RED:
@@ -2274,9 +2410,9 @@ def _apply_contextual_setup(
 
     short.signal_color = color
     short.direction = direction
-    short.buy_count = min(8, buy)
-    short.sell_count = min(8, sell)
-    return color, attention, short.buy_count, short.sell_count, direction
+    short.flash_score = score
+    return color, score, short.buy_count, short.sell_count, direction
+
 
 def build_coin_analysis(
     *,
@@ -2296,6 +2432,17 @@ def build_coin_analysis(
     week_samples_override: Sequence[float] | None = None,
     map_flash_score: float = 0.0,
     map_flash_direction: str = "=",
+    map_volatility_score: float = 0.0,
+    map_recovery_score: float = 0.0,
+    map_recovery_color: str = YELLOW,
+    volume_7d_pct: float | None = None,
+    volume_7d_color: str = WHITE,
+    volume_7d_bonus: float = 0.0,
+    btc_24h_pct: float = 0.0,
+    btc_24h_color: str = YELLOW,
+    btc_7d_pct: float = 0.0,
+    btc_7d_color: str = YELLOW,
+    market_cap_bonus: float = 0.0,
 ) -> CoinAnalysis:
     week_pct = delta_to_pct((current.get("delta") or {}).get("week"))
     seasonality = seasonality_override or analyze_seasonality(
@@ -2308,64 +2455,35 @@ def build_coin_analysis(
         lookback_days=int(config.get("seasonality_lookback_days", 365)),
     )
     if week_samples_override is not None:
-        week_signal, percentile, week_confidence = week_context_from_samples(
-            week_pct, week_samples_override
-        )
+        week_signal, percentile, week_confidence = week_context_from_samples(week_pct, week_samples_override)
     else:
         week_signal, percentile, week_confidence = _week_context(week_pct, history)
-    now_score, legacy_now_color = current_now_signal(
-        short,
-        seasonality,
-        config,
-        is_reference=is_reference,
-        week_signal=week_signal,
-    )
-    contextual_color, attention, _, _, _ = _apply_contextual_setup(
-        short, week_signal=week_signal, config=config
-    )
+
     external_flash = _clamp(float(map_flash_score), 0.0, 100.0)
-
-    # The full-pool map-snapshot scan is an attention layer, not a replacement
-    # for detailed history. A very strong fresh event may lift an otherwise yellow
-    # detailed result to a cautious blue/orange, but never directly to purple/red.
-    if (
-        not is_reference
-        and contextual_color == YELLOW
-        and short.data_quality == "good"
-        and external_flash >= 72.0
-        and map_flash_direction in {"▲", "▼"}
-    ):
-        contextual_color = BLUE if map_flash_direction == "▲" else ORANGE
-        short.signal_color = contextual_color
-        short.direction = map_flash_direction
-        if map_flash_direction == "▲":
-            short.buy_count = max(short.buy_count, 3 if external_flash < 86 else 4)
-        else:
-            short.sell_count = max(short.sell_count, 3 if external_flash < 86 else 4)
-
-    # N follows the combined setup unless there is no meaningful setup at all.
-    now_color = contextual_color if contextual_color != YELLOW else legacy_now_color
-    if now_color == YELLOW and external_flash >= 78.0 and map_flash_direction in {"▲", "▼"}:
-        now_color = BLUE if map_flash_direction == "▲" else ORANGE
-
-    count = max(short.buy_count, short.sell_count)
-    persistence = max(short.positive_streak, short.negative_streak)
-    confirmed = (
-        count * 10.0
-        + short.extreme_proximity * 0.34
-        + short.pattern_confidence * 16.0
-        + persistence * 2.0
+    contextual_color, primary_score, _, _, _ = _apply_contextual_setup(
+        short,
+        week_signal=week_signal,
+        config=config,
+        primary_override=external_flash,
+        direction_override=map_flash_direction,
     )
-    flash = max(short.flash_score, external_flash, attention)
-    attention = max(attention, external_flash * (0.92 if external_flash >= 70.0 else 0.68))
-    color_bonus = {PURPLE: 92.0, RED: 92.0, GREEN: 60.0, BLUE: 35.0, ORANGE: 38.0, YELLOW: 0.0}.get(contextual_color, 0.0)
-    ranking_score = 0.46 * confirmed + 0.88 * attention + 0.42 * flash + color_bonus
-    if contextual_color == YELLOW:
-        ranking_score *= 0.56
-    if short.data_quality == "uncertain":
-        ranking_score *= 0.84
-    elif short.data_quality == "insufficient":
-        ranking_score *= 0.45
+
+    volatility_score = max(float(short.volatility_score), float(map_volatility_score))
+    if float(map_recovery_score) > float(short.recovery_score) + 5.0:
+        recovery_score = float(map_recovery_score)
+        recovery_color = map_recovery_color
+    else:
+        recovery_score = float(short.recovery_score)
+        recovery_color = short.recovery_color
+    quality_value = {"good": 1.0, "uncertain": 0.72, "insufficient": 0.35}.get(short.data_quality, 0.35)
+    ranking_score = combined_priority(
+        primary_gap_score=primary_score,
+        volume_7d_bonus=volume_7d_bonus,
+        market_cap_bonus=market_cap_bonus,
+        volatility_score=volatility_score,
+        recovery_score=recovery_score,
+        quality=quality_value,
+    )
 
     return CoinAnalysis(
         display_code=display_code,
@@ -2375,15 +2493,25 @@ def build_coin_analysis(
         week_color=week_signal,
         short=short,
         seasonality=seasonality,
-        now_score=now_score,
-        now_color=now_color,
+        now_score=recovery_score,
+        now_color=recovery_color,
         is_reference=is_reference,
         btc_gate=btc_gate(short, config) if is_reference else False,
         week_percentile=percentile,
         week_confidence=week_confidence,
-        flash_score=flash,
+        flash_score=primary_score,
         ranking_score=ranking_score,
-        attention_score=attention,
+        attention_score=ranking_score,
+        volume_7d_pct=volume_7d_pct,
+        volume_7d_color=volume_7d_color,
+        volume_7d_bonus=volume_7d_bonus,
+        btc_24h_pct=btc_24h_pct,
+        btc_24h_color=btc_24h_color,
+        btc_7d_pct=btc_7d_pct,
+        btc_7d_color=btc_7d_color,
+        market_cap_bonus=market_cap_bonus,
+        volatility_bonus=8.0 * _clamp(volatility_score / 100.0, 0.0, 1.0),
+        recovery_bonus=12.0 * _clamp(recovery_score / 100.0, 0.0, 1.0),
     )
 
 
@@ -2392,21 +2520,24 @@ def strength_count(item: CoinAnalysis) -> int:
 
 
 def confidence_sort_key(item: CoinAnalysis) -> tuple[float, ...]:
+    """Sort volume-first; all other factors are bounded tie-breakers/bonuses."""
     quality_rank = {"good": 2.0, "uncertain": 1.0, "insufficient": 0.0}.get(item.short.data_quality, 0.0)
-    count = strength_count(item)
-    color_rank = {PURPLE: 6.0, RED: 6.0, GREEN: 5.0, ORANGE: 4.3, BLUE: 4.0, YELLOW: 1.0}.get(item.short.signal_color, 0.0)
-    flash_rank = 5.4 if item.flash_score >= 88.0 else (4.7 if item.flash_score >= 74.0 else 0.0)
-    urgency_rank = max(color_rank, flash_rank)
-    # A confirmed extreme remains first. A fresh all-pool flash can outrank quiet
-    # yellow/blue filler rows, ensuring that newly active coins are not hidden.
+    volume_confirmation = sum(
+        item.short.volume_colors.get(window) in {PURPLE, GREEN, RED, ORANGE}
+        for window in WINDOWS
+    )
     return (
-        urgency_rank,
-        float(math.floor(item.attention_score / 2.0)),
-        float(math.floor(item.flash_score / 4.0)),
-        float(count),
-        float(math.floor(item.ranking_score / 4.0)),
+        # Eight-point primary bands make the 30m gap lexicographically dominant.
+        float(math.floor(item.flash_score / 8.0)),
+        float(math.floor(item.ranking_score * 10.0)),
+        float(math.floor(item.flash_score * 10.0)),
+        float(math.floor(item.short.divergence_score * 10.0)),
+        float(volume_confirmation),
+        float(math.floor(item.recovery_bonus * 10.0)),
+        float(math.floor(item.volume_7d_bonus * 10.0)),
+        float(math.floor(item.market_cap_bonus * 10.0)),
         quality_rank,
-        0.0 if item.short.reversal_guard else 1.0,
+        float(strength_count(item)),
     )
 
 
@@ -2416,7 +2547,7 @@ def format_line(item: CoinAnalysis, *, generated_at: datetime, timezone: str) ->
     weekdays = "".join(item.seasonality.best_weekdays[:2])
     common = (
         f"{item.short.signal_color}{count}{item.short.direction}"
-        f"7{item.week_color}B{item.short.relative_color}"
+        f"7{item.volume_7d_color}B{item.btc_24h_color}{item.btc_7d_color}"
         f"P{item.short.pressure_color}V{volumes}N{item.now_color}{weekdays}"
     )
     if item.is_reference:

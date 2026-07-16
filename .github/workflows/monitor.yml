@@ -1,6 +1,6 @@
 name: Crypto Signal Monitor
 
-# v3.2.9: restore all-pool map snapshots, reuse v3.3.0 daily context, then confirm the strongest flash candidates.
+# v3.3.0: volume-first 10/30/60 full-pool scan with bounded detail confirmation.
 on:
   workflow_dispatch:
     inputs:
@@ -54,8 +54,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: .cache/flash
-          key: flash-v329-${{ github.run_id }}-${{ github.run_attempt }}
+          key: flash-v330-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            flash-v330-
             flash-v329-
 
       - name: Abhängigkeiten installieren
@@ -89,4 +90,4 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: .cache/flash
-          key: flash-v329-${{ github.run_id }}-${{ github.run_attempt }}
+          key: flash-v330-${{ github.run_id }}-${{ github.run_attempt }}

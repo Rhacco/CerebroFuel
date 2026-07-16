@@ -1,5 +1,5 @@
 {
-  "schema_version": "3.2.9",
+  "schema_version": "3.3.0",
   "reference_coin": "BTC",
   "groups": [
     {
@@ -135,7 +135,7 @@
   "currency": "USD",
   "timezone": "Europe/Berlin",
   "top_coin_count": 8,
-  "preselect_coin_count": 22,
+  "preselect_coin_count": 25,
   "short_history_minutes": 720,
   "history_days": 126,
   "history_parallel_requests": 1,
@@ -151,15 +151,15 @@
       "clear": 0.3,
       "strong": 0.8
     },
-    "20": {
-      "light": 0.15,
-      "clear": 0.5,
-      "strong": 1.2
-    },
     "60": {
       "light": 0.3,
       "clear": 1.0,
       "strong": 2.5
+    },
+    "30": {
+      "light": 0.22,
+      "clear": 0.72,
+      "strong": 1.75
     }
   },
   "volume": {
@@ -168,15 +168,15 @@
       "clear": 0.2,
       "strong": 0.75
     },
-    "20": {
-      "light": 0.1,
-      "clear": 0.35,
-      "strong": 1.25
-    },
     "60": {
       "light": 0.25,
       "clear": 0.75,
       "strong": 2.5
+    },
+    "30": {
+      "light": 0.15,
+      "clear": 0.5,
+      "strong": 1.75
     }
   },
   "relative_light_pct": 0.12,
@@ -184,8 +184,8 @@
   "relative_strong_pct": 1.2,
   "btc_no_drop_pct": {
     "10": -0.1,
-    "20": -0.15,
-    "60": -0.25
+    "60": -0.25,
+    "30": -0.2
   },
   "request_timeout_seconds": 25,
   "discord_username": "Krypto-Monitor",
@@ -226,7 +226,25 @@
   "exit_red_collapse": 66.0,
   "exit_red_memory": 42.0,
   "exit_red_score": 68.0,
-  "max_short_detail_requests": 24,
+  "max_short_detail_requests": 26,
   "flash_retention_minutes": 780,
-  "flash_snapshot_version": "flash-v329-r1"
+  "flash_snapshot_version": "flash-v330-volume-gap-r1",
+  "volume_priority_revision": "volume-gap-30m-r1",
+  "primary_gap_window_minutes": 30,
+  "volume_windows_minutes": [
+    10,
+    30,
+    60
+  ],
+  "ranking_weights": {
+    "primary_30m_volume_price_gap": 1.0,
+    "volume_7d_bonus_cap": 14.0,
+    "small_market_cap_bonus_cap": 10.0,
+    "volatility_bonus_cap": 8.0,
+    "crash_recovery_bonus_cap": 12.0
+  },
+  "btc_relative_windows": [
+    "24h",
+    "7d"
+  ]
 }

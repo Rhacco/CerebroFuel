@@ -1,2 +1,2 @@
-# v3.2.9 runtime
+# v3.3.0 runtime dependency
 requests>=2.31,<3

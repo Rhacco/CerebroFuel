@@ -1,13 +1,30 @@
-# Krypto-Monitor v3.2.9
+# Krypto-Monitor v3.3.0 – Volume Priority
 
-`Kreis Zahl Richtung 7 B P V10/20/60 N Tage Coin/Minute`
+`Kreis Zahl Richtung 7 B24 B7 P V10/V30/V60 N Tage Coin/Minute`
 
-- Vollpool-Flash: **jeder konfigurierte Coin** wird bei jedem Lauf aus derselben frischen LCW-Map geprüft; gespeicherte Map-Snapshots liefern P/V 10/20/60 ohne Extra-Credits.
-- Die 22 auffälligsten Flash-Kandidaten werden per LCW-Historie bestätigt; maximal 24 Detailabrufe bei Datenlücken.
-- `🟣` ruhiger Kurs + stark vorauslaufendes Volumen · `🟢` nahe am Einstieg · `🔵` frühe positive Auffälligkeit
-- `🟠` Divergenz/Warnung · `🔴` abrupter Volumen-Supportverlust/SELL · `🟡` ruhig/unklar · `🟤/⚪` unsichere/fehlende Daten
-- Zahl `0–8` = bestätigte Kriterien · `7` = 7-Tage-Kontext · `B` = Stärke zu BTC · `P` = Kurs-/Volumendruck · `V` = rollierender LCW-Volumentrend · `N` = Gesamtbild
-- Tage: täglich eingefrorene, BTC- und Pool-bereinigte Top-Tage aus vollständigen Wochen.
-- Normal: `1 Map + BTC + 22 Historien ≈ 24 Requests`; harter Detaildeckel inklusive Reserve: höchstens etwa 26 Requests pro Monitorlauf.
+## Prioritäten
 
-Nach einem frischen Update füllt sich der Vollpool-Snapshotverlauf über 10/20/60 Minuten; Map-Daten halten die Rangfolge während des Warm-ups aktiv.
+1. **Primärsignal und Rangfolge:** Größe der 30-Minuten-Schere `Volumentrend − Kurstrend`. Je größer der absolute Abstand, desto höher die Aufmerksamkeit. Die Richtung der Schere bestimmt `▲/▼` und den Anfangskreis.
+2. **7:** positiver Trend des rollierenden LCW-Handelsvolumens über sieben Tage. Er wird aus dem bestehenden Tagescache berechnet und gibt höchstens 14 Bonuspunkte.
+3. **Market Cap:** kleinere Marktkapitalisierung gibt höchstens 10 Bonuspunkte. Ein Liquiditätsfaktor verhindert, dass nahezu inaktive Micro-Caps nur wegen ihrer Größe gewinnen.
+4. **Volatilität:** hohe jüngste realisierte Kursbewegung gibt höchstens 8 Bonuspunkte.
+5. **N:** eigenständiges Crash-Recovery-Signal. Ein kürzlicher Drawdown, anschließende Kursstabilisierung/Rebound und steigender Volumentrend ergeben Blau, Grün oder Lila. Ein weiterlaufender Crash kann Orange/Rot ergeben.
+
+## Kreise
+
+- `V10/V30/V60`: ausschließlich kurzfristiger, mittlerer und längerer Trend des rollierenden LCW-24h-Volumens.
+- `7`: Sieben-Tage-Volumentrend, nicht mehr der alte Sieben-Tage-Kurskreis.
+- `B24 B7`: Kursperformance gegenüber BTC über 24 Stunden und sieben Tage. In der BTC-Zeile zeigen die Kreise BTC absolut.
+- `P`: sekundärer Preis-/Volumendruck zur Diagnose; er entscheidet nicht mehr über die Rangfolge.
+- `N`: Crash-Stabilisierung mit Volumenunterstützung.
+- Tage: täglich eingefrorene Top-Wochentage aus vollständigen, BTC- und Pool-bereinigten Wochen.
+
+## Vollpool und Credits
+
+Alle konfigurierten Coins werden mit einer gemeinsamen LCW-Map-Abfrage und den gespeicherten Fünf-Minuten-Snapshots über `10/30/60m` geprüft. Danach werden regulär die 25 stärksten Kandidaten per Historie bestätigt; bei Datenlücken gilt ein harter Deckel von 26 Altcoin-Detailabrufen.
+
+- regulär: `1 Map + BTC + 25 Coin-Historien ≈ 27 Requests`
+- maximal: `1 Map + BTC + 26 Coin-Historien ≈ 28 Requests`
+- bei 288 Fünf-Minuten-Läufen: regulär etwa `7.776`, maximal etwa `8.064` Monitor-Requests pro Tag, zuzüglich der einmaligen Tagesaktualisierung und seltener Retries
+
+Der vorhandene v3.3.0-Tagescache bleibt kompatibel. Der neue Flash-Cache lädt bei der ersten Ausführung auch `flash-v329-` als Migrationsquelle. Cloudflare-Konfiguration und Secrets bleiben unverändert.
