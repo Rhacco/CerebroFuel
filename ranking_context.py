@@ -1,4 +1,4 @@
-"""v3.3.0 cross-sectional bonuses and BTC comparison helpers.
+"""v3.3.1 cross-sectional bonuses and BTC comparison helpers.
 
 The primary ranking remains the recent volume/price divergence.  This module only
 provides bounded secondary context so market cap, seven-day volume and BTC

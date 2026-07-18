@@ -1,4 +1,4 @@
-// v3.3.0 scheduler; dispatch behavior intentionally unchanged
+// v3.3.1 ranked-expansion scheduler; dispatch behavior intentionally unchanged
 function schedulerEnabled(env) {
   // v3.2.7: ENABLED 1 = aktiv, 2 = pausiert.
   return String(env.ENABLED ?? "1").trim() === "1";
@@ -42,7 +42,7 @@ async function triggerGitHubWithRetry(env, source) {
         Accept: "application/vnd.github+json",
         Authorization: `Bearer ${env.GH_PAT}`,
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "cloudflare-crypto-scheduler-v3.3.0",
+        "User-Agent": "cloudflare-crypto-scheduler-v3.3.1",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({

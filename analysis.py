@@ -1,4 +1,4 @@
-# v3.3.0 volume-priority analysis engine
+# v3.3.1 volume-priority analysis engine
 """Volume-first crypto analysis with 30-minute divergence priority."""
 
 from __future__ import annotations
@@ -189,21 +189,30 @@ CODE_ALIASES = {
     "HBAR": "HBR",
     "DOGE": "DGE",
     "RENDER": "RND",
-    "ZKSYNC": "ZKS",
     "ETHFI": "EFI",
     "MORPHO": "MRP",
     "FARTCOIN": "FRT",
     "TRUMP": "TRP",
     "MEGA": "MEG",
-    "KMNO": "KMN",
     "PYTH": "PYT",
     "AAVE": "AAV",
     "ONDO": "OND",
-    "WLFI": "WLF",
     "HYPE": "HYP",
     "BONK": "BNK",
     "PEPE": "PEP",
     "PUMP": "PMP",
+    "W": "WRM",
+    "OP": "OPT",
+    "ZKSYNC": "ZKS",
+    "LINK": "LNK",
+    "AVAX": "AVX",
+    "PENGU": "PGU",
+    "FLOKI": "FLK",
+    "ALGO": "ALG",
+    "VIRTUAL": "VRT",
+    "ORDI": "ORD",
+    "PENDLE": "PND",
+    "SUSHI": "SSH",
 }
 
 
@@ -1323,6 +1332,26 @@ def _recent_setup_scores(
     return surge, health, collapse, price_uncertainty, recent_positive_memory, entry, exit_score
 
 
+def _directional_volume_price_axis(price_strength: float, volume_strength: float) -> float:
+    """Return a signed trading-pressure axis for one window.
+
+    Stable/slightly rising price with stronger volume is positive accumulation.
+    Rising price without matching volume is negative distribution. Falling price
+    is never reclassified as accumulation: rising volume then confirms selling
+    pressure, while falling volume represents fading demand.
+    """
+    price = float(price_strength)
+    volume = float(volume_strength)
+    if price <= -0.25:
+        if volume >= 0.0:
+            axis = -(0.70 * abs(price) + 0.85 * volume)
+        else:
+            axis = -(0.75 * abs(price) + 0.25 * abs(volume))
+    else:
+        axis = volume - price
+    return _clamp(axis, -4.0, 4.0)
+
+
 def _volume_divergence_metrics(
     *,
     price_strengths: Mapping[int, float | None],
@@ -1330,9 +1359,11 @@ def _volume_divergence_metrics(
     volume_continuity: Mapping[int, float],
     window_quality: Mapping[int, str],
 ) -> tuple[float | None, float, str]:
-    """Primary v3.3.0 signal: volume-trend minus price-trend over 30m.
+    """Primary v3.3.1 signal: direction-aware volume/price pressure over 30m.
 
-    The 10m and 60m windows only corroborate the dominant 30m gap.  This keeps
+    The 10m and 60m windows only corroborate the dominant 30m axis. Falling
+    price with rising volume is explicitly negative selling pressure rather than
+    a false accumulation signal. This keeps
     the ranking aligned with the user's requested hierarchy instead of allowing
     BTC, weekdays or legacy pressure to dominate it.
     """
@@ -1340,7 +1371,10 @@ def _volume_divergence_metrics(
     for window in WINDOWS:
         price = price_strengths.get(window)
         volume = volume_strengths.get(window)
-        gaps[window] = None if price is None or volume is None else float(volume) - float(price)
+        gaps[window] = (
+            None if price is None or volume is None
+            else _directional_volume_price_axis(float(price), float(volume))
+        )
     gap30 = gaps.get(30)
     usable = [(float(gaps[w]), WINDOW_WEIGHTS[w]) for w in WINDOWS if gaps.get(w) is not None]
     weighted_gap = (
@@ -1706,7 +1740,7 @@ def build_short_metrics(
         price_changes=price_changes,
         volume_strengths=volume_strengths,
     )
-    # v3.3.0: the 30-minute volume/price gap is the dominant flash layer.
+    # v3.3.1: the 30-minute volume/price gap is the dominant flash layer.
     flash_score = max(flash_score * 0.35, divergence_score)
     if divergence_direction != "=":
         flash_direction = divergence_direction

@@ -1,4 +1,4 @@
-# v3.3.0 adaptive Live Coin Watch client with the same conservative limiter
+# v3.3.1 adaptive Live Coin Watch client with the same conservative limiter
 """Rate-aware Live Coin Watch client for monitor and daily context."""
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ class LiveCoinWatchClient:
             "cache-control": "no-cache",
             "pragma": "no-cache",
             "x-api-key": api_key,
-            "user-agent": "crypto-signal-monitor/v3.3.0",
+            "user-agent": "crypto-signal-monitor/v3.3.1",
         }
         self._session = requests.Session()
         self._lock = threading.Lock()

@@ -1,4 +1,4 @@
-"""v3.3.0 full-pool volume-priority flash scan.
+"""v3.3.1 full-pool volume-priority flash scan.
 
 A single LCW map response supplies fresh rate, rolling 24h volume and market cap
 for every configured coin. Persisted five-minute observations turn that one
@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-STATE_VERSION = "flash-v330-volume-gap-r1"
+STATE_VERSION = "flash-v331-ranked-expansion-r2"
 WINDOWS = (10, 30, 60)
 WINDOW_WEIGHTS = {10: 0.20, 30: 0.65, 60: 0.15}
 
@@ -337,6 +337,20 @@ def _map_fallback_score(row: Mapping[str, Any], btc: Mapping[str, Any]) -> tuple
     return min(34.0, raw), direction
 
 
+def _directional_volume_price_axis(price_strength: float, volume_strength: float) -> float:
+    """Mirror the detail engine's signed volume/price pressure axis."""
+    price = float(price_strength)
+    volume = float(volume_strength)
+    if price <= -0.25:
+        if volume >= 0.0:
+            axis = -(0.70 * abs(price) + 0.85 * volume)
+        else:
+            axis = -(0.75 * abs(price) + 0.25 * abs(volume))
+    else:
+        axis = volume - price
+    return max(-4.0, min(4.0, axis))
+
+
 def _signal_for_coin(
     *,
     display: str,
@@ -376,7 +390,9 @@ def _signal_for_coin(
         price_strengths[window] = _trend_strength(price, price_baseline, _thresholds(config, "price", window))
         volume_strengths[window] = _trend_strength(volume, volume_baseline, _thresholds(config, "volume", window))
         if price_strengths[window] is not None and volume_strengths[window] is not None:
-            gaps[window] = float(volume_strengths[window]) - float(price_strengths[window])
+            gaps[window] = _directional_volume_price_axis(
+                float(price_strengths[window]), float(volume_strengths[window])
+            )
         else:
             gaps[window] = None
 

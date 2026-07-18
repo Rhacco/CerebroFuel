@@ -1,5 +1,5 @@
 {
-  "schema_version": "3.3.0",
+  "schema_version": "3.3.1",
   "reference_coin": "BTC",
   "groups": [
     {
@@ -15,38 +15,33 @@
         {
           "display": "SUI",
           "codes": [
-            "_SUI",
-            "SUI"
+            "_SUI"
           ]
         },
         {
           "display": "TAO",
           "codes": [
-            "____TAO",
-            "TAO"
+            "____TAO"
           ]
         },
         "UNI",
         {
           "display": "PEPE",
           "codes": [
-            "____PEPE",
-            "PEPE"
+            "____PEPE"
           ]
         },
         "RENDER",
         {
           "display": "TRUMP",
           "codes": [
-            "_______________________________TRUMP",
-            "TRUMP"
+            "_______________________________TRUMP"
           ]
         },
         {
           "display": "BONK",
           "codes": [
-            "__BONK",
-            "BONK"
+            "__BONK"
           ]
         },
         "WIF"
@@ -57,17 +52,14 @@
         {
           "display": "MEGA",
           "codes": [
-            "__________________MEGA",
-            "MEGA"
+            "__________________MEGA"
           ]
         },
         "W",
-        "KMNO",
         {
           "display": "ZKSYNC",
           "codes": [
-            "ZK",
-            "ZKSYNC"
+            "ZK"
           ]
         },
         "APE",
@@ -75,8 +67,7 @@
         {
           "display": "XPL",
           "codes": [
-            "_XPL",
-            "XPL"
+            "_XPL"
           ]
         },
         "OP",
@@ -88,16 +79,14 @@
         {
           "display": "ETHFI",
           "codes": [
-            "_ETHFI",
-            "ETHFI"
+            "_ETHFI"
           ]
         },
         "FET",
         {
           "display": "TIA",
           "codes": [
-            "_TIA",
-            "TIA"
+            "_TIA"
           ]
         },
         "INJ",
@@ -105,37 +94,69 @@
         {
           "display": "MORPHO",
           "codes": [
-            "_MORPHO",
-            "MORPHO"
+            "_MORPHO"
           ]
         },
         {
           "display": "WLD",
           "codes": [
-            "__WLD",
-            "WLD"
+            "__WLD"
           ]
         },
         "DOT",
         "AAVE",
         "ONDO",
-        "WLFI",
         "NEAR",
-        "BCH",
         {
           "display": "HYPE",
           "codes": [
-            "______HYPE",
-            "HYPE"
+            "______HYPE"
           ]
         }
+      ],
+      "name": "existing_priority_pool"
+    },
+    {
+      "name": "ranked_5x_10x",
+      "coins": [
+        "LTC",
+        "LINK",
+        "AVAX",
+        {
+          "display": "PENGU",
+          "codes": [
+            "_____PENGU"
+          ]
+        },
+        "ENA",
+        "ARB",
+        "APT",
+        "FIL",
+        {
+          "display": "FLOKI",
+          "codes": [
+            "_FLOKI"
+          ]
+        },
+        "ALGO",
+        "TRX"
+      ]
+    },
+    {
+      "name": "selected_3x",
+      "coins": [
+        "VIRTUAL",
+        "ORDI",
+        "PENDLE",
+        "RAY",
+        "SUSHI"
       ]
     }
   ],
   "currency": "USD",
   "timezone": "Europe/Berlin",
   "top_coin_count": 8,
-  "preselect_coin_count": 25,
+  "preselect_coin_count": 24,
   "short_history_minutes": 720,
   "history_days": 126,
   "history_parallel_requests": 1,
@@ -207,7 +228,7 @@
   "temporal_axis_strong": 0.34,
   "temporal_confirmation_points": 3,
   "seasonality_lookback_days": 300,
-  "quality_revision": "complete-weeks-pool-neutral-r1",
+  "quality_revision": "complete-weeks-pool-neutral-r2-ranked",
   "temporal_guard_threshold": 0.1,
   "daily_history_days": 300,
   "weekday_enter_confirmations": 2,
@@ -226,10 +247,10 @@
   "exit_red_collapse": 66.0,
   "exit_red_memory": 42.0,
   "exit_red_score": 68.0,
-  "max_short_detail_requests": 26,
+  "max_short_detail_requests": 25,
   "flash_retention_minutes": 780,
-  "flash_snapshot_version": "flash-v330-volume-gap-r1",
-  "volume_priority_revision": "volume-gap-30m-r1",
+  "flash_snapshot_version": "flash-v331-ranked-expansion-r2",
+  "volume_priority_revision": "volume-gap-30m-ranked-expansion-r2",
   "primary_gap_window_minutes": 30,
   "volume_windows_minutes": [
     10,
@@ -246,5 +267,97 @@
   "btc_relative_windows": [
     "24h",
     "7d"
-  ]
+  ],
+  "coin_universe_revision": "ranked-5x10x-3x-r2",
+  "coin_selection": {
+    "mandatory_kept": [
+      "MEGA",
+      "PUMP",
+      "JTO",
+      "ZKSYNC"
+    ],
+    "required_active": [
+      "MEGA",
+      "PUMP",
+      "JTO",
+      "ZKSYNC",
+      "LTC",
+      "LINK",
+      "AVAX",
+      "PENGU",
+      "ENA",
+      "ARB",
+      "APT",
+      "FIL",
+      "FLOKI",
+      "ALGO",
+      "TRX",
+      "VIRTUAL",
+      "ORDI",
+      "PENDLE",
+      "RAY",
+      "SUSHI"
+    ],
+    "new_5x_10x_ranking": [
+      "LTC",
+      "LINK",
+      "AVAX",
+      "PENGU",
+      "ENA",
+      "ARB",
+      "APT",
+      "FIL",
+      "FLOKI",
+      "ALGO",
+      "TRX",
+      "SHIB",
+      "ETC",
+      "CFX",
+      "XDC"
+    ],
+    "added_5x_10x_ranked": [
+      "LTC",
+      "LINK",
+      "AVAX",
+      "PENGU",
+      "ENA",
+      "ARB",
+      "APT",
+      "FIL",
+      "FLOKI",
+      "ALGO",
+      "TRX"
+    ],
+    "reserve_5x_10x": [
+      "SHIB",
+      "ETC"
+    ],
+    "rejected_5x_10x": [
+      "CFX",
+      "XDC"
+    ],
+    "added_3x_ranked": [
+      "VIRTUAL",
+      "ORDI",
+      "PENDLE",
+      "RAY",
+      "SUSHI"
+    ],
+    "observe_only_3x": [
+      "JUP",
+      "JASMY",
+      "TURBO",
+      "TRB",
+      "ZEC",
+      "KAS",
+      "DYDX",
+      "RUNE"
+    ],
+    "removed": [
+      "WLFI",
+      "BCH",
+      "KMNO"
+    ],
+    "reason": "ranked-volume-liquidity-volatility-fit-with-bounded-detail-budget"
+  }
 }

@@ -1,4 +1,4 @@
-"""Entry point for crypto-signal-monitor v3.3.0 volume-priority ranking."""
+"""Entry point for crypto-signal-monitor v3.3.1 volume-priority ranking."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ from daily_context import (
 )
 from discord_sender import send_discord
 from lcw_client import LiveCoinWatchClient
-from flash_state import update_and_score
+from flash_state import STATE_VERSION as FLASH_STATE_VERSION, update_and_score
 from ranking_context import (
     btc_performance_context,
     combined_priority,
@@ -42,7 +42,7 @@ from ranking_context import (
     small_cap_bonuses,
 )
 
-APP_VERSION = "3.3.0"
+APP_VERSION = "3.3.1"
 ROOT = Path(__file__).resolve().parent
 DAILY_STATE_PATH = ROOT / ".cache" / "seasonality" / "state.json"
 CHANGED_FLAG = ROOT / ".cache" / "seasonality" / "changed.flag"
@@ -56,6 +56,18 @@ def load_config(path: Path) -> dict[str, Any]:
     missing = [key for key in required if key not in config]
     if missing:
         raise ValueError(f"Fehlende config.json-Felder: {', '.join(missing)}")
+    if str(config.get("schema_version")) != APP_VERSION:
+        raise ValueError(
+            f"config.json schema_version={config.get('schema_version')!r}, erwartet {APP_VERSION}."
+        )
+    if str(config.get("quality_revision")) != STATE_REVISION:
+        raise ValueError(
+            f"config.json quality_revision={config.get('quality_revision')!r}, erwartet {STATE_REVISION}."
+        )
+    if str(config.get("flash_snapshot_version")) != FLASH_STATE_VERSION:
+        raise ValueError(
+            "config.json flash_snapshot_version stimmt nicht mit flash_state.py überein."
+        )
     return config
 
 
@@ -98,17 +110,33 @@ def parse_layout(
 ) -> tuple[tuple[str, tuple[str, ...]], list[tuple[str, tuple[str, ...]]]]:
     reference = parse_coin(config["reference_coin"])
     pool: list[tuple[str, tuple[str, ...]]] = []
-    seen = {reference[0]}
+    seen_displays = {reference[0]}
+    seen_codes = {code: reference[0] for code in reference[1]}
     for group in config["groups"]:
         items = group.get("coins") if isinstance(group, dict) else group
         if not isinstance(items, list):
             raise ValueError("Jede Gruppe benötigt eine Liste 'coins'.")
         for item in items:
             display, codes = parse_coin(item)
-            if display in seen:
-                continue
-            seen.add(display)
+            if display in seen_displays:
+                raise ValueError(f"Doppelter Coin-Anzeigename in config.json: {display}")
+            for code in codes:
+                owner = seen_codes.get(code)
+                if owner is not None:
+                    raise ValueError(f"LCW-Code {code} ist doppelt belegt: {owner} und {display}")
+                seen_codes[code] = display
+            seen_displays.add(display)
             pool.append((display, codes))
+
+    selection = config.get("coin_selection")
+    mandatory = selection.get("mandatory_kept", []) if isinstance(selection, dict) else []
+    required_active = selection.get("required_active", []) if isinstance(selection, dict) else []
+    required = list(dict.fromkeys(
+        str(name).upper() for name in [*mandatory, *required_active] if str(name).strip()
+    ))
+    missing_required = [name for name in required if name not in seen_displays]
+    if missing_required:
+        raise ValueError("Verbindliche aktive Coins fehlen: " + ", ".join(missing_required))
     return reference, pool
 
 
@@ -214,9 +242,9 @@ def _log_weekday_context(display: str, context: Mapping[str, Any]) -> None:
 
 
 def prepare_daily_context(config: dict[str, Any], api_key: str) -> int:
-    """Prepare the exact v3.3.0 daily cache before any Discord message.
+    """Prepare the exact v3.3.1 ranked-expansion daily cache before any Discord message.
 
-    A current v3.2.7 cache is migrated locally from its stored raw histories.
+    A current v3.3.0/v3.2.7 cache is migrated from stored raw histories; only newly added coins are bootstrapped.
     No long LCW requests are needed for that migration. On later calendar days,
     cached histories are updated with one recent request per existing coin.
     """
@@ -237,7 +265,7 @@ def prepare_daily_context(config: dict[str, Any], api_key: str) -> int:
     )
     if exact:
         print(
-            f"Tageskontext {today}: exakter v3.3.0-Cache, 0 Langzeitabfragen "
+            f"Tageskontext {today}: exakter v3.3.1-Cache, 0 Langzeitabfragen "
             f"({len(expected)} Coins)."
         )
         _set_changed(False)
@@ -448,6 +476,7 @@ def _build_short_for_pair(
 
 def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_send: bool) -> int:
     reference_pair, pool_pairs = parse_layout(config)
+    print(f"Coin-Universum {config.get('coin_universe_revision', 'unbekannt')}: {len(pool_pairs)} Altcoins + BTC; Detailziel={int(config.get('preselect_coin_count', 24))}.")
     now = datetime.now(timezone.utc)
     now_ms = int(now.timestamp() * 1000)
     today = local_day_key(now, str(config.get("timezone", "Europe/Berlin")))
