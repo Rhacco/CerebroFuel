@@ -1,73 +1,122 @@
-# Krypto-Monitor v3.3.1 – Ranked Volume Priority
+# Krypto-Monitor v3.3.2 – Expanded Two-Tail Flash + Unlock Risk
 
 `Kreis Zahl Richtung 7 B24 B7 P V10/V30/V60 N Tage Coin/Minute`
 
-## Verbindliche Bestandteile
+## Aktiver Pool
 
-`MEGA`, `PUMP`, `JTO` und `ZKSYNC` bleiben zwingend im aktiven Pool. Der Programmstart prüft zusätzlich alle direkt ausgewählten Ranglisten-Coins; fehlt einer davon in `config.json`, wird der Lauf vor API-Abfragen und vor einem Discord-Versand abgebrochen.
+BTC bleibt Referenz. Aktiv sind **60 eindeutige Altcoins**:
 
-## Neue 5x-/10x-Coins – Rangliste
+1. die Top 10 nach 30-Tage-Volumen/Market-Cap aus 3x,
+2. die Top 10 aus 5x,
+3. die Top 10 aus 10x,
+4. alle zusätzlichen Fast-Swing-Screenshot-Coins,
+5. 21 wiederaufgenommene liquide, volatile oder für Marktbreite nützliche Coins.
 
-| Rang | Coin | Hebel | Entscheidung |
-|---:|---|---:|---|
-| 1 | Litecoin (`LTC`) | 10x | direkt aktiv |
-| 2 | Chainlink (`LINK`) | 10x | direkt aktiv |
-| 3 | Avalanche (`AVAX`) | 5x | direkt aktiv |
-| 4 | Pudgy Penguins (`PENGU`) | 5x | direkt aktiv, Ereignisabzug |
-| 5 | Ethena (`ENA`) | 5x | direkt aktiv, starker Unlock-Abzug |
-| 6 | Arbitrum (`ARB`) | 5x | direkt aktiv, Unlock-Filter |
-| 7 | Aptos (`APT`) | 5x | direkt aktiv, Unlock-Filter |
-| 8 | Filecoin (`FIL`) | 5x | direkt aktiv |
-| 9 | FLOKI (`FLOKI`) | 5x | direkt aktiv, volatiler Kandidat |
-| 10 | Algorand (`ALGO`) | 5x | direkt aktiv, testweise |
-| 11 | Tron (`TRX`) | 5x | direkt aktiv, ruhiger 24/7-Vergleich |
-| 12 | Shiba Inu (`SHIB`) | 5x | Reserve, nicht im aktiven Pool |
-| 13 | Ethereum Classic (`ETC`) | 5x | Reserve, nicht im aktiven Pool |
-| 14 | Conflux (`CFX`) | 5x | nicht aufnehmen |
-| 15 | XDC Network (`XDC`) | 5x | nicht aufnehmen |
+### Top 10 – 3x
+`ARKM, MON, BOME, GALA, ORDI, TRB, KAITO, MOODENG, BIO, PNUT`
 
-Die elf direkt empfohlenen 5x-/10x-Coins sind vollständig in `groups/ranked_5x_10x` eingetragen. Die gesamte Reihenfolge bleibt zusätzlich maschinenlesbar unter `coin_selection.new_5x_10x_ranking` erhalten.
+### Top 10 – 5x
+`MEGA, W, XPL, FET, INJ, ENA, AAVE, OP, ARB, CRV`
 
-## Strenge 3x-Auswahl
+### Top 10 – 10x
+`TRUMP, WIF, PEPE, BONK, SUI, UNI, TAO, LTC, DOGE, ADA`
 
-Direkt aktiv sind `VIRTUAL`, `ORDI`, `PENDLE`, `RAY` und `SUSHI`. Die schwächeren bisherigen Zwischenkandidaten `JASMY`, `ZEC` und `BOME` wurden nicht als Detailkandidaten übernommen. Beobachtungskandidaten bleiben in `coin_selection.observe_only_3x` dokumentiert, verbrauchen aber keine zusätzlichen regulären Detailplätze.
+### Zusätzliche Fast-Swing-Screenshot-Coins
+`IO, RAY, S, ATH, SUSHI, APE, FARTCOIN, ZETA, SEI`
 
-## LCW-Code-Sicherheit
+`MOODENG` war ebenfalls im Screenshot, steht aber bereits in der 3x-Top-10 und wird nicht doppelt geführt.
 
-Mehrdeutige Symbole verwenden feste geprüfte Primärcodes:
+### Wiederaufgenommene 21 Coins
+`HYPE, AVAX, NEAR, ONDO, DOT, WLD, MORPHO, FIL, PENGU, ETHFI, TIA, LDO, PYTH, JTO, FLOKI, ZKSYNC, KMNO, ETH, SOL, XLM, RENDER`
+
+Diese 21 Coins werden verbindlich unter `coin_selection.required_active` geprüft. Die Top-10-Grenze dient nur noch als Startpriorität, nicht mehr als harte Poolgrenze.
+
+## LCW-Identifier
+
+Mehrdeutige Coins verwenden feste, bereits aus der vorherigen Projektfassung übernommene LCW-Codes:
 
 - `MEGA` → `__________________MEGA`
+- `MON` → `_________MON`
+- `XPL` → `_XPL`
+- `TRUMP` → `_______________________________TRUMP`
+- `PEPE` → `____PEPE`
+- `BONK` → `__BONK`
+- `SUI` → `_SUI`
+- `TAO` → `____TAO`
+- `IO` → `_IO`
+- `ATH` → `____________ATH`
+- `BIO` → `__BIO`
+- `PNUT` → `_PNUT`
+- `ZETA` → `_ZETA`
+- `HYPE` → `______HYPE`
+- `WLD` → `__WLD`
+- `MORPHO` → `_MORPHO`
 - `PENGU` → `_____PENGU`
+- `ETHFI` → `_ETHFI`
+- `TIA` → `_TIA`
 - `FLOKI` → `_FLOKI`
 - `ZKSYNC` → `ZK`
-- bestehende Sondercodes für `SUI`, `TAO`, `PEPE`, `BONK`, `ETHFI`, `TIA`, `MORPHO`, `TRUMP`, `WLD`, `HYPE` und `XPL` bleiben erhalten.
 
-Die Discord-Aliase bleiben eindeutig und lesbar mit drei Zeichen; unter anderem `W` → `WRM`, `OP` → `OPT`, `ZKSYNC` → `ZKS`, `JTO` → `JTO`.
+Alle Discord-Aliase sind feste, eindeutige Drei-Zeichen-Namen.
 
-Es werden für diese mehrdeutigen Coins keine unsicheren Standard-Fallbacks verwendet. Ein nicht aufgelöster Coin wird protokolliert, statt versehentlich ein gleichnamiges Asset auszuwerten.
+## Flash-Score mit zwei Ausschlägen
 
-## Signalprioritäten
+Der erste Discord-Kreis und die Top-8-Auswahl beruhen auf einer **signierten Volumen-/Kursschere**, primär über 30 Minuten und bestätigt durch 10 und 60 Minuten:
 
-1. Wichtigster Faktor bleibt die richtungsbewusste 30-Minuten-Volumen-/Kursschere. Stabiler Kurs plus steigendes Volumen ist positiv; fallender Kurs plus steigendes Volumen ist negative Verkaufsbestätigung.
-2. `V10/V30/V60` zeigen den Trend des rollierenden LCW-24h-Volumens.
-3. `7` ergänzt den Sieben-Tage-Volumentrend.
-4. Kleine Market Cap und hohe Volatilität bleiben begrenzte Bonusfaktoren.
-5. `N` zeigt Crash-Stabilisierung beziehungsweise einen weiterlaufenden Crash.
-6. `B24 B7` vergleichen die Kursperformance mit BTC über 24 Stunden und sieben Tage.
+- **positiv:** Der Volumentrend ragt zunehmend über den Kurstrend, während der Kurs mindestens halbwegs stabil ist → `🔵`, `🟢`, `🟣`
+- **negativ:** Der Volumentrend bleibt zunehmend unter dem Kurstrend → `🟠`, `🔴`
+- **fallendes Messer:** Fallender Kurs plus steigendes Volumen gilt als bestätigter Verkaufsdruck und niemals als Akkumulation
+- kleine beziehungsweise widersprüchliche Scheren bleiben `🟡`
 
-## Vollpool, Details und Credits
+Schwellen: positiv 24/50/76 Punkte; negativ 24/68 Punkte. Die Farbe beschreibt die Richtung, die Zahl die Stärke. Positive und negative Ausschläge konkurrieren gemeinsam um die acht sichtbaren Plätze.
 
-Alle aktiven Altcoins werden mit einer gemeinsamen LCW-Map-Abfrage und den gespeicherten Fünf-Minuten-Snapshots geprüft. Die Erweiterung erhöht daher die reguläre Zahl teurer Kurzzeithistorien nicht:
+## Unlock-Abzüge
 
+Unlock-Risiken verändern **nur die Ranglistenpriorität**, niemals die tatsächlich beobachtete Signalfarbe. Ein sehr starker Marktimpuls bleibt also sichtbar, wird bei naher Verwässerung aber vorsichtiger einsortiert.
+
+Der Abzug besteht aus:
+
+- einem datumsabhängigen Anteil bei nahen Cliff-Ereignissen,
+- einem begrenzten strukturellen Anteil bei laufender linearer Freigabe oder Inflation,
+- einem Nachlauf unmittelbar nach dem Ereignis.
+
+### Nahe oder konkrete Ereignisse
+
+- `W` – 24.07.2026, Core Contributors
+- `XPL` – 25.07.2026, Ecosystem and Growth
+- `KMNO` – 30.07.2026, Core Contributors
+- `SUI` und `ZETA` – 01.08.2026
+- `ENA` – 02.08.2026
+- `HYPE` – 06.08.2026, Core Contributors
+- `AVAX` – 10.08.2026, Foundation
+- `ARB` – 16.08.2026
+- `ZKSYNC` – 17.08.2026, Investors
+- `KAITO` – 20.08.2026
+- `OP` – 11.10.2026
+- `MON` – 24.11.2026
+- `ONDO` – 18.01.2027
+- `PYTH` – 19.05.2027
+
+### Strukturelle Abzüge ohne nahen Cliff
+
+`ATH, WLD, PENGU, TIA, MORPHO, RENDER`
+
+JTO, LDO und ETHFI erhalten derzeit keinen relevanten Cliff-Abzug, weil ihre klassischen Vesting-Zeitpläne laut geprüfter Quelle weitgehend beziehungsweise vollständig abgeschlossen sind.
+
+Alle Quellen, Daten, Empfänger und Basisabzüge stehen maschinenlesbar in `config.json` unter `unlock_risk.events`. Datenstand: 22.07.2026.
+
+## Credits und Caches
+
+- Vollpoolprüfung aller 60 Altcoins: eine gemeinsame LCW-Map-Abfrage
 - Detailziel: 24 Altcoins
 - harter Detaildeckel: 25 Altcoins
-- regulär: `1 Map + BTC + 24 Coin-Historien ≈ 26 Requests`
-- maximal ohne zusätzlichen BTC-Retry: `1 Map + BTC + 25 Coin-Historien ≈ 27 Requests`
+- Top-Ausgabe: BTC plus acht Altcoins
+- neue Coins können durch den Vollpool-Flash sofort in die Detailauswahl steigen
+- Flash-Cache bleibt mit der bisherigen v3.3.2 sowie v3.3.1/v3.3.0/v3.2.9 kompatibel
+- Tagescache übernimmt vorhandene Rohhistorien; nur neu hinzugefügte Coins benötigen einen einmaligen Langzeitaufbau
 
-Nur die nach Vollpool-Snapshot, 30-Minuten-Schere und begrenzten Zusatzfaktoren stärksten Kandidaten erhalten eine Detailhistorie. Neue Coins benötigen einmalig Tageshistorie und anschließend 10/30/60 Minuten Flash-Aufwärmung.
+Der größere Pool führt nicht automatisch zu 60 teuren Kurzzeithistorien. Der gemeinsame Map-Snapshot bewertet alle Coins günstig; nur die auffälligsten Kandidaten erhalten Detailanfragen.
 
-## Cache-Migration und Versand-Sicherheit
+## Wichtige Grenze
 
-Die Workflow-Restore-Reihenfolge übernimmt weiterhin `seasonality-v330-`, `flash-v330-` und `flash-v329-`. Vorhandene Rohhistorien und Snapshot-Punkte werden wiederverwendet; fehlende neue Coins werden gezielt ergänzt. Der Tageskontext wird mit der Revision `complete-weeks-pool-neutral-r2-ranked` vollständig berechnet und gespeichert, bevor Discord ausgeführt wird.
-
-Cloudflare-Zeitplan, Secrets und Discord-Format bleiben unverändert.
+Syntax, Konfiguration, Formeln, Cache-Migration und simulierte Signale können lokal geprüft werden. Die endgültige Auflösung aller LCW-Identifier und die reale Datenverfügbarkeit lassen sich ohne privaten LCW-Key erst im ersten GitHub-Produktionslauf bestätigen.

@@ -1,53 +1,39 @@
 {
-  "schema_version": "3.3.1",
+  "schema_version": "3.3.2",
   "reference_coin": "BTC",
   "groups": [
     {
+      "name": "top_3x_turnover",
       "coins": [
-        "ETH",
-        "BNB",
-        "XRP",
-        "SOL",
-        "DOGE",
-        "XLM",
-        "ADA",
-        "HBAR",
+        "ARKM",
         {
-          "display": "SUI",
+          "display": "MON",
           "codes": [
-            "_SUI"
+            "_________MON"
+          ]
+        },
+        "BOME",
+        "GALA",
+        "ORDI",
+        "TRB",
+        "KAITO",
+        "MOODENG",
+        {
+          "display": "BIO",
+          "codes": [
+            "__BIO"
           ]
         },
         {
-          "display": "TAO",
+          "display": "PNUT",
           "codes": [
-            "____TAO"
+            "_PNUT"
           ]
-        },
-        "UNI",
-        {
-          "display": "PEPE",
-          "codes": [
-            "____PEPE"
-          ]
-        },
-        "RENDER",
-        {
-          "display": "TRUMP",
-          "codes": [
-            "_______________________________TRUMP"
-          ]
-        },
-        {
-          "display": "BONK",
-          "codes": [
-            "__BONK"
-          ]
-        },
-        "WIF"
+        }
       ]
     },
     {
+      "name": "top_5x_turnover",
       "coins": [
         {
           "display": "MEGA",
@@ -57,99 +43,153 @@
         },
         "W",
         {
-          "display": "ZKSYNC",
-          "codes": [
-            "ZK"
-          ]
-        },
-        "APE",
-        "FARTCOIN",
-        {
           "display": "XPL",
           "codes": [
             "_XPL"
           ]
         },
-        "OP",
-        "LDO",
-        "PYTH",
-        "JTO",
-        "CRV",
-        "SEI",
-        {
-          "display": "ETHFI",
-          "codes": [
-            "_ETHFI"
-          ]
-        },
         "FET",
-        {
-          "display": "TIA",
-          "codes": [
-            "_TIA"
-          ]
-        },
         "INJ",
-        "PUMP",
+        "ENA",
+        "AAVE",
+        "OP",
+        "ARB",
+        "CRV"
+      ]
+    },
+    {
+      "name": "top_10x_turnover",
+      "coins": [
         {
-          "display": "MORPHO",
+          "display": "TRUMP",
           "codes": [
-            "_MORPHO"
+            "_______________________________TRUMP"
           ]
         },
+        "WIF",
+        {
+          "display": "PEPE",
+          "codes": [
+            "____PEPE"
+          ]
+        },
+        {
+          "display": "BONK",
+          "codes": [
+            "__BONK"
+          ]
+        },
+        {
+          "display": "SUI",
+          "codes": [
+            "_SUI"
+          ]
+        },
+        "UNI",
+        {
+          "display": "TAO",
+          "codes": [
+            "____TAO"
+          ]
+        },
+        "LTC",
+        "DOGE",
+        "ADA"
+      ]
+    },
+    {
+      "name": "fast_swing_screenshot_additions",
+      "coins": [
+        {
+          "display": "IO",
+          "codes": [
+            "_IO"
+          ]
+        },
+        "RAY",
+        "S",
+        {
+          "display": "ATH",
+          "codes": [
+            "____________ATH"
+          ]
+        },
+        "SUSHI",
+        "APE",
+        "FARTCOIN",
+        {
+          "display": "ZETA",
+          "codes": [
+            "_ZETA"
+          ]
+        },
+        "SEI"
+      ]
+    },
+    {
+      "name": "restored_liquid_fast_swing",
+      "coins": [
+        {
+          "display": "HYPE",
+          "codes": [
+            "______HYPE"
+          ]
+        },
+        "AVAX",
+        "NEAR",
+        "ONDO",
+        "DOT",
         {
           "display": "WLD",
           "codes": [
             "__WLD"
           ]
         },
-        "DOT",
-        "AAVE",
-        "ONDO",
-        "NEAR",
         {
-          "display": "HYPE",
+          "display": "MORPHO",
           "codes": [
-            "______HYPE"
+            "_MORPHO"
           ]
-        }
-      ],
-      "name": "existing_priority_pool"
-    },
-    {
-      "name": "ranked_5x_10x",
-      "coins": [
-        "LTC",
-        "LINK",
-        "AVAX",
+        },
+        "FIL",
         {
           "display": "PENGU",
           "codes": [
             "_____PENGU"
           ]
         },
-        "ENA",
-        "ARB",
-        "APT",
-        "FIL",
+        {
+          "display": "ETHFI",
+          "codes": [
+            "_ETHFI"
+          ]
+        },
+        {
+          "display": "TIA",
+          "codes": [
+            "_TIA"
+          ]
+        },
+        "LDO",
+        "PYTH",
+        "JTO",
         {
           "display": "FLOKI",
           "codes": [
             "_FLOKI"
           ]
         },
-        "ALGO",
-        "TRX"
-      ]
-    },
-    {
-      "name": "selected_3x",
-      "coins": [
-        "VIRTUAL",
-        "ORDI",
-        "PENDLE",
-        "RAY",
-        "SUSHI"
+        {
+          "display": "ZKSYNC",
+          "codes": [
+            "ZK"
+          ]
+        },
+        "KMNO",
+        "ETH",
+        "SOL",
+        "XLM",
+        "RENDER"
       ]
     }
   ],
@@ -228,7 +268,7 @@
   "temporal_axis_strong": 0.34,
   "temporal_confirmation_points": 3,
   "seasonality_lookback_days": 300,
-  "quality_revision": "complete-weeks-pool-neutral-r2-ranked",
+  "quality_revision": "complete-weeks-pool-neutral-r2-v332",
   "temporal_guard_threshold": 0.1,
   "daily_history_days": 300,
   "weekday_enter_confirmations": 2,
@@ -249,8 +289,8 @@
   "exit_red_score": 68.0,
   "max_short_detail_requests": 25,
   "flash_retention_minutes": 780,
-  "flash_snapshot_version": "flash-v331-ranked-expansion-r2",
-  "volume_priority_revision": "volume-gap-30m-ranked-expansion-r2",
+  "flash_snapshot_version": "flash-v332-two-tail-unlock-r1",
+  "volume_priority_revision": "two-tail-gap-falling-knife-unlock-r1",
   "primary_gap_window_minutes": 30,
   "volume_windows_minutes": [
     10,
@@ -268,96 +308,359 @@
     "24h",
     "7d"
   ],
-  "coin_universe_revision": "ranked-5x10x-3x-r2",
+  "coin_universe_revision": "top10-screenshots-plus-restored21-r2",
   "coin_selection": {
-    "mandatory_kept": [
-      "MEGA",
-      "PUMP",
-      "JTO",
-      "ZKSYNC"
-    ],
     "required_active": [
-      "MEGA",
-      "PUMP",
-      "JTO",
-      "ZKSYNC",
-      "LTC",
-      "LINK",
-      "AVAX",
-      "PENGU",
-      "ENA",
-      "ARB",
-      "APT",
-      "FIL",
-      "FLOKI",
-      "ALGO",
-      "TRX",
-      "VIRTUAL",
+      "ARKM",
+      "MON",
+      "BOME",
+      "GALA",
       "ORDI",
-      "PENDLE",
-      "RAY",
-      "SUSHI"
-    ],
-    "new_5x_10x_ranking": [
-      "LTC",
-      "LINK",
-      "AVAX",
-      "PENGU",
-      "ENA",
-      "ARB",
-      "APT",
-      "FIL",
-      "FLOKI",
-      "ALGO",
-      "TRX",
-      "SHIB",
-      "ETC",
-      "CFX",
-      "XDC"
-    ],
-    "added_5x_10x_ranked": [
-      "LTC",
-      "LINK",
-      "AVAX",
-      "PENGU",
-      "ENA",
-      "ARB",
-      "APT",
-      "FIL",
-      "FLOKI",
-      "ALGO",
-      "TRX"
-    ],
-    "reserve_5x_10x": [
-      "SHIB",
-      "ETC"
-    ],
-    "rejected_5x_10x": [
-      "CFX",
-      "XDC"
-    ],
-    "added_3x_ranked": [
-      "VIRTUAL",
-      "ORDI",
-      "PENDLE",
-      "RAY",
-      "SUSHI"
-    ],
-    "observe_only_3x": [
-      "JUP",
-      "JASMY",
-      "TURBO",
       "TRB",
-      "ZEC",
-      "KAS",
-      "DYDX",
-      "RUNE"
+      "KAITO",
+      "MOODENG",
+      "BIO",
+      "PNUT",
+      "MEGA",
+      "W",
+      "XPL",
+      "FET",
+      "INJ",
+      "ENA",
+      "AAVE",
+      "OP",
+      "ARB",
+      "CRV",
+      "TRUMP",
+      "WIF",
+      "PEPE",
+      "BONK",
+      "SUI",
+      "UNI",
+      "TAO",
+      "LTC",
+      "DOGE",
+      "ADA",
+      "IO",
+      "RAY",
+      "S",
+      "ATH",
+      "SUSHI",
+      "APE",
+      "FARTCOIN",
+      "ZETA",
+      "SEI",
+      "HYPE",
+      "AVAX",
+      "NEAR",
+      "ONDO",
+      "DOT",
+      "WLD",
+      "MORPHO",
+      "FIL",
+      "PENGU",
+      "ETHFI",
+      "TIA",
+      "LDO",
+      "PYTH",
+      "JTO",
+      "FLOKI",
+      "ZKSYNC",
+      "KMNO",
+      "ETH",
+      "SOL",
+      "XLM",
+      "RENDER"
     ],
-    "removed": [
-      "WLFI",
-      "BCH",
-      "KMNO"
+    "top_3x": [
+      "ARKM",
+      "MON",
+      "BOME",
+      "GALA",
+      "ORDI",
+      "TRB",
+      "KAITO",
+      "MOODENG",
+      "BIO",
+      "PNUT"
     ],
-    "reason": "ranked-volume-liquidity-volatility-fit-with-bounded-detail-budget"
+    "top_5x": [
+      "MEGA",
+      "W",
+      "XPL",
+      "FET",
+      "INJ",
+      "ENA",
+      "AAVE",
+      "OP",
+      "ARB",
+      "CRV"
+    ],
+    "top_10x": [
+      "TRUMP",
+      "WIF",
+      "PEPE",
+      "BONK",
+      "SUI",
+      "UNI",
+      "TAO",
+      "LTC",
+      "DOGE",
+      "ADA"
+    ],
+    "screenshot_top15": [
+      "MEGA",
+      "W",
+      "ARKM",
+      "MON",
+      "XPL",
+      "TRUMP",
+      "BOME",
+      "GALA",
+      "ORDI",
+      "TRB",
+      "KAITO",
+      "FET",
+      "MOODENG",
+      "WIF",
+      "BIO"
+    ],
+    "fast_swing_screenshot": [
+      "IO",
+      "RAY",
+      "S",
+      "ATH",
+      "MOODENG",
+      "SUSHI",
+      "APE",
+      "FARTCOIN",
+      "ZETA",
+      "SEI"
+    ],
+    "unique_altcoin_count": 60,
+    "reason": "top-10-per-leverage-plus-screenshot-fast-swing-plus-21-restored-liquid-candidates",
+    "restored_liquid_fast_swing": [
+      "HYPE",
+      "AVAX",
+      "NEAR",
+      "ONDO",
+      "DOT",
+      "WLD",
+      "MORPHO",
+      "FIL",
+      "PENGU",
+      "ETHFI",
+      "TIA",
+      "LDO",
+      "PYTH",
+      "JTO",
+      "FLOKI",
+      "ZKSYNC",
+      "KMNO",
+      "ETH",
+      "SOL",
+      "XLM",
+      "RENDER"
+    ]
+  },
+  "falling_knife_pct": {
+    "10": -0.18,
+    "30": -0.3,
+    "60": -0.55
+  },
+  "flash_two_tail": {
+    "positive_blue": 24.0,
+    "positive_green": 50.0,
+    "positive_purple": 76.0,
+    "negative_orange": 24.0,
+    "negative_red": 68.0,
+    "description": "positive only when price is stable; negative when volume underperforms price or confirms a falling knife"
+  },
+  "unlock_risk": {
+    "enabled": true,
+    "maximum_penalty": 20.0,
+    "events": {
+      "W": {
+        "date": "2026-07-24",
+        "base_penalty": 19.0,
+        "structural_penalty": 7.0,
+        "risk": "very_high",
+        "recipient": "Core Contributors",
+        "source": "https://tokenomist.ai/wormhole/unlock-events"
+      },
+      "XPL": {
+        "date": "2026-07-25",
+        "base_penalty": 18.0,
+        "structural_penalty": 8.0,
+        "risk": "very_high",
+        "recipient": "Ecosystem and Growth",
+        "source": "https://tokenomist.ai/plasma/updates"
+      },
+      "SUI": {
+        "date": "2026-08-01",
+        "base_penalty": 17.0,
+        "structural_penalty": 9.0,
+        "risk": "very_high",
+        "recipient": "Community Reserve",
+        "source": "https://tokenomist.ai/sui/unlock-events"
+      },
+      "ZETA": {
+        "date": "2026-08-01",
+        "base_penalty": 14.0,
+        "structural_penalty": 5.0,
+        "risk": "high",
+        "recipient": "Core Contributors",
+        "source": "https://tokenomist.ai/zetachain/unlock-events"
+      },
+      "ENA": {
+        "date": "2026-08-02",
+        "base_penalty": 17.0,
+        "structural_penalty": 8.0,
+        "risk": "very_high",
+        "recipient": "Core Contributors",
+        "source": "https://tokenomist.ai/ethena/updates"
+      },
+      "ARB": {
+        "date": "2026-08-16",
+        "base_penalty": 12.0,
+        "structural_penalty": 5.0,
+        "risk": "high",
+        "recipient": "Arbitrum DAO Treasury",
+        "source": "https://tokenomist.ai/arbitrum/unlock-events"
+      },
+      "KAITO": {
+        "date": "2026-08-20",
+        "base_penalty": 16.0,
+        "structural_penalty": 9.0,
+        "risk": "very_high",
+        "recipient": "Core Contributors",
+        "source": "https://tokenomist.ai/kaito/unlock-events"
+      },
+      "OP": {
+        "date": "2026-10-11",
+        "base_penalty": 9.0,
+        "structural_penalty": 5.0,
+        "risk": "high",
+        "recipient": "Seed Fund",
+        "source": "https://tokenomist.ai/optimism/unlock-events"
+      },
+      "MON": {
+        "date": "2026-11-24",
+        "base_penalty": 7.0,
+        "structural_penalty": 4.0,
+        "risk": "medium",
+        "recipient": "Category Labs Treasury",
+        "source": "https://tokenomist.ai/monad/updates"
+      },
+      "ATH": {
+        "date": null,
+        "base_penalty": 0.0,
+        "structural_penalty": 3.0,
+        "risk": "medium",
+        "recipient": "linear emissions",
+        "source": "https://tokenomist.ai/aethir/unlock-events"
+      },
+      "HYPE": {
+        "date": "2026-08-06",
+        "base_penalty": 20.0,
+        "structural_penalty": 10.0,
+        "risk": "very_high",
+        "recipient": "Core Contributors",
+        "source": "https://tokenomist.ai/hyperliquid/unlock-events",
+        "note": "Only about 22.24% of total supply reported unlocked; cliff schedule into 2027."
+      },
+      "KMNO": {
+        "date": "2026-07-30",
+        "base_penalty": 18.0,
+        "structural_penalty": 9.0,
+        "risk": "very_high",
+        "recipient": "Core Contributors",
+        "source": "https://tokenomist.ai/kamino/unlock-events",
+        "note": "About 51.1% unlocked; cliff schedule into 2027."
+      },
+      "AVAX": {
+        "date": "2026-08-10",
+        "base_penalty": 11.0,
+        "structural_penalty": 4.0,
+        "risk": "high",
+        "recipient": "Foundation",
+        "source": "https://tokenomist.ai/avalanche-2/unlock-events",
+        "note": "About 59.97% unlocked; release schedule extends into 2030."
+      },
+      "ZKSYNC": {
+        "date": "2026-08-17",
+        "base_penalty": 17.0,
+        "structural_penalty": 9.0,
+        "risk": "very_high",
+        "recipient": "Investors",
+        "source": "https://tokenomist.ai/zksync/unlock-events",
+        "note": "About 47.5-48.1% unlocked; cliff schedule into 2028."
+      },
+      "ONDO": {
+        "date": "2027-01-18",
+        "base_penalty": 13.0,
+        "structural_penalty": 5.0,
+        "risk": "high",
+        "recipient": "Ecosystem Growth",
+        "source": "https://tokenomist.ai/ondo-finance/unlock-events",
+        "note": "About 48.69% unlocked; next known cliff is outside the 120-day ramp today."
+      },
+      "WLD": {
+        "date": null,
+        "base_penalty": 0.0,
+        "structural_penalty": 8.0,
+        "risk": "high",
+        "recipient": "linear community/team/investor release",
+        "source": "https://tokenomist.ai/worldcoin-wld/unlock-events",
+        "note": "No single upcoming cliff shown, but only about 35.5% of total supply is released and linear vesting extends to 2038."
+      },
+      "PENGU": {
+        "date": null,
+        "base_penalty": 0.0,
+        "structural_penalty": 4.0,
+        "risk": "medium",
+        "recipient": "remaining release mechanisms",
+        "source": "https://tokenomist.ai/pudgy-penguins/unlock-events",
+        "note": "About 70.72% released; remaining mechanisms extend into 2028."
+      },
+      "TIA": {
+        "date": null,
+        "base_penalty": 0.0,
+        "structural_penalty": 4.0,
+        "risk": "medium",
+        "recipient": "inflation and ongoing linear release",
+        "source": "https://tokenomist.ai/celestia/claim",
+        "note": "No near classic cliff; ongoing inflation/release pressure remains."
+      },
+      "MORPHO": {
+        "date": null,
+        "base_penalty": 0.0,
+        "structural_penalty": 3.0,
+        "risk": "medium",
+        "recipient": "linear DAO/founder/partner vesting",
+        "source": "https://tokenomist.ai/morpho/unlock-events",
+        "note": "About 65.5% released; linear vesting extends into 2029."
+      },
+      "PYTH": {
+        "date": "2027-05-19",
+        "base_penalty": 8.0,
+        "structural_penalty": 2.0,
+        "risk": "medium",
+        "recipient": "Ecosystem Growth",
+        "source": "https://tokenomist.ai/pyth-network/unlock-events",
+        "note": "About 78.75% released; event is far away and therefore only structural penalty applies today."
+      },
+      "RENDER": {
+        "date": null,
+        "base_penalty": 0.0,
+        "structural_penalty": 2.0,
+        "risk": "low",
+        "recipient": "inflation/release mechanisms",
+        "source": "https://tokenomist.ai/render-token/unlock-events",
+        "note": "No upcoming cliff shown; about 80.52% released with long-run mechanisms."
+      }
+    },
+    "as_of": "2026-07-22",
+    "method": "near cliff = dynamic; linear/ongoing release = bounded structural penalty; fully unlocked = no penalty"
   }
 }

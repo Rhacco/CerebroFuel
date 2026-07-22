@@ -1,4 +1,4 @@
-"""v3.3.1 full-pool volume-priority flash scan.
+"""v3.3.2 full-pool volume-priority flash scan.
 
 A single LCW map response supplies fresh rate, rolling 24h volume and market cap
 for every configured coin. Persisted five-minute observations turn that one
@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-STATE_VERSION = "flash-v331-ranked-expansion-r2"
+STATE_VERSION = "flash-v332-two-tail-unlock-r1"
 WINDOWS = (10, 30, 60)
 WINDOW_WEIGHTS = {10: 0.20, 30: 0.65, 60: 0.15}
 
@@ -337,19 +337,38 @@ def _map_fallback_score(row: Mapping[str, Any], btc: Mapping[str, Any]) -> tuple
     return min(34.0, raw), direction
 
 
+def _falling_knife_limits(config: Mapping[str, Any]) -> dict[int, float]:
+    defaults = {10: -0.18, 30: -0.30, 60: -0.55}
+    section = config.get("falling_knife_pct") if isinstance(config, Mapping) else None
+    if not isinstance(section, Mapping):
+        return defaults
+    result: dict[int, float] = {}
+    for window, fallback in defaults.items():
+        try:
+            result[window] = float(section.get(str(window), section.get(window, fallback)))
+        except (TypeError, ValueError):
+            result[window] = fallback
+    return result
+
+
 def _directional_volume_price_axis(price_strength: float, volume_strength: float) -> float:
-    """Mirror the detail engine's signed volume/price pressure axis."""
+    """Signed two-tail axis: volume minus price, with a falling-knife guard.
+
+    Positive values require a broadly stable price and volume clearly outrunning
+    price. A meaningfully falling price can never become a positive setup merely
+    because volume rises; that combination confirms selling pressure.
+    """
     price = float(price_strength)
     volume = float(volume_strength)
-    if price <= -0.25:
-        if volume >= 0.0:
-            axis = -(0.70 * abs(price) + 0.85 * volume)
-        else:
-            axis = -(0.75 * abs(price) + 0.25 * abs(volume))
+    if price <= -0.15:
+        confirming_volume = max(volume, 0.0)
+        volume_shortfall = max(price - volume, 0.0)
+        axis = -(0.68 * abs(price) + 0.88 * confirming_volume + 0.55 * volume_shortfall)
     else:
         axis = volume - price
+        if axis > 0.0 and price < -0.05:
+            axis *= max(0.0, min(1.0, (price + 0.15) / 0.10))
     return max(-4.0, min(4.0, axis))
-
 
 def _signal_for_coin(
     *,
@@ -404,6 +423,20 @@ def _signal_for_coin(
         if available else 0.0
     )
     primary_axis = float(gap30) if gap30 is not None else weighted_gap
+    knife_limits = _falling_knife_limits(config)
+    falling_windows = sum(
+        price_changes.get(window) is not None
+        and float(price_changes[window]) < knife_limits[window]
+        for window in WINDOWS
+    )
+    price30 = price_changes.get(30)
+    if primary_axis > 0.0:
+        if price30 is not None and float(price30) <= knife_limits[30]:
+            primary_axis = -max(abs(primary_axis) * 0.45, min(3.2, abs(float(price30)) / 0.30))
+        elif falling_windows >= 2:
+            primary_axis = -max(abs(primary_axis) * 0.35, 0.22)
+        elif price30 is not None and float(price30) < -0.08:
+            primary_axis *= _clamp((float(price30) - knife_limits[30]) / (-0.08 - knife_limits[30]))
     gap30_score = 100.0 * _clamp(abs(primary_axis) / 3.20)
     corroboration = sum(
         (100.0 * _clamp(abs(float(gaps[w])) / 3.20)) * WINDOW_WEIGHTS[w]

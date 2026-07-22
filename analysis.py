@@ -1,4 +1,4 @@
-# v3.3.1 volume-priority analysis engine
+# v3.3.2 volume-priority analysis engine
 """Volume-first crypto analysis with 30-minute divergence priority."""
 
 from __future__ import annotations
@@ -143,6 +143,9 @@ class CoinAnalysis:
     market_cap_bonus: float = 0.0
     volatility_bonus: float = 0.0
     recovery_bonus: float = 0.0
+    unlock_penalty: float = 0.0
+    unlock_risk: str = "none"
+    unlock_event_date: str | None = None
 
 
 @dataclass(frozen=True)
@@ -185,34 +188,66 @@ class TemporalContext:
 
 
 CODE_ALIASES = {
-    "NEAR": "NER",
-    "HBAR": "HBR",
-    "DOGE": "DGE",
-    "RENDER": "RND",
-    "ETHFI": "EFI",
-    "MORPHO": "MRP",
-    "FARTCOIN": "FRT",
-    "TRUMP": "TRP",
-    "MEGA": "MEG",
-    "PYTH": "PYT",
-    "AAVE": "AAV",
-    "ONDO": "OND",
-    "HYPE": "HYP",
-    "BONK": "BNK",
-    "PEPE": "PEP",
-    "PUMP": "PMP",
-    "W": "WRM",
-    "OP": "OPT",
-    "ZKSYNC": "ZKS",
-    "LINK": "LNK",
-    "AVAX": "AVX",
-    "PENGU": "PGU",
-    "FLOKI": "FLK",
-    "ALGO": "ALG",
-    "VIRTUAL": "VRT",
+    "ARKM": "ARK",
+    "MON": "MND",
+    "BOME": "BOM",
+    "GALA": "GAL",
     "ORDI": "ORD",
-    "PENDLE": "PND",
+    "TRB": "TRB",
+    "KAITO": "KAI",
+    "MOODENG": "MOO",
+    "BIO": "BIO",
+    "PNUT": "PNT",
+    "MEGA": "MEG",
+    "W": "WRM",
+    "XPL": "XPL",
+    "FET": "FET",
+    "INJ": "INJ",
+    "ENA": "ENA",
+    "AAVE": "AAV",
+    "OP": "OPT",
+    "ARB": "ARB",
+    "CRV": "CRV",
+    "TRUMP": "TRP",
+    "WIF": "WIF",
+    "PEPE": "PEP",
+    "BONK": "BNK",
+    "SUI": "SUI",
+    "UNI": "UNI",
+    "TAO": "TAO",
+    "LTC": "LTC",
+    "DOGE": "DGE",
+    "ADA": "ADA",
+    "IO": "ION",
+    "RAY": "RAY",
+    "S": "SNC",
+    "ATH": "ATH",
     "SUSHI": "SSH",
+    "APE": "APE",
+    "FARTCOIN": "FRT",
+    "ZETA": "ZET",
+    "SEI": "SEI",
+    "HYPE": "HYP",
+    "AVAX": "AVX",
+    "NEAR": "NER",
+    "ONDO": "OND",
+    "DOT": "DOT",
+    "WLD": "WLD",
+    "MORPHO": "MRP",
+    "FIL": "FIL",
+    "PENGU": "PGU",
+    "ETHFI": "EFI",
+    "TIA": "TIA",
+    "LDO": "LDO",
+    "PYTH": "PYT",
+    "JTO": "JTO",
+    "FLOKI": "FLK",
+    "ZKSYNC": "ZKS",
+    "KMNO": "KMN",
+    "ETH": "ETH",
+    "SOL": "SOL",
+    "XLM": "XLM",
+    "RENDER": "RND"
 }
 
 
@@ -1332,34 +1367,49 @@ def _recent_setup_scores(
     return surge, health, collapse, price_uncertainty, recent_positive_memory, entry, exit_score
 
 
-def _directional_volume_price_axis(price_strength: float, volume_strength: float) -> float:
-    """Return a signed trading-pressure axis for one window.
+def _falling_knife_limits(config: Mapping[str, Any]) -> dict[int, float]:
+    defaults = {10: -0.18, 30: -0.30, 60: -0.55}
+    section = config.get("falling_knife_pct") if isinstance(config, Mapping) else None
+    if not isinstance(section, Mapping):
+        return defaults
+    result: dict[int, float] = {}
+    for window, fallback in defaults.items():
+        try:
+            result[window] = float(section.get(str(window), section.get(window, fallback)))
+        except (TypeError, ValueError):
+            result[window] = fallback
+    return result
 
-    Stable/slightly rising price with stronger volume is positive accumulation.
-    Rising price without matching volume is negative distribution. Falling price
-    is never reclassified as accumulation: rising volume then confirms selling
-    pressure, while falling volume represents fading demand.
+
+def _directional_volume_price_axis(price_strength: float, volume_strength: float) -> float:
+    """Signed two-tail axis: volume minus price, with a falling-knife guard.
+
+    Positive values require a broadly stable price and volume clearly outrunning
+    price. A meaningfully falling price can never become a positive setup merely
+    because volume rises; that combination confirms selling pressure.
     """
     price = float(price_strength)
     volume = float(volume_strength)
-    if price <= -0.25:
-        if volume >= 0.0:
-            axis = -(0.70 * abs(price) + 0.85 * volume)
-        else:
-            axis = -(0.75 * abs(price) + 0.25 * abs(volume))
+    if price <= -0.15:
+        confirming_volume = max(volume, 0.0)
+        volume_shortfall = max(price - volume, 0.0)
+        axis = -(0.68 * abs(price) + 0.88 * confirming_volume + 0.55 * volume_shortfall)
     else:
         axis = volume - price
-    return _clamp(axis, -4.0, 4.0)
-
+        if axis > 0.0 and price < -0.05:
+            axis *= max(0.0, min(1.0, (price + 0.15) / 0.10))
+    return max(-4.0, min(4.0, axis))
 
 def _volume_divergence_metrics(
     *,
     price_strengths: Mapping[int, float | None],
     volume_strengths: Mapping[int, float | None],
+    price_changes: Mapping[int, float | None],
     volume_continuity: Mapping[int, float],
     window_quality: Mapping[int, str],
+    config: Mapping[str, Any],
 ) -> tuple[float | None, float, str]:
-    """Primary v3.3.1 signal: direction-aware volume/price pressure over 30m.
+    """Primary v3.3.2 signal: direction-aware volume/price pressure over 30m.
 
     The 10m and 60m windows only corroborate the dominant 30m axis. Falling
     price with rising volume is explicitly negative selling pressure rather than
@@ -1382,6 +1432,20 @@ def _volume_divergence_metrics(
         if usable else 0.0
     )
     axis = float(gap30) if gap30 is not None else weighted_gap
+    knife_limits = _falling_knife_limits(config)
+    falling_windows = sum(
+        price_changes.get(window) is not None
+        and float(price_changes[window]) < knife_limits[window]
+        for window in WINDOWS
+    )
+    price30 = price_changes.get(30)
+    if axis > 0.0:
+        if price30 is not None and float(price30) <= knife_limits[30]:
+            axis = -max(abs(axis) * 0.45, min(3.2, abs(float(price30)) / 0.30))
+        elif falling_windows >= 2:
+            axis = -max(abs(axis) * 0.35, 0.22)
+        elif price30 is not None and float(price30) < -0.08:
+            axis *= _clamp((float(price30) - knife_limits[30]) / (-0.08 - knife_limits[30]), 0.0, 1.0)
     primary = 100.0 * _clamp(abs(axis) / 3.20, 0.0, 1.0)
     corroboration = sum(
         100.0 * _clamp(abs(float(gaps[w])) / 3.20, 0.0, 1.0) * WINDOW_WEIGHTS[w]
@@ -1730,8 +1794,10 @@ def build_short_metrics(
     divergence_30, divergence_score, divergence_direction = _volume_divergence_metrics(
         price_strengths=price_strengths,
         volume_strengths=volume_strengths,
+        price_changes=price_changes,
         volume_continuity=volume_continuity,
         window_quality=window_quality,
+        config=config,
     )
     volatility_score = _recent_volatility_score(series, now_ms)
     recovery_score, recovery_color, recent_crash_pct = _crash_recovery_metrics(
@@ -1740,7 +1806,7 @@ def build_short_metrics(
         price_changes=price_changes,
         volume_strengths=volume_strengths,
     )
-    # v3.3.1: the 30-minute volume/price gap is the dominant flash layer.
+    # v3.3.2: the 30-minute volume/price gap is the dominant flash layer.
     flash_score = max(flash_score * 0.35, divergence_score)
     if divergence_direction != "=":
         flash_direction = divergence_direction
@@ -2403,19 +2469,36 @@ def _apply_contextual_setup(
     positive_volume_windows = sum((short.volume_strengths.get(window) or 0.0) >= 0.25 for window in WINDOWS)
     negative_volume_windows = sum((short.volume_strengths.get(window) or 0.0) <= -0.25 for window in WINDOWS)
 
-    if direction == "▲":
-        if quality_ok and score >= 78.0 and v30 >= 0.45 and positive_volume_windows >= 2:
+    knife_limits = _falling_knife_limits(config)
+    stable_windows = sum(
+        short.price_changes.get(window) is not None
+        and float(short.price_changes[window]) >= knife_limits[window]
+        for window in WINDOWS
+    )
+    falling_knife = stable_windows < 2 or float(short.price_changes.get(30) or 0.0) < knife_limits[30]
+
+    thresholds = config.get("flash_two_tail") if isinstance(config, Mapping) else None
+    thresholds = thresholds if isinstance(thresholds, Mapping) else {}
+    positive_blue = float(thresholds.get("positive_blue", 24.0))
+    positive_green = float(thresholds.get("positive_green", 50.0))
+    positive_purple = float(thresholds.get("positive_purple", 76.0))
+    negative_orange = float(thresholds.get("negative_orange", 24.0))
+    negative_red = float(thresholds.get("negative_red", 68.0))
+
+    if direction == "▲" and not falling_knife:
+        if quality_ok and score >= positive_purple and v30 >= 0.45 and positive_volume_windows >= 2:
             color = PURPLE
-        elif score >= 56.0 and v30 >= -0.10:
+        elif score >= positive_green and v30 >= -0.10:
             color = GREEN
-        elif score >= 30.0:
+        elif score >= positive_blue:
             color = BLUE
         else:
             color = YELLOW
-    elif direction == "▼":
-        if quality_ok and score >= 76.0 and (v30 <= -0.35 or short.volume_collapse_score >= 48.0):
+    elif direction == "▼" or falling_knife:
+        direction = "▼" if falling_knife and score >= 18.0 else direction
+        if quality_ok and score >= negative_red:
             color = RED
-        elif score >= 32.0 or negative_volume_windows >= 2:
+        elif score >= negative_orange or negative_volume_windows >= 2 or falling_knife:
             color = ORANGE
         else:
             color = YELLOW
@@ -2477,6 +2560,9 @@ def build_coin_analysis(
     btc_7d_pct: float = 0.0,
     btc_7d_color: str = YELLOW,
     market_cap_bonus: float = 0.0,
+    unlock_penalty: float = 0.0,
+    unlock_risk: str = "none",
+    unlock_event_date: str | None = None,
 ) -> CoinAnalysis:
     week_pct = delta_to_pct((current.get("delta") or {}).get("week"))
     seasonality = seasonality_override or analyze_seasonality(
@@ -2516,6 +2602,7 @@ def build_coin_analysis(
         market_cap_bonus=market_cap_bonus,
         volatility_score=volatility_score,
         recovery_score=recovery_score,
+        unlock_penalty=unlock_penalty,
         quality=quality_value,
     )
 
@@ -2546,6 +2633,9 @@ def build_coin_analysis(
         market_cap_bonus=market_cap_bonus,
         volatility_bonus=8.0 * _clamp(volatility_score / 100.0, 0.0, 1.0),
         recovery_bonus=12.0 * _clamp(recovery_score / 100.0, 0.0, 1.0),
+        unlock_penalty=max(0.0, float(unlock_penalty)),
+        unlock_risk=str(unlock_risk),
+        unlock_event_date=unlock_event_date,
     )
 
 
@@ -2560,9 +2650,10 @@ def confidence_sort_key(item: CoinAnalysis) -> tuple[float, ...]:
         item.short.volume_colors.get(window) in {PURPLE, GREEN, RED, ORANGE}
         for window in WINDOWS
     )
+    adjusted_flash = max(0.0, item.flash_score - 0.45 * item.unlock_penalty)
     return (
-        # Eight-point primary bands make the 30m gap lexicographically dominant.
-        float(math.floor(item.flash_score / 8.0)),
+        # Unlock risk can lower selection priority but never changes the signal color itself.
+        float(math.floor(adjusted_flash / 8.0)),
         float(math.floor(item.ranking_score * 10.0)),
         float(math.floor(item.flash_score * 10.0)),
         float(math.floor(item.short.divergence_score * 10.0)),

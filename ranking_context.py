@@ -1,4 +1,4 @@
-"""v3.3.1 cross-sectional bonuses and BTC comparison helpers.
+"""v3.3.2 cross-sectional bonuses and BTC comparison helpers.
 
 The primary ranking remains the recent volume/price divergence.  This module only
 provides bounded secondary context so market cap, seven-day volume and BTC
@@ -177,6 +177,7 @@ def combined_priority(
     market_cap_bonus: float,
     volatility_score: float,
     recovery_score: float,
+    unlock_penalty: float = 0.0,
     quality: float = 1.0,
 ) -> float:
     """Volume-first final ranking score.
@@ -192,4 +193,5 @@ def combined_priority(
         + 12.0 * _clamp(float(recovery_score) / 100.0)
     )
     quality_factor = 0.72 + 0.28 * _clamp(quality)
-    return round(primary * quality_factor + secondary, 4)
+    deduction = max(0.0, min(20.0, float(unlock_penalty)))
+    return round(max(0.0, primary * quality_factor + secondary - deduction), 4)

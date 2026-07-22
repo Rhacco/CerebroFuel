@@ -1,4 +1,4 @@
-"""Entry point for crypto-signal-monitor v3.3.1 volume-priority ranking."""
+"""Entry point for crypto-signal-monitor v3.3.2 volume-priority ranking."""
 
 from __future__ import annotations
 
@@ -35,6 +35,8 @@ from daily_context import (
 from discord_sender import send_discord
 from lcw_client import LiveCoinWatchClient
 from flash_state import STATE_VERSION as FLASH_STATE_VERSION, update_and_score
+from unlock_context import unlock_context
+
 from ranking_context import (
     btc_performance_context,
     combined_priority,
@@ -42,7 +44,7 @@ from ranking_context import (
     small_cap_bonuses,
 )
 
-APP_VERSION = "3.3.1"
+APP_VERSION = "3.3.2"
 ROOT = Path(__file__).resolve().parent
 DAILY_STATE_PATH = ROOT / ".cache" / "seasonality" / "state.json"
 CHANGED_FLAG = ROOT / ".cache" / "seasonality" / "changed.flag"
@@ -242,9 +244,9 @@ def _log_weekday_context(display: str, context: Mapping[str, Any]) -> None:
 
 
 def prepare_daily_context(config: dict[str, Any], api_key: str) -> int:
-    """Prepare the exact v3.3.1 ranked-expansion daily cache before any Discord message.
+    """Prepare the exact v3.3.2 daily cache before any Discord message.
 
-    A current v3.3.0/v3.2.7 cache is migrated from stored raw histories; only newly added coins are bootstrapped.
+    Compatible v3.3.1/v3.3.0/v3.2.7 raw histories are reused; only newly added coins are bootstrapped.
     No long LCW requests are needed for that migration. On later calendar days,
     cached histories are updated with one recent request per existing coin.
     """
@@ -265,13 +267,13 @@ def prepare_daily_context(config: dict[str, Any], api_key: str) -> int:
     )
     if exact:
         print(
-            f"Tageskontext {today}: exakter v3.3.1-Cache, 0 Langzeitabfragen "
+            f"Tageskontext {today}: exakter v3.3.2-Cache, 0 Langzeitabfragen "
             f"({len(expected)} Coins)."
         )
         _set_changed(False)
         return 0
 
-    # Reuse every raw history stored by previous v3.2.7 revisions. This is the
+    # Reuse every compatible raw history stored by earlier revisions. This is the
     # critical migration path that avoids a 100+ request rebuild.
     histories: dict[str, list] = {}
     api_codes: dict[str, str] = {}
@@ -565,6 +567,10 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
         )
         for display, api_code in [resolved_reference, *resolved_pool]
     }
+    unlock_by_display = {
+        display: unlock_context(display, config, now=now)
+        for display, _ in [resolved_reference, *resolved_pool]
+    }
 
     top_count = int(config.get("top_coin_count", 8))
     initial_count = max(top_count, int(config.get("preselect_coin_count", 22)))
@@ -582,10 +588,13 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
             market_cap_bonus=float(cap_bonuses.get(display, 0.0)),
             volatility_score=float(signal.volatility_score if signal else 0.0),
             recovery_score=float(signal.recovery_score if signal else 0.0),
+            unlock_penalty=float((unlock_by_display.get(display) or {}).get("penalty") or 0.0),
             quality=float(signal.quality if signal else 0.35),
         )
+        unlock_penalty = float((unlock_by_display.get(display) or {}).get("penalty") or 0.0)
+        adjusted_primary = max(0.0, primary - 0.45 * unlock_penalty)
         return (
-            float(int(primary // 8.0)),
+            float(int(adjusted_primary // 8.0)),
             priority,
             primary,
             float(signal.quality if signal else 0.0),
@@ -726,6 +735,9 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
             "btc_7d_pct": float(btc7),
             "btc_7d_color": btc7_color,
             "market_cap_bonus": float(cap_bonuses.get(display, 0.0)),
+            "unlock_penalty": float((unlock_by_display.get(display) or {}).get("penalty") or 0.0),
+            "unlock_risk": str((unlock_by_display.get(display) or {}).get("risk") or "none"),
+            "unlock_event_date": (unlock_by_display.get(display) or {}).get("event_date"),
         }
 
     ref_seasonality, ref_week_returns = context_for_coin(daily_state, reference_display)
@@ -767,7 +779,7 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
             f"Schere30={item.short.divergence_30 if item.short.divergence_30 is not None else 0.0:+.2f} "
             f"Primär={item.flash_score:.1f} V7={item.volume_7d_bonus:.1f} "
             f"Cap={item.market_cap_bonus:.1f} Volatilität={item.volatility_bonus:.1f} "
-            f"Recovery={item.recovery_bonus:.1f}."
+            f"Recovery={item.recovery_bonus:.1f} Unlock=-{item.unlock_penalty:.1f}."
         )
     report = build_report(
         reference_analysis,
@@ -800,6 +812,7 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
                 "flash_stats": flash_stats,
                 "volume_7d_context": volume_7d_context,
                 "market_cap_bonuses": cap_bonuses,
+                "unlock_context": unlock_by_display,
                 "btc_performance": {
                     display: {
                         "relative_24h_pct": values[0],

@@ -1,6 +1,6 @@
 name: Crypto Signal Monitor
 
-# v3.3.1: ranked 5x/10x + strict 3x expansion with bounded 10/30/60 detail confirmation.
+# v3.3.2 expanded: 60-coin full pool, two-tail flash score and unlock-aware selection.
 on:
   workflow_dispatch:
     inputs:
@@ -42,8 +42,10 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: .cache/seasonality
-          key: seasonality-v331-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
+          key: seasonality-v332-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
           restore-keys: |
+            seasonality-v332-${{ steps.context-key.outputs.day }}-
+            seasonality-v332-
             seasonality-v331-${{ steps.context-key.outputs.day }}-
             seasonality-v331-
             seasonality-v330-${{ steps.context-key.outputs.day }}-
@@ -56,8 +58,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: .cache/flash
-          key: flash-v331-${{ github.run_id }}-${{ github.run_attempt }}
+          key: flash-v332-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            flash-v332-
             flash-v331-
             flash-v330-
             flash-v329-
@@ -78,7 +81,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: .cache/seasonality
-          key: seasonality-v331-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
+          key: seasonality-v332-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
 
       - name: Frische Analyse ausführen
         env:
@@ -93,4 +96,4 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: .cache/flash
-          key: flash-v331-${{ github.run_id }}-${{ github.run_attempt }}
+          key: flash-v332-${{ github.run_id }}-${{ github.run_attempt }}
