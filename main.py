@@ -461,10 +461,45 @@ def log_quality(display: str, short: ShortMetrics) -> None:
         )
 
 
-def _short_is_displayable(short: ShortMetrics) -> bool:
-    if short.data_quality == "insufficient":
+def _short_is_displayable(
+    short: ShortMetrics,
+    intraday: IntradayMetrics | None = None,
+) -> bool:
+    """Accept robust detail data without making LCW's 10m density a fatal SPOF.
+
+    The 30- and 60-minute LCW windows remain mandatory for the legacy detail
+    engine. A single missing short window is acceptable when at least two LCW
+    setup windows are usable and public 5-minute candles independently cover
+    the short end. This prevents a valid report from being discarded merely
+    because LCW returned roughly 15-minute-spaced history points.
+    """
+    usable = sum(
+        short.window_setup_scores.get(window) is not None
+        for window in (10, 30, 60)
+    )
+    if (
+        short.data_quality != "insufficient"
+        and usable >= 2
+        and short.window_setup_scores.get(30) is not None
+        and short.window_setup_scores.get(60) is not None
+    ):
+        return True
+    if intraday is None or intraday.data_quality not in {"good", "partial"}:
         return False
-    return all(short.window_setup_scores.get(window) is not None for window in (10, 30, 60))
+    price_windows = sum(
+        intraday.price_changes.get(window) is not None
+        for window in (10, 30, 60)
+    )
+    volume_windows = sum(
+        intraday.volume_colors.get(window) not in {None, "⚪"}
+        for window in (10, 30, 60)
+    )
+    return (
+        usable >= 2
+        and short.window_setup_scores.get(30) is not None
+        and price_windows >= 2
+        and volume_windows >= 2
+    )
 
 
 def _build_short_for_pair(
@@ -800,7 +835,8 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
         is_reference=True,
     )
     log_quality(reference_display, btc_short)
-    if not _short_is_displayable(btc_short):
+    btc_intraday_for_validation = intraday_by_display.get(reference_display)
+    if not _short_is_displayable(btc_short, btc_intraday_for_validation):
         print("HINWEIS: BTC-Kurzzeitdaten unvollständig; Sicherheitsversuch ...", file=sys.stderr)
         retry, failures = refresh_histories(
             client=client,
@@ -821,8 +857,11 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
             is_reference=True,
         )
         log_quality(reference_display, btc_short)
-    if not _short_is_displayable(btc_short):
-        raise RuntimeError("BTC-Kurzzeitdaten unvollständig; Bericht verworfen.")
+    if not _short_is_displayable(btc_short, btc_intraday_for_validation):
+        raise RuntimeError(
+            "BTC-Kurzzeitdaten auch nach LCW-Retry und Börsenkerzen unvollständig; "
+            "Bericht verworfen."
+        )
 
     def analyze_pairs(pairs: list[tuple[str, str]]) -> None:
         for display, api_code in pairs:
@@ -841,7 +880,10 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
     analyze_pairs(initial_pairs)
     valid_pairs = [
         pair for pair in attempted_pairs
-        if pair[1] in short_by_code and _short_is_displayable(short_by_code[pair[1]])
+        if pair[1] in short_by_code
+        and _short_is_displayable(
+            short_by_code[pair[1]], intraday_by_display.get(pair[0])
+        )
     ]
     cursor = initial_count
     batch_size = max(1, int(config.get("short_fallback_batch_size", 6)))
@@ -857,7 +899,10 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
         analyze_pairs(batch)
         valid_pairs = [
             pair for pair in attempted_pairs
-            if pair[1] in short_by_code and _short_is_displayable(short_by_code[pair[1]])
+            if pair[1] in short_by_code
+            and _short_is_displayable(
+                short_by_code[pair[1]], intraday_by_display.get(pair[0])
+            )
         ]
     if len(valid_pairs) < top_count:
         raise RuntimeError(

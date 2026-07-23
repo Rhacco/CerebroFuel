@@ -468,7 +468,7 @@ def analyze_candles(
         "partial" if len(ordered) >= 60 and coverage_hours >= 4 else "insufficient"
     )
 
-    price_changes = {minutes: _window_price(ordered, minutes) for minutes in (5, 15, 30, 60, 180, 1440)}
+    price_changes = {minutes: _window_price(ordered, minutes) for minutes in (5, 10, 15, 30, 60, 180, 1440)}
     volume_ratios: dict[int, float | None] = {}
     volume_z: dict[int, float | None] = {}
     volume_acceleration: dict[int, float | None] = {}

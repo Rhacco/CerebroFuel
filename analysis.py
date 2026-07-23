@@ -422,6 +422,50 @@ def _nearest_point(points: Sequence[PricePoint], target_ms: int, max_distance_ms
     return best if abs(best.timestamp_ms - target_ms) <= max_distance_ms else None
 
 
+def _comparison_point(
+    points: Sequence[PricePoint],
+    target_ms: int,
+    max_distance_ms: int,
+    *,
+    maximum_interpolation_gap_ms: int = 20 * 60_000,
+) -> PricePoint | None:
+    """Return a trustworthy point at ``target_ms``.
+
+    LCW can compress a 24-hour history to roughly 15-minute observations.  A
+    strict nearest-point lookup then incorrectly loses the 10-minute window,
+    even though the target is bracketed by two valid observations.  Prefer an
+    actual nearby point; otherwise linearly interpolate only between bracketing
+    observations with a bounded gap.  Extrapolation is deliberately forbidden.
+    """
+    nearest = _nearest_point(points, target_ms, max_distance_ms)
+    if nearest is not None:
+        return nearest
+    if len(points) < 2:
+        return None
+    timestamps = [point.timestamp_ms for point in points]
+    index = bisect.bisect_left(timestamps, target_ms)
+    if index <= 0 or index >= len(points):
+        return None
+    before = points[index - 1]
+    after = points[index]
+    gap = after.timestamp_ms - before.timestamp_ms
+    if gap <= 0 or gap > maximum_interpolation_gap_ms:
+        return None
+    fraction = (target_ms - before.timestamp_ms) / gap
+    if not 0.0 <= fraction <= 1.0:
+        return None
+    rate = before.rate + (after.rate - before.rate) * fraction
+    if before.volume is None or after.volume is None:
+        volume = None
+    else:
+        volume = before.volume + (after.volume - before.volume) * fraction
+    if rate <= 0 or not math.isfinite(rate):
+        return None
+    if volume is not None and (volume < 0 or not math.isfinite(volume)):
+        volume = None
+    return PricePoint(target_ms, rate, volume)
+
+
 def compute_window_changes_from_history(
     *,
     current_rate: float,
@@ -435,7 +479,12 @@ def compute_window_changes_from_history(
     for window in WINDOWS:
         target_ms = now_ms - window * 60_000
         tolerance_minutes = max(4.0, min(12.0, window * 0.30))
-        point = _nearest_point(usable, target_ms, int(tolerance_minutes * 60_000))
+        point = _comparison_point(
+            usable,
+            target_ms,
+            int(tolerance_minutes * 60_000),
+            maximum_interpolation_gap_ms=int(min(25.0, max(20.0, window * 0.75)) * 60_000),
+        )
         price_changes[window] = _pct(current_rate, point.rate if point else None)
         volume_changes[window] = _pct(current_volume, point.volume if point else None)
     return price_changes, volume_changes
@@ -452,7 +501,12 @@ def _rolling_window_samples(history: list[PricePoint], window: int) -> tuple[lis
     for current in history:
         if current.timestamp_ms - last_endpoint < min_spacing_ms:
             continue
-        previous = _nearest_point(history, current.timestamp_ms - window * 60_000, tolerance_ms)
+        previous = _comparison_point(
+            history,
+            current.timestamp_ms - window * 60_000,
+            tolerance_ms,
+            maximum_interpolation_gap_ms=int(min(25.0, max(20.0, window * 0.75)) * 60_000),
+        )
         if previous is None or previous.timestamp_ms >= current.timestamp_ms:
             continue
         price_value = _pct(current.rate, previous.rate)
