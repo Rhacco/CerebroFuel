@@ -1,4 +1,4 @@
-"""Dynamic, bounded unlock-risk deductions for v3.3.2 ranking."""
+"""Dynamic, bounded unlock-risk deductions for v3.3.3 opportunity ranking."""
 
 from __future__ import annotations
 
@@ -25,6 +25,10 @@ def unlock_context(display: str, config: Mapping[str, Any], *, now: datetime | N
         return {"penalty": 0.0, "risk": "none", "event_date": None, "days_to_event": None, "recipient": None}
 
     current = (now or datetime.now(timezone.utc)).date()
+    as_of = _event_date(section.get("as_of"))
+    stale_days = None if as_of is None else (current - as_of).days
+    stale_threshold = max(1, int(section.get("stale_warning_days", 14)))
+    stale = stale_days is not None and stale_days > stale_threshold
     event = _event_date(item.get("date"))
     base = max(0.0, float(item.get("base_penalty", 0.0)))
     structural = max(0.0, float(item.get("structural_penalty", 0.0)))
@@ -56,4 +60,7 @@ def unlock_context(display: str, config: Mapping[str, Any], *, now: datetime | N
         "days_to_event": days,
         "recipient": item.get("recipient"),
         "source": item.get("source"),
+        "as_of": as_of.isoformat() if as_of else None,
+        "stale_days": stale_days,
+        "stale": stale,
     }

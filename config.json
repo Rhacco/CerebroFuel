@@ -1,5 +1,5 @@
 {
-  "schema_version": "3.3.2",
+  "schema_version": "3.3.3",
   "reference_coin": "BTC",
   "groups": [
     {
@@ -196,8 +196,8 @@
   "currency": "USD",
   "timezone": "Europe/Berlin",
   "top_coin_count": 8,
-  "preselect_coin_count": 24,
-  "short_history_minutes": 720,
+  "preselect_coin_count": 26,
+  "short_history_minutes": 1440,
   "history_days": 126,
   "history_parallel_requests": 1,
   "time_block_hours": 4,
@@ -221,6 +221,16 @@
       "light": 0.22,
       "clear": 0.72,
       "strong": 1.75
+    },
+    "5": {
+      "light": 0.06,
+      "clear": 0.18,
+      "strong": 0.5
+    },
+    "15": {
+      "light": 0.13,
+      "clear": 0.42,
+      "strong": 1.05
     }
   },
   "volume": {
@@ -238,6 +248,16 @@
       "light": 0.15,
       "clear": 0.5,
       "strong": 1.75
+    },
+    "5": {
+      "light": 0.03,
+      "clear": 0.12,
+      "strong": 0.45
+    },
+    "15": {
+      "light": 0.08,
+      "clear": 0.3,
+      "strong": 1.05
     }
   },
   "relative_light_pct": 0.12,
@@ -268,7 +288,7 @@
   "temporal_axis_strong": 0.34,
   "temporal_confirmation_points": 3,
   "seasonality_lookback_days": 300,
-  "quality_revision": "complete-weeks-pool-neutral-r2-v332",
+  "quality_revision": "complete-weeks-pool-neutral-target-r3-v333",
   "temporal_guard_threshold": 0.1,
   "daily_history_days": 300,
   "weekday_enter_confirmations": 2,
@@ -287,28 +307,29 @@
   "exit_red_collapse": 66.0,
   "exit_red_memory": 42.0,
   "exit_red_score": 68.0,
-  "max_short_detail_requests": 25,
+  "max_short_detail_requests": 28,
   "flash_retention_minutes": 780,
-  "flash_snapshot_version": "flash-v332-two-tail-unlock-r1",
-  "volume_priority_revision": "two-tail-gap-falling-knife-unlock-r1",
+  "flash_snapshot_version": "flash-v333-early-opportunity-r1",
+  "volume_priority_revision": "entry-exit-exact-volume-target-r1",
   "primary_gap_window_minutes": 30,
   "volume_windows_minutes": [
-    10,
+    5,
+    15,
     30,
     60
   ],
   "ranking_weights": {
     "primary_30m_volume_price_gap": 1.0,
-    "volume_7d_bonus_cap": 14.0,
-    "small_market_cap_bonus_cap": 10.0,
-    "volatility_bonus_cap": 8.0,
-    "crash_recovery_bonus_cap": 12.0
+    "volume_7d_bonus_cap": 8.0,
+    "small_market_cap_bonus_cap": 4.0,
+    "volatility_bonus_cap": 4.0,
+    "crash_recovery_bonus_cap": 8.0
   },
   "btc_relative_windows": [
     "24h",
     "7d"
   ],
-  "coin_universe_revision": "top10-screenshots-plus-restored21-r2",
+  "coin_universe_revision": "v333-60-altcoins-opportunity-target-r1",
   "coin_selection": {
     "required_active": [
       "ARKM",
@@ -464,7 +485,9 @@
     ]
   },
   "falling_knife_pct": {
+    "5": -0.12,
     "10": -0.18,
+    "15": -0.24,
     "30": -0.3,
     "60": -0.55
   },
@@ -661,6 +684,122 @@
       }
     },
     "as_of": "2026-07-22",
-    "method": "near cliff = dynamic; linear/ongoing release = bounded structural penalty; fully unlocked = no penalty"
-  }
+    "method": "near cliff = dynamic; linear/ongoing release = bounded structural penalty; expired events decay automatically; stale config is logged",
+    "stale_warning_days": 14
+  },
+  "outcome_state_version": "opportunity-v333-target-r2",
+  "opportunity_score": {
+    "entry_blue": 42.0,
+    "entry_green": 62.0,
+    "entry_purple": 82.0,
+    "exit_orange": 44.0,
+    "exit_red": 70.0,
+    "entry_weights": {
+      "current_demand": 0.28,
+      "three_hour_base": 0.2,
+      "volume_price_gap": 0.15,
+      "relative_strength": 0.1,
+      "room_to_target": 0.1,
+      "target_history": 0.12,
+      "liquidity": 0.05
+    },
+    "description": "mixed top-8: strongest entry opportunities and exit warnings compete equally"
+  },
+  "target_horizon_hours": 24,
+  "target_anchor_spacing_hours": 12,
+  "outcome_retention_days": 90,
+  "outcome_record_minimum_entry_score": 60.0,
+  "outcome_signal_cooldown_hours": 6.0,
+  "market_data": {
+    "enabled": true,
+    "provider_order": [
+      "binance",
+      "coinbase"
+    ],
+    "binance_base_url": "https://data-api.binance.vision",
+    "coinbase_base_url": "https://api.exchange.coinbase.com",
+    "timeout_seconds": 12,
+    "maximum_requests_per_run": 80,
+    "parallel_requests": 6,
+    "request_spacing_seconds": 0.03,
+    "candle_limit": 300,
+    "interval_minutes": 5,
+    "asset_aliases": {
+      "BTC": [
+        "BTC"
+      ],
+      "ETH": [
+        "ETH"
+      ],
+      "SOL": [
+        "SOL"
+      ],
+      "XLM": [
+        "XLM"
+      ],
+      "ZKSYNC": [
+        "ZK"
+      ],
+      "RENDER": [
+        "RENDER",
+        "RNDR"
+      ],
+      "FET": [
+        "FET",
+        "ASI"
+      ],
+      "S": [
+        "S"
+      ],
+      "W": [
+        "W"
+      ],
+      "IO": [
+        "IO"
+      ],
+      "MEGA": [
+        "MEGA"
+      ],
+      "XPL": [
+        "XPL"
+      ],
+      "TRUMP": [
+        "TRUMP"
+      ],
+      "FARTCOIN": [
+        "FARTCOIN"
+      ],
+      "MOODENG": [
+        "MOODENG"
+      ],
+      "PENGU": [
+        "PENGU"
+      ],
+      "ETHFI": [
+        "ETHFI"
+      ],
+      "KMNO": [
+        "KMNO"
+      ],
+      "HYPE": [
+        "HYPE"
+      ],
+      "MON": [
+        "MON"
+      ],
+      "BIO": [
+        "BIO"
+      ],
+      "PNUT": [
+        "PNUT"
+      ],
+      "KAITO": [
+        "KAITO"
+      ]
+    },
+    "fallback": "LCW rolling-volume divergence remains active when no public pair or provider is available",
+    "scope": "complete resolved pool before LCW detail preselection"
+  },
+  "lcw_nominal_max_requests_per_monitor_run": 31,
+  "lcw_nominal_daily_budget_note": "map + BTC + up to 28 alt details + one BTC safety retry; daily context update is separate"
 }

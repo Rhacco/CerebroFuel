@@ -1,4 +1,4 @@
-"""Entry point for crypto-signal-monitor v3.3.2 volume-priority ranking."""
+"""Entry point for crypto-signal-monitor v3.3.3 short-term opportunity ranking."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from analysis import (
     CoinAnalysis,
     ShortMetrics,
     analysis_to_dict,
+    apply_opportunity_analysis,
     build_coin_analysis,
     build_report,
     build_short_metrics,
@@ -31,11 +32,19 @@ from daily_context import (
     local_day_key,
     save_state,
     volume_trend_from_context,
+    target_profile_for_coin,
 )
 from discord_sender import send_discord
 from lcw_client import LiveCoinWatchClient
 from flash_state import STATE_VERSION as FLASH_STATE_VERSION, update_and_score
 from unlock_context import unlock_context
+from market_data import IntradayMetrics, PublicMarketDataClient
+from opportunity import assess_opportunity, build_market_quality
+from outcome_state import (
+    STATE_VERSION as OUTCOME_STATE_VERSION,
+    record_entry_candidates,
+    update_and_resolve,
+)
 
 from ranking_context import (
     btc_performance_context,
@@ -44,11 +53,12 @@ from ranking_context import (
     small_cap_bonuses,
 )
 
-APP_VERSION = "3.3.2"
+APP_VERSION = "3.3.3"
 ROOT = Path(__file__).resolve().parent
 DAILY_STATE_PATH = ROOT / ".cache" / "seasonality" / "state.json"
 CHANGED_FLAG = ROOT / ".cache" / "seasonality" / "changed.flag"
 FLASH_STATE_PATH = ROOT / ".cache" / "flash" / "state.json"
+OPPORTUNITY_STATE_PATH = ROOT / ".cache" / "opportunity" / "state.json"
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -69,6 +79,10 @@ def load_config(path: Path) -> dict[str, Any]:
     if str(config.get("flash_snapshot_version")) != FLASH_STATE_VERSION:
         raise ValueError(
             "config.json flash_snapshot_version stimmt nicht mit flash_state.py überein."
+        )
+    if str(config.get("outcome_state_version")) != OUTCOME_STATE_VERSION:
+        raise ValueError(
+            "config.json outcome_state_version stimmt nicht mit outcome_state.py überein."
         )
     return config
 
@@ -244,7 +258,7 @@ def _log_weekday_context(display: str, context: Mapping[str, Any]) -> None:
 
 
 def prepare_daily_context(config: dict[str, Any], api_key: str) -> int:
-    """Prepare the exact v3.3.2 daily cache before any Discord message.
+    """Prepare the exact v3.3.3 daily cache before any Discord message.
 
     Compatible v3.3.1/v3.3.0/v3.2.7 raw histories are reused; only newly added coins are bootstrapped.
     No long LCW requests are needed for that migration. On later calendar days,
@@ -267,7 +281,7 @@ def prepare_daily_context(config: dict[str, Any], api_key: str) -> int:
     )
     if exact:
         print(
-            f"Tageskontext {today}: exakter v3.3.2-Cache, 0 Langzeitabfragen "
+            f"Tageskontext {today}: exakter v3.3.3-Cache, 0 Langzeitabfragen "
             f"({len(expected)} Coins)."
         )
         _set_changed(False)
@@ -532,7 +546,7 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
     )
     print(
         f"Flash-Vollscan: {flash_stats.get('coins', 0)} Coins, "
-        f"{flash_stats.get('full_windows', 0)} mit 10/30/60m, "
+        f"{flash_stats.get('full_windows', 0)} mit 5/15/30/60m, "
         f"Abdeckung={float(flash_stats.get('coverage', 0.0)) * 100:.0f}% "
         f"(0 zusätzliche LCW-Requests)."
     )
@@ -555,10 +569,12 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
             days=7,
         )
     volume_7d_context = seven_day_volume_context(raw_volume_7d)
-    cap_bonuses = small_cap_bonuses(
+    raw_cap_bonuses = small_cap_bonuses(
         rows_by_display,
         minimum_reliable_volume=float(config.get("minimum_reliable_volume_usd", 500_000)),
     )
+    cap_scale = float((config.get("ranking_weights") or {}).get("small_market_cap_bonus_cap", 4.0)) / 10.0
+    cap_bonuses = {display: round(value * cap_scale, 4) for display, value in raw_cap_bonuses.items()}
     btc_context = {
         display: btc_performance_context(
             current_by_code[api_code],
@@ -571,16 +587,94 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
         display: unlock_context(display, config, now=now)
         for display, _ in [resolved_reference, *resolved_pool]
     }
+    stale_unlocks = [
+        display for display, context in unlock_by_display.items()
+        if bool(context.get("stale"))
+    ]
+    if stale_unlocks:
+        print(
+            "HINWEIS: Unlock-Konfiguration ist älter als die Warnschwelle; "
+            "statische Abzüge bleiben begrenzt aktiv: " + ", ".join(stale_unlocks),
+            file=sys.stderr,
+        )
+
+    # Public five-minute candles are requested for the complete resolved pool, not
+    # only for an LCW preselection. This keeps a fresh exchange-volume impulse from
+    # being missed merely because the rolling LCW 24h-volume changed only slightly.
+    market_aliases = (
+        (config.get("market_data") or {}).get("asset_aliases", {})
+        if isinstance(config.get("market_data"), Mapping)
+        else {}
+    )
+    market_client = PublicMarketDataClient(config)
+    intraday_by_display, market_data_stats = market_client.fetch_many(
+        [reference_display, *[display for display, _ in resolved_pool]],
+        now_ms=now_ms,
+        aliases=market_aliases if isinstance(market_aliases, Mapping) else {},
+    )
+    print(
+        f"Intervallvolumen-Vollscan: {market_data_stats.get('exact_count', 0)}/"
+        f"{market_data_stats.get('requested_coins', 0)} Coins bestätigt; "
+        f"{market_data_stats.get('requests', 0)} öffentliche Requests, 0 LCW-Credits."
+    )
+
+    market_quality = build_market_quality(
+        btc_intraday=intraday_by_display.get(reference_display),
+        flash_signals=flash_signals,
+        rows_by_display=rows_by_display,
+        reference_display=reference_display,
+    )
+    print(
+        f"Marktqualität: {market_quality.score:+.1f} {market_quality.color}; "
+        f"positive Breite={market_quality.positive_breadth:.0%}, "
+        f"negative Breite={market_quality.negative_breadth:.0%}."
+    )
+
+    prices_by_display = {
+        display: float(current_by_code[api_code].get("rate") or 0.0)
+        for display, api_code in [resolved_reference, *resolved_pool]
+    }
+    candle_ranges = {
+        display: {
+            "open_ms": metrics.latest_candle_open_ms,
+            "high": metrics.latest_high,
+            "low": metrics.latest_low,
+        }
+        for display, metrics in intraday_by_display.items()
+        if metrics.latest_candle_open_ms is not None
+    }
+    outcome_state, live_target_profiles, outcome_stats = update_and_resolve(
+        path=OPPORTUNITY_STATE_PATH,
+        prices=prices_by_display,
+        candle_ranges=candle_ranges,
+        now_ms=now_ms,
+        config=config,
+    )
 
     top_count = int(config.get("top_coin_count", 8))
-    initial_count = max(top_count, int(config.get("preselect_coin_count", 22)))
-    max_detail_requests = max(initial_count, int(config.get("max_short_detail_requests", 26)))
+    initial_count = max(top_count, int(config.get("preselect_coin_count", 26)))
+
+    def public_probe(display: str) -> tuple[float, float, float]:
+        metrics = intraday_by_display.get(display)
+        if metrics is None or not metrics.exact_interval_volume:
+            return 0.0, 0.0, 0.0
+        base_factor = 0.40 + 0.60 * max(0.0, min(1.0, float(metrics.base_quality_score) / 100.0))
+        entry = float(metrics.demand_score) * base_factor
+        entry -= 0.48 * float(metrics.overextension_penalty)
+        if metrics.falling_knife:
+            entry = 0.0
+        elif metrics.late_entry:
+            entry = min(entry, 42.0)
+        exit_ = max(float(metrics.sell_pressure_score), 78.0 if metrics.falling_knife else 0.0)
+        quality = {"good": 1.0, "partial": 0.76, "insufficient": 0.0}.get(metrics.data_quality, 0.0)
+        return max(0.0, entry) * quality, max(0.0, exit_) * quality, quality
 
     def flash_order_key(pair: tuple[str, str]) -> tuple[float, float, float, float, str]:
         display, api_code = pair
         signal = flash_signals.get(display)
         fallback = pre_anomaly_score(current_by_code[api_code], reference_current)
-        primary = max(signal.score if signal else 0.0, fallback * 0.45)
+        public_entry, public_exit, public_quality = public_probe(display)
+        primary = max(signal.score if signal else 0.0, fallback * 0.45, public_entry, public_exit)
         volume_context = volume_7d_context.get(display) or {}
         priority = combined_priority(
             primary_gap_score=primary,
@@ -589,19 +683,81 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
             volatility_score=float(signal.volatility_score if signal else 0.0),
             recovery_score=float(signal.recovery_score if signal else 0.0),
             unlock_penalty=float((unlock_by_display.get(display) or {}).get("penalty") or 0.0),
-            quality=float(signal.quality if signal else 0.35),
+            quality=max(float(signal.quality if signal else 0.35), public_quality),
         )
-        unlock_penalty = float((unlock_by_display.get(display) or {}).get("penalty") or 0.0)
-        adjusted_primary = max(0.0, primary - 0.45 * unlock_penalty)
         return (
-            float(int(adjusted_primary // 8.0)),
+            max(
+                float(signal.entry_score if signal else 0.0),
+                float(signal.exit_score if signal else 0.0),
+                public_entry,
+                public_exit,
+                primary,
+            ),
             priority,
             primary,
-            float(signal.quality if signal else 0.0),
+            max(float(signal.quality if signal else 0.0), public_quality),
             display,
         )
 
-    candidate_order = sorted(resolved_pool, key=flash_order_key, reverse=True)
+    # Mixed preselection prevents a strong sell warning from hiding a strong entry
+    # setup, and vice versa.  Turnover and rotation keep quiet coins observable.
+    positive_ranked = sorted(
+        resolved_pool,
+        key=lambda pair: (
+            max(
+                float(flash_signals.get(pair[0]).entry_score if flash_signals.get(pair[0]) else 0.0),
+                public_probe(pair[0])[0],
+            ),
+            flash_order_key(pair),
+        ),
+        reverse=True,
+    )
+    negative_ranked = sorted(
+        resolved_pool,
+        key=lambda pair: (
+            max(
+                float(flash_signals.get(pair[0]).exit_score if flash_signals.get(pair[0]) else 0.0),
+                public_probe(pair[0])[1],
+            ),
+            flash_order_key(pair),
+        ),
+        reverse=True,
+    )
+    anomaly_ranked = sorted(resolved_pool, key=flash_order_key, reverse=True)
+    turnover_ranked = sorted(
+        resolved_pool,
+        key=lambda pair: _turnover_pct(current_by_code[pair[1]]),
+        reverse=True,
+    )
+    candidate_order: list[tuple[str, str]] = []
+
+    def add_candidate(pair: tuple[str, str]) -> None:
+        if pair not in candidate_order:
+            candidate_order.append(pair)
+
+    for index in range(max(len(positive_ranked), len(negative_ranked))):
+        if index < len(positive_ranked):
+            add_candidate(positive_ranked[index])
+        if index < len(negative_ranked):
+            add_candidate(negative_ranked[index])
+        if len(candidate_order) >= max(18, int(config.get("preselect_coin_count", 26)) - 4):
+            break
+    for pair in anomaly_ranked[:8]:
+        add_candidate(pair)
+    for pair in turnover_ranked[:5]:
+        add_candidate(pair)
+    rotation = sorted(resolved_pool, key=lambda pair: pair[0])
+    if rotation:
+        slot = int(now.timestamp() // 300)
+        for offset in range(min(3, len(rotation))):
+            add_candidate(rotation[(slot + offset) % len(rotation)])
+    for pair in anomaly_ranked:
+        add_candidate(pair)
+
+    max_detail_requests = max(
+        int(config.get("preselect_coin_count", 26)),
+        int(config.get("max_short_detail_requests", 28)),
+    )
 
     short_minutes = int(config.get("short_history_minutes", 720))
     short_start_ms = int((now - timedelta(minutes=short_minutes)).timestamp() * 1000)
@@ -753,33 +909,91 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
         **ranking_context_kwargs(reference_display, reference_api),
         **common,
     )
+    btc_intraday = intraday_by_display.get(reference_display) or IntradayMetrics(display=reference_display)
+    reference_assessment = {
+        "entry_score": max(0.0, market_quality.score),
+        "exit_score": max(0.0, -market_quality.score),
+        "ranking_score": abs(market_quality.score),
+        "direction": market_quality.direction,
+        "color": market_quality.color,
+        "strength_count": market_quality.strength_count,
+        "exact_volume": btc_intraday.exact_interval_volume,
+        "provider": btc_intraday.provider,
+        "provider_symbol": btc_intraday.symbol,
+        "data_confidence": 1.0 if btc_intraday.data_quality == "good" else 0.72,
+        "demand_score": market_quality.btc_demand_score,
+        "base_quality_score": market_quality.btc_structure_score,
+        "room_to_target_score": 50.0,
+        "target_prior_score": 50.0,
+        "volume_colors": {
+            window: btc_intraday.volume_colors.get(window, btc_short.volume_colors.get(window, "⚪"))
+            for window in (10, 30, 60)
+        },
+        "reasons": market_quality.reasons,
+    }
+    apply_opportunity_analysis(
+        reference_analysis,
+        reference_assessment,
+        market_quality=market_quality.to_dict(),
+    )
 
     analyses: list[CoinAnalysis] = []
+    opportunity_by_display: dict[str, dict[str, Any]] = {}
     for display, api_code in valid_pairs:
         seasonality, week_returns = context_for_coin(daily_state, display)
-        analyses.append(
-            build_coin_analysis(
-                display_code=display,
-                api_code=api_code,
-                current=current_by_code[api_code],
-                short=short_by_code[api_code],
-                history=[],
-                is_reference=False,
-                seasonality_override=seasonality,
-                week_samples_override=week_returns,
-                **ranking_context_kwargs(display, api_code),
-                **common,
-            )
+        analysis = build_coin_analysis(
+            display_code=display,
+            api_code=api_code,
+            current=current_by_code[api_code],
+            short=short_by_code[api_code],
+            history=[],
+            is_reference=False,
+            seasonality_override=seasonality,
+            week_samples_override=week_returns,
+            **ranking_context_kwargs(display, api_code),
+            **common,
         )
+        assessment = assess_opportunity(
+            display=display,
+            current=current_by_code[api_code],
+            short=short_by_code[api_code],
+            flash_signal=flash_signals.get(display),
+            intraday=intraday_by_display.get(display),
+            btc_intraday=intraday_by_display.get(reference_display),
+            market_quality=market_quality,
+            historical_target=target_profile_for_coin(daily_state, display),
+            live_target=live_target_profiles.get(display),
+            unlock_penalty=float((unlock_by_display.get(display) or {}).get("penalty") or 0.0),
+            config=config,
+        )
+        opportunity_by_display[display] = assessment.to_dict()
+        apply_opportunity_analysis(
+            analysis,
+            assessment.to_dict(),
+            market_quality=market_quality.to_dict(),
+        )
+        analyses.append(analysis)
+
+    outcome_record_stats = record_entry_candidates(
+        path=OPPORTUNITY_STATE_PATH,
+        state=outcome_state,
+        candidates=[
+            {"display": display, **assessment}
+            for display, assessment in opportunity_by_display.items()
+        ],
+        prices=prices_by_display,
+        now_ms=now_ms,
+        config=config,
+    )
 
     top_analyses = sorted(analyses, key=confidence_sort_key, reverse=True)[:top_count]
     for item in top_analyses:
         print(
-            f"Priorität {item.display_code}: Gesamt={item.ranking_score:.2f} "
-            f"Schere30={item.short.divergence_30 if item.short.divergence_30 is not None else 0.0:+.2f} "
-            f"Primär={item.flash_score:.1f} V7={item.volume_7d_bonus:.1f} "
-            f"Cap={item.market_cap_bonus:.1f} Volatilität={item.volatility_bonus:.1f} "
-            f"Recovery={item.recovery_bonus:.1f} Unlock=-{item.unlock_penalty:.1f}."
+            f"Chance {item.display_code}: Rang={item.opportunity_score:.1f} "
+            f"Entry={item.entry_score:.1f} Exit={item.exit_score:.1f} "
+            f"Nachfrage={item.demand_score:.1f} Basis={item.base_quality_score:.1f} "
+            f"Raum={item.room_to_target_score:.1f} Zielhistorie={item.target_prior_score:.1f} "
+            f"Quelle={item.market_data_provider} Unlock=-{item.unlock_penalty:.1f}."
         )
     report = build_report(
         reference_analysis,
@@ -810,6 +1024,25 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
                     for display, signal in sorted(flash_signals.items())
                 },
                 "flash_stats": flash_stats,
+                "market_quality": market_quality.to_dict(),
+                "market_data": {
+                    "stats": market_data_stats,
+                    "coins": {
+                        display: metrics.to_dict()
+                        for display, metrics in sorted(intraday_by_display.items())
+                    },
+                },
+                "opportunity": opportunity_by_display,
+                "historical_target_profiles": {
+                    display: target_profile_for_coin(daily_state, display)
+                    for display, _ in valid_pairs
+                },
+                "live_target_profiles": live_target_profiles,
+                "outcome_state": {
+                    "version": OUTCOME_STATE_VERSION,
+                    "update": outcome_stats,
+                    "record": outcome_record_stats,
+                },
                 "volume_7d_context": volume_7d_context,
                 "market_cap_bonuses": cap_bonuses,
                 "unlock_context": unlock_by_display,
@@ -822,8 +1055,9 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
                     }
                     for display, values in btc_context.items()
                 },
-                "api_requests_expected": 1 + short_request_count,
-                "api_request_cap": 1 + max_detail_requests + 1,
+                "lcw_requests_expected": 1 + short_request_count,
+                "lcw_request_cap_per_run": 1 + max_detail_requests + 2,
+                "public_market_requests": int(market_data_stats.get("requests", 0)),
             },
             indent=2,
             ensure_ascii=False,

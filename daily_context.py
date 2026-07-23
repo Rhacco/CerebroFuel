@@ -1,4 +1,4 @@
-"""Stable v3.3.2 daily cache with reusable histories and weekday context."""
+"""Stable v3.3.3 daily cache with histories, weekday context and target priors."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo
+
+from target_profile import compute_target_profile
 
 from analysis import (
     DAY_NAMES,
@@ -29,8 +31,8 @@ from analysis import (
     rolling_week_returns,
 )
 
-STATE_VERSION = "3.3.2"
-STATE_REVISION = "complete-weeks-pool-neutral-r2-v332"
+STATE_VERSION = "3.3.3"
+STATE_REVISION = "complete-weeks-pool-neutral-target-r3-v333"
 
 
 def local_day_key(now: datetime, timezone: str) -> str:
@@ -526,7 +528,7 @@ def build_daily_contexts(
             current=raw.current,
             best_weekdays=stable_days,
             samples=raw.samples,
-            source=f"daily-v332-two-tail-{mode}",
+            source=f"daily-v333-opportunity-{mode}",
             current_score=raw.current_score,
             current_confidence=raw.current_confidence,
             weekday_scores=raw.weekday_scores,
@@ -553,6 +555,12 @@ def build_daily_contexts(
             "weekday_confidence": raw.weekday_confidence,
             "weekday_diagnostics": diagnostics,
             "week_returns": [round(float(value), 8) for value in rolling_week_returns(list(history))[-420:]],
+            "target_profile": compute_target_profile(
+                list(history),
+                now_ms=int(now.timestamp() * 1000),
+                horizon_hours=int(config.get("target_horizon_hours", 24)),
+                minimum_anchor_spacing_hours=int(config.get("target_anchor_spacing_hours", 12)),
+            ),
             "history_points": len(history),
             "history": compact_history(
                 history,
@@ -609,3 +617,11 @@ def context_for_coin(state: Mapping[str, Any], display: str) -> tuple[Seasonalit
     seasonality = seasonality_from_dict(raw.get("seasonality"))
     returns = [float(value) for value in raw.get("week_returns", [])]
     return seasonality, returns
+
+
+def target_profile_for_coin(state: Mapping[str, Any], display: str) -> dict[str, Any]:
+    raw = (state.get("coins") or {}).get(display) or {}
+    profile = raw.get("target_profile")
+    if not isinstance(profile, Mapping):
+        return {"score": 50.0, "confidence": 0.0, "samples": 0, "method": "missing"}
+    return dict(profile)

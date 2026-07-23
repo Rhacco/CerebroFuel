@@ -1,6 +1,6 @@
-// v3.3.2 two-tail/unlock-aware scheduler; dispatch behavior intentionally unchanged
+// v3.3.3 short-term opportunity scheduler; dispatch behavior intentionally unchanged
 function schedulerEnabled(env) {
-  // v3.2.7: ENABLED 1 = aktiv, 2 = pausiert.
+  // ENABLED 1 = aktiv, 2 = pausiert.
   return String(env.ENABLED ?? "1").trim() === "1";
 }
 
@@ -42,7 +42,7 @@ async function triggerGitHubWithRetry(env, source) {
         Accept: "application/vnd.github+json",
         Authorization: `Bearer ${env.GH_PAT}`,
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "cloudflare-crypto-scheduler-v3.3.2",
+        "User-Agent": "cloudflare-crypto-scheduler-v3.3.3",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({

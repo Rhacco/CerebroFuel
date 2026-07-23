@@ -1,6 +1,7 @@
 name: Crypto Signal Monitor
 
-# v3.3.2 expanded: 60-coin full pool, two-tail flash score and unlock-aware selection.
+# v3.3.3: mixed entry/exit opportunities, exact public interval-volume confirmation,
+# 3h-base/late-entry guards, +3/+5% target memory and BTC market-quality reference.
 on:
   workflow_dispatch:
     inputs:
@@ -42,28 +43,36 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: .cache/seasonality
-          key: seasonality-v332-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
+          key: seasonality-v333-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
           restore-keys: |
+            seasonality-v333-${{ steps.context-key.outputs.day }}-
+            seasonality-v333-
             seasonality-v332-${{ steps.context-key.outputs.day }}-
             seasonality-v332-
             seasonality-v331-${{ steps.context-key.outputs.day }}-
             seasonality-v331-
-            seasonality-v330-${{ steps.context-key.outputs.day }}-
             seasonality-v330-
-            seasonality-v327-complete-weeks-r2-${{ steps.context-key.outputs.day }}
             seasonality-v327-complete-weeks-r2-
-            seasonality-v327-adaptive-
 
       - name: Letzte Vollpool-Snapshots laden
         uses: actions/cache/restore@v5
         with:
           path: .cache/flash
-          key: flash-v332-${{ github.run_id }}-${{ github.run_attempt }}
+          key: flash-v333-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            flash-v333-
             flash-v332-
             flash-v331-
             flash-v330-
             flash-v329-
+
+      - name: Gelernten Zielausgang laden
+        uses: actions/cache/restore@v5
+        with:
+          path: .cache/opportunity
+          key: opportunity-v333-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            opportunity-v333-
 
       - name: Abhängigkeiten installieren
         run: python -m pip install --disable-pip-version-check -r requirements.txt
@@ -81,7 +90,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: .cache/seasonality
-          key: seasonality-v332-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
+          key: seasonality-v333-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
 
       - name: Frische Analyse ausführen
         env:
@@ -96,4 +105,11 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: .cache/flash
-          key: flash-v332-${{ github.run_id }}-${{ github.run_attempt }}
+          key: flash-v333-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Gelernten Zielausgang speichern
+        if: always() && hashFiles('.cache/opportunity/state.json') != ''
+        uses: actions/cache/save@v5
+        with:
+          path: .cache/opportunity
+          key: opportunity-v333-${{ github.run_id }}-${{ github.run_attempt }}

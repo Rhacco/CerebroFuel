@@ -1,8 +1,8 @@
-"""v3.3.2 full-pool volume-priority flash scan.
+"""v3.3.3 full-pool early-opportunity flash scan.
 
 A single LCW map response supplies fresh rate, rolling 24h volume and market cap
 for every configured coin. Persisted five-minute observations turn that one
-request into 10/30/60-minute volume and price trends for the complete pool.
+request into 5/15/30/60-minute volume and price trends for the complete pool.
 """
 
 from __future__ import annotations
@@ -14,9 +14,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-STATE_VERSION = "flash-v332-two-tail-unlock-r1"
-WINDOWS = (10, 30, 60)
-WINDOW_WEIGHTS = {10: 0.20, 30: 0.65, 60: 0.15}
+STATE_VERSION = "flash-v333-early-opportunity-r1"
+WINDOWS = (5, 15, 30, 60)
+WINDOW_WEIGHTS = {5: 0.15, 15: 0.30, 30: 0.40, 60: 0.15}
 
 PURPLE = "🟣"
 GREEN = "🟢"
@@ -338,7 +338,7 @@ def _map_fallback_score(row: Mapping[str, Any], btc: Mapping[str, Any]) -> tuple
 
 
 def _falling_knife_limits(config: Mapping[str, Any]) -> dict[int, float]:
-    defaults = {10: -0.18, 30: -0.30, 60: -0.55}
+    defaults = {5: -0.12, 15: -0.24, 30: -0.40, 60: -0.75}
     section = config.get("falling_knife_pct") if isinstance(config, Mapping) else None
     if not isinstance(section, Mapping):
         return defaults
@@ -415,14 +415,19 @@ def _signal_for_coin(
         else:
             gaps[window] = None
 
-    quality = {0: 0.15, 1: 0.48, 2: 0.80, 3: 1.0}[covered]
+    quality = 0.15 + 0.85 * (covered / max(len(WINDOWS), 1))
     gap30 = gaps.get(30)
     available = [(float(gaps[w]), WINDOW_WEIGHTS[w]) for w in WINDOWS if gaps.get(w) is not None]
     weighted_gap = (
         sum(value * weight for value, weight in available) / sum(weight for _, weight in available)
         if available else 0.0
     )
-    primary_axis = float(gap30) if gap30 is not None else weighted_gap
+    early_available = [(float(gaps[w]), WINDOW_WEIGHTS[w]) for w in (5, 15, 30) if gaps.get(w) is not None]
+    early_axis = (
+        sum(value * weight for value, weight in early_available) / sum(weight for _, weight in early_available)
+        if early_available else weighted_gap
+    )
+    primary_axis = 0.72 * (float(gap30) if gap30 is not None else weighted_gap) + 0.28 * early_axis
     knife_limits = _falling_knife_limits(config)
     falling_windows = sum(
         price_changes.get(window) is not None
@@ -563,9 +568,9 @@ def update_and_score(
             config=config,
         )
 
-    full = sum(signal.covered_windows == 3 for signal in signals.values())
+    full = sum(signal.covered_windows == len(WINDOWS) for signal in signals.values())
     average_coverage = (
-        sum(signal.covered_windows for signal in signals.values()) / (len(signals) * 3.0)
+        sum(signal.covered_windows for signal in signals.values()) / (len(signals) * float(len(WINDOWS)))
         if signals else 0.0
     )
     return signals, {

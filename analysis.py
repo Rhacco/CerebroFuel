@@ -1,5 +1,5 @@
-# v3.3.2 volume-priority analysis engine
-"""Volume-first crypto analysis with 30-minute divergence priority."""
+# v3.3.3 opportunity/exit analysis engine
+"""Core LCW analysis used by the v3.3.3 opportunity and exit-warning layers."""
 
 from __future__ import annotations
 
@@ -146,6 +146,23 @@ class CoinAnalysis:
     unlock_penalty: float = 0.0
     unlock_risk: str = "none"
     unlock_event_date: str | None = None
+    entry_score: float = 0.0
+    exit_score: float = 0.0
+    opportunity_score: float = 0.0
+    opportunity_direction: str = "="
+    opportunity_color: str = YELLOW
+    opportunity_count: int = 0
+    exact_interval_volume: bool = False
+    market_data_provider: str = "none"
+    market_data_symbol: str | None = None
+    opportunity_data_confidence: float = 0.0
+    demand_score: float = 0.0
+    base_quality_score: float = 0.0
+    room_to_target_score: float = 0.0
+    target_prior_score: float = 50.0
+    visible_volume_colors: dict[int, str] = field(default_factory=dict)
+    opportunity_reasons: tuple[str, ...] = tuple()
+    market_quality_score: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -1409,7 +1426,7 @@ def _volume_divergence_metrics(
     window_quality: Mapping[int, str],
     config: Mapping[str, Any],
 ) -> tuple[float | None, float, str]:
-    """Primary v3.3.2 signal: direction-aware volume/price pressure over 30m.
+    """Primary v3.3.3 signal: direction-aware volume/price pressure over 30m.
 
     The 10m and 60m windows only corroborate the dominant 30m axis. Falling
     price with rising volume is explicitly negative selling pressure rather than
@@ -1806,7 +1823,7 @@ def build_short_metrics(
         price_changes=price_changes,
         volume_strengths=volume_strengths,
     )
-    # v3.3.2: the 30-minute volume/price gap is the dominant flash layer.
+    # v3.3.3: the 30-minute volume/price gap is the dominant flash layer.
     flash_score = max(flash_score * 0.35, divergence_score)
     if divergence_direction != "=":
         flash_direction = divergence_direction
@@ -2631,8 +2648,8 @@ def build_coin_analysis(
         btc_7d_pct=btc_7d_pct,
         btc_7d_color=btc_7d_color,
         market_cap_bonus=market_cap_bonus,
-        volatility_bonus=8.0 * _clamp(volatility_score / 100.0, 0.0, 1.0),
-        recovery_bonus=12.0 * _clamp(recovery_score / 100.0, 0.0, 1.0),
+        volatility_bonus=4.0 * _clamp(volatility_score / 100.0, 0.0, 1.0),
+        recovery_bonus=8.0 * _clamp(recovery_score / 100.0, 0.0, 1.0),
         unlock_penalty=max(0.0, float(unlock_penalty)),
         unlock_risk=str(unlock_risk),
         unlock_event_date=unlock_event_date,
@@ -2644,34 +2661,79 @@ def strength_count(item: CoinAnalysis) -> int:
 
 
 def confidence_sort_key(item: CoinAnalysis) -> tuple[float, ...]:
-    """Sort volume-first; all other factors are bounded tie-breakers/bonuses."""
+    """Mixed ordering: strongest entry chances and exit warnings compete equally."""
     quality_rank = {"good": 2.0, "uncertain": 1.0, "insufficient": 0.0}.get(item.short.data_quality, 0.0)
-    volume_confirmation = sum(
-        item.short.volume_colors.get(window) in {PURPLE, GREEN, RED, ORANGE}
-        for window in WINDOWS
-    )
-    adjusted_flash = max(0.0, item.flash_score - 0.45 * item.unlock_penalty)
+    direction_strength = max(float(item.entry_score), float(item.exit_score), float(item.opportunity_score))
+    exact_rank = 1.0 if item.exact_interval_volume else 0.0
     return (
-        # Unlock risk can lower selection priority but never changes the signal color itself.
-        float(math.floor(adjusted_flash / 8.0)),
-        float(math.floor(item.ranking_score * 10.0)),
+        float(math.floor(direction_strength * 10.0)),
+        float(math.floor(item.opportunity_score * 10.0)),
+        float(math.floor(item.opportunity_data_confidence * 100.0)),
+        exact_rank,
         float(math.floor(item.flash_score * 10.0)),
-        float(math.floor(item.short.divergence_score * 10.0)),
-        float(volume_confirmation),
-        float(math.floor(item.recovery_bonus * 10.0)),
-        float(math.floor(item.volume_7d_bonus * 10.0)),
-        float(math.floor(item.market_cap_bonus * 10.0)),
         quality_rank,
         float(strength_count(item)),
     )
 
 
+def apply_opportunity_analysis(
+    item: CoinAnalysis,
+    assessment: Mapping[str, Any],
+    *,
+    market_quality: Mapping[str, Any] | None = None,
+) -> CoinAnalysis:
+    """Attach v3.3.3 opportunity data without disturbing legacy diagnostics."""
+    item.entry_score = float(assessment.get("entry_score", 0.0))
+    item.exit_score = float(assessment.get("exit_score", 0.0))
+    item.opportunity_score = float(assessment.get("ranking_score", max(item.entry_score, item.exit_score)))
+    item.opportunity_direction = str(assessment.get("direction", "="))
+    item.opportunity_color = str(assessment.get("color", YELLOW))
+    item.opportunity_count = int(assessment.get("strength_count", 0))
+    item.exact_interval_volume = bool(assessment.get("exact_volume", False))
+    item.market_data_provider = str(assessment.get("provider", "none"))
+    item.market_data_symbol = assessment.get("provider_symbol")
+    item.opportunity_data_confidence = float(assessment.get("data_confidence", 0.0))
+    item.demand_score = float(assessment.get("demand_score", 0.0))
+    item.base_quality_score = float(assessment.get("base_quality_score", 0.0))
+    item.room_to_target_score = float(assessment.get("room_to_target_score", 0.0))
+    item.target_prior_score = float(assessment.get("target_prior_score", 50.0))
+    item.visible_volume_colors = {
+        int(key): str(value) for key, value in (assessment.get("volume_colors") or {}).items()
+    }
+    item.opportunity_reasons = tuple(str(value) for value in assessment.get("reasons", []) if str(value))
+    item.ranking_score = item.opportunity_score
+    item.attention_score = item.opportunity_score
+    item.short.signal_color = item.opportunity_color
+    item.short.direction = item.opportunity_direction
+    # P is the visible pressure diagnostic. Once the new opportunity engine has
+    # a non-neutral, higher-confidence direction, do not leave a contradictory
+    # legacy pressure color on the same Discord line.
+    if item.opportunity_direction == "▲" and item.opportunity_color in {BLUE, GREEN, PURPLE}:
+        item.short.pressure_color = item.opportunity_color
+    elif item.opportunity_direction == "▼" and item.opportunity_color in {ORANGE, RED}:
+        item.short.pressure_color = item.opportunity_color
+    if item.opportunity_direction == "▲":
+        item.short.buy_count = item.opportunity_count
+        item.short.sell_count = min(item.short.sell_count, 2)
+    elif item.opportunity_direction == "▼":
+        item.short.sell_count = item.opportunity_count
+        item.short.buy_count = min(item.short.buy_count, 2)
+    else:
+        item.short.buy_count = item.short.sell_count = 0
+    if market_quality:
+        item.market_quality_score = float(market_quality.get("score", 0.0))
+    return item
+
+
 def format_line(item: CoinAnalysis, *, generated_at: datetime, timezone: str) -> str:
-    volumes = "".join(item.short.volume_colors.get(window, WHITE) for window in WINDOWS)
-    count = strength_count(item)
+    volume_source = item.visible_volume_colors or item.short.volume_colors
+    volumes = "".join(volume_source.get(window, WHITE) for window in WINDOWS)
+    count = item.opportunity_count if item.opportunity_score > 0 else strength_count(item)
+    signal_color = item.opportunity_color if item.opportunity_score > 0 else item.short.signal_color
+    direction = item.opportunity_direction if item.opportunity_score > 0 else item.short.direction
     weekdays = "".join(item.seasonality.best_weekdays[:2])
     common = (
-        f"{item.short.signal_color}{count}{item.short.direction}"
+        f"{signal_color}{count}{direction}"
         f"7{item.volume_7d_color}B{item.btc_24h_color}{item.btc_7d_color}"
         f"P{item.short.pressure_color}V{volumes}N{item.now_color}{weekdays}"
     )
