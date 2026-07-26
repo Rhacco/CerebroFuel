@@ -1,7 +1,7 @@
-# v3.4 category-rotation entry-opportunity analysis engine
-"""Core LCW analysis used by the v3.4 entry-only category-rotation layer."""
+# v3.4.1 category-rotation entry/exit analysis engine
+"""Core LCW analysis used by the v3.4.1 mixed opportunity layer."""
 
-# v3.4 r4 expanded-69 rebuild; source revalidated 2026-07-26.
+# v3.4.1: BTC header reference, weekday regions and mixed buy/sell output.
 from __future__ import annotations
 
 import bisect
@@ -162,6 +162,7 @@ class CoinAnalysis:
     room_to_target_score: float = 0.0
     target_prior_score: float = 50.0
     qualified_entry: bool = False
+    qualified_exit: bool = False
     category_code: str = "?"
     category_score: float = 50.0
     category_color: str = YELLOW
@@ -169,6 +170,8 @@ class CoinAnalysis:
     laggard_score: float = 0.0
     activity_score: float = 0.0
     event_penalty: float = 0.0
+    category_fading_score: float = 0.0
+    category_trend_confidence: float = 0.0
     visible_volume_colors: dict[int, str] = field(default_factory=dict)
     opportunity_reasons: tuple[str, ...] = tuple()
     market_quality_score: float = 0.0
@@ -2735,13 +2738,13 @@ def strength_count(item: CoinAnalysis) -> int:
 
 
 def confidence_sort_key(item: CoinAnalysis) -> tuple[float, ...]:
-    """Entry-only ordering; internal sell pressure can only reject a setup."""
+    """Order by displayed signal strength, then data quality."""
     quality_rank = {"good": 2.0, "uncertain": 1.0, "insufficient": 0.0}.get(item.short.data_quality, 0.0)
     exact_rank = 1.0 if item.exact_interval_volume else 0.0
     return (
-        1.0 if item.qualified_entry else 0.0,
-        float(math.floor(item.entry_score * 10.0)),
+        1.0 if (item.qualified_entry or item.qualified_exit) else 0.0,
         float(math.floor(item.opportunity_score * 10.0)),
+        float(math.floor(max(item.entry_score, item.exit_score) * 10.0)),
         float(math.floor(item.laggard_score * 10.0)),
         float(math.floor(item.category_score * 10.0)),
         float(math.floor(item.opportunity_data_confidence * 100.0)),
@@ -2756,7 +2759,7 @@ def apply_opportunity_analysis(
     *,
     market_quality: Mapping[str, Any] | None = None,
 ) -> CoinAnalysis:
-    """Attach v3.4 opportunity data without disturbing legacy diagnostics."""
+    """Attach v3.4.1 opportunity data without disturbing legacy diagnostics."""
     item.entry_score = float(assessment.get("entry_score", 0.0))
     item.exit_score = float(assessment.get("exit_score", 0.0))
     item.opportunity_score = float(assessment.get("ranking_score", max(item.entry_score, item.exit_score)))
@@ -2772,6 +2775,7 @@ def apply_opportunity_analysis(
     item.room_to_target_score = float(assessment.get("room_to_target_score", 0.0))
     item.target_prior_score = float(assessment.get("target_prior_score", 50.0))
     item.qualified_entry = bool(assessment.get("qualified_entry", False))
+    item.qualified_exit = bool(assessment.get("qualified_exit", False))
     item.category_code = str(assessment.get("category_code", "?"))
     item.category_score = float(assessment.get("category_score", 50.0))
     item.category_color = str(assessment.get("category_color", YELLOW))
@@ -2779,6 +2783,8 @@ def apply_opportunity_analysis(
     item.laggard_score = float(assessment.get("laggard_score", 0.0))
     item.activity_score = float(assessment.get("activity_score", 0.0))
     item.event_penalty = float(assessment.get("event_penalty", 0.0))
+    item.category_fading_score = float(assessment.get("category_fading_score", 0.0))
+    item.category_trend_confidence = float(assessment.get("category_trend_confidence", 0.0))
     item.visible_volume_colors = {
         int(key): str(value) for key, value in (assessment.get("volume_colors") or {}).items()
     }
@@ -2794,11 +2800,64 @@ def apply_opportunity_analysis(
         item.short.pressure_color = item.opportunity_color
         item.short.buy_count = item.opportunity_count
         item.short.sell_count = 0
+    elif item.qualified_exit and item.opportunity_color in {ORANGE, RED}:
+        item.short.pressure_color = item.opportunity_color
+        item.short.sell_count = item.opportunity_count
+        item.short.buy_count = 0
     else:
         item.short.buy_count = item.short.sell_count = 0
     if market_quality:
         item.market_quality_score = float(market_quality.get("score", 0.0))
     return item
+
+
+WEEKDAY_REGIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("S", ("SA", "SO")),
+    ("M", ("MO", "DI")),
+    ("W", ("MI",)),
+    ("D", ("DO", "FR")),
+)
+
+
+def grouped_weekday_regions(seasonality: Seasonality) -> str:
+    """Return two compact week-region positions, padded with '?'.
+
+    Regions are S=weekend, M=Mon/Tue, W=Wed and D=Thu/Fri.  Scores are
+    confidence-weighted from the existing complete-week analysis.  Only
+    positive, sufficiently supported regions are shown.
+    """
+    ranked: list[tuple[str, float, float, int]] = []
+    for code, days in WEEKDAY_REGIONS:
+        values: list[tuple[float, float]] = []
+        for day in days:
+            score = seasonality.weekday_scores.get(day)
+            confidence = seasonality.weekday_confidence.get(day)
+            if score is None or confidence is None or not math.isfinite(float(score)):
+                continue
+            values.append((float(score), max(0.0, min(1.0, float(confidence)))))
+        if not values:
+            continue
+        weight_sum = sum(max(0.08, confidence) for _, confidence in values)
+        score = sum(value * max(0.08, confidence) for value, confidence in values) / weight_sum
+        confidence = sum(confidence for _, confidence in values) / len(values)
+        strong = score > 0.010 and confidence >= 0.43
+        usable = score > 0.0008 and confidence >= 0.31
+        tier = 2 if strong else (1 if usable else 0)
+        if tier:
+            ranked.append((code, score, confidence, tier))
+    ranked.sort(key=lambda item: (item[3], item[1], item[2]), reverse=True)
+    selected: list[str] = []
+    if ranked:
+        selected.append(ranked[0][0])
+    if len(ranked) >= 2:
+        first, second = ranked[0], ranked[1]
+        isolated = (
+            first[1] >= max(0.060, second[1] * 4.5)
+            and first[2] >= second[2] + 0.14
+        )
+        if not isolated:
+            selected.append(second[0])
+    return "".join(selected[:2]).ljust(2, "?")
 
 
 def format_line(item: CoinAnalysis, *, generated_at: datetime, timezone: str) -> str:
@@ -2807,16 +2866,17 @@ def format_line(item: CoinAnalysis, *, generated_at: datetime, timezone: str) ->
     count = item.opportunity_count if item.opportunity_score > 0 else strength_count(item)
     signal_color = item.opportunity_color if item.opportunity_score > 0 else item.short.signal_color
     direction = item.opportunity_direction if item.opportunity_score > 0 else item.short.direction
-    weekdays = "".join(item.seasonality.best_weekdays[:2])
+    weekdays = grouped_weekday_regions(item.seasonality)
     common = (
         f"{signal_color}{count}{direction}"
         f"7{item.volume_7d_color}B{item.btc_24h_color}{item.btc_7d_color}"
-        f"P{item.short.pressure_color}V{volumes}N{item.now_color}{weekdays}"
+        f"P{item.short.pressure_color}V{volumes}N{item.now_color}"
     )
     if item.is_reference:
         minute = generated_at.astimezone(ZoneInfo(timezone)).strftime(":%M")
         return common + minute
-    return common + display_code(item.display_code)
+    category_initial = (item.category_code[:1] or "?").upper()
+    return common + category_initial + weekdays + display_code(item.display_code)
 
 
 def build_report(
@@ -2826,7 +2886,16 @@ def build_report(
     generated_at: datetime,
     timezone: str,
 ) -> str:
-    ordered = sorted(top_coins, key=confidence_sort_key, reverse=True)
+    # Buy opportunities stay above sell warnings for scanability. Selection
+    # already lets a stronger sell warning displace a weaker entry.
+    ordered = sorted(
+        top_coins,
+        key=lambda item: (
+            1 if item.qualified_entry else 0,
+            confidence_sort_key(item),
+        ),
+        reverse=True,
+    )
     return "\n".join(
         [category_line]
         + [format_line(item, generated_at=generated_at, timezone=timezone) for item in ordered]

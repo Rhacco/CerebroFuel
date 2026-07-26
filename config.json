@@ -1,5 +1,5 @@
 {
-  "schema_version": "3.4.0",
+  "schema_version": "3.4.1",
   "reference_coin": "BTC",
   "groups": [
     {
@@ -338,7 +338,7 @@
     "24h",
     "7d"
   ],
-  "coin_universe_revision": "v340-69-altcoins-category-rotation-penalty-rebuild-r4",
+  "coin_universe_revision": "v341-69-altcoins-btc-header-week-regions-mixed-signals-r1",
   "coin_selection": {
     "required_active": [
       "DOGE",
@@ -412,7 +412,7 @@
       "MON"
     ],
     "unique_altcoin_count": 69,
-    "reason": "category-rotation-expanded-69-with-bounded-event-and-unlock-penalties-r4",
+    "reason": "v3.4.1 category rotation with BTC header, grouped weekday regions and mixed entry/exit signals",
     "removed_high_event_or_launch_dependency": [
       "BOME",
       "TRB",
@@ -728,7 +728,14 @@
       "category_laggard": 0.07,
       "recent_activity": 0.03
     },
-    "description": "entry-only top-8; exit score is internal safety filter, category strength and stable active laggards are rewarded"
+    "description": "mixed top-8: category-backed stable laggard entries and confirmed orange/red exits; strongest signals compete, buys display first",
+    "exit_orange": 48.0,
+    "exit_red": 70.0,
+    "minimum_display_exit": 48.0,
+    "minimum_category_fading_for_exit": 28.0,
+    "minimum_category_trend_confidence": 0.34,
+    "maximum_exit_rows": 4,
+    "maximum_exit_rows_per_category": 2
   },
   "target_horizon_hours": 24,
   "target_anchor_spacing_hours": 12,
@@ -1093,7 +1100,16 @@
     "minimum_display_entry": 38.0,
     "minimum_category_score": 36.0,
     "weak_category_exception_entry": 58.0,
-    "description": "category medians+breadth+stability; strong categories lift stable active laggards; weak categories receive few or zero slots"
+    "description": "robust category medians+breadth+stability; BTC is a separate header anchor; strong categories lift stable active laggards; weak categories restrict entries",
+    "header_order": [
+      "BTC",
+      "PAY",
+      "SCP",
+      "UTL",
+      "AI",
+      "MEM"
+    ],
+    "exclude_reference_from_category_score": true
   },
   "event_risk": {
     "enabled": true,
@@ -1377,5 +1393,38 @@
         "reason": "young L1 with launch, ecosystem and very-low-float sensitivity"
       }
     }
+  },
+  "category_state_version": "category-v341-trend-r1",
+  "category_trend": {
+    "enabled": true,
+    "state_version": "category-v341-trend-r1",
+    "windows_minutes": [
+      15,
+      30,
+      60
+    ],
+    "retention_minutes": 240,
+    "tolerance_fraction": 0.4,
+    "description": "persistent category score/demand/breadth trend; confirms exits only after category weakness is observed across runs"
+  },
+  "weekday_regions": {
+    "S": [
+      "SA",
+      "SO"
+    ],
+    "M": [
+      "MO",
+      "DI"
+    ],
+    "W": [
+      "MI"
+    ],
+    "D": [
+      "DO",
+      "FR"
+    ],
+    "display_positions": 2,
+    "missing": "?",
+    "description": "two strongest supported week regions; missing positions are ?"
   }
 }

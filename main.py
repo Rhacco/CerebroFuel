@@ -1,6 +1,6 @@
-"""Entry point for crypto-signal-monitor v3.4 category-rotation opportunity ranking."""
+"""Entry point for crypto-signal-monitor v3.4.1 category-rotation ranking."""
 
-# v3.4 r4 expanded-69 rebuild; source revalidated 2026-07-26.
+# v3.4.1: BTC header anchor, weekday regions and mixed buy/sell top eight.
 from __future__ import annotations
 
 import argparse
@@ -46,6 +46,7 @@ from category_context import (
     format_category_line,
     select_category_entries,
 )
+from category_state import STATE_VERSION as CATEGORY_STATE_VERSION, update_category_state
 from outcome_state import (
     STATE_VERSION as OUTCOME_STATE_VERSION,
     record_entry_candidates,
@@ -59,12 +60,13 @@ from ranking_context import (
     small_cap_bonuses,
 )
 
-APP_VERSION = "3.4.0"
+APP_VERSION = "3.4.1"
 ROOT = Path(__file__).resolve().parent
 DAILY_STATE_PATH = ROOT / ".cache" / "seasonality" / "state.json"
 CHANGED_FLAG = ROOT / ".cache" / "seasonality" / "changed.flag"
 FLASH_STATE_PATH = ROOT / ".cache" / "flash" / "state.json"
 OPPORTUNITY_STATE_PATH = ROOT / ".cache" / "opportunity" / "state.json"
+CATEGORY_STATE_PATH = ROOT / ".cache" / "category" / "state.json"
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -89,6 +91,10 @@ def load_config(path: Path) -> dict[str, Any]:
     if str(config.get("outcome_state_version")) != OUTCOME_STATE_VERSION:
         raise ValueError(
             "config.json outcome_state_version stimmt nicht mit outcome_state.py überein."
+        )
+    if str(config.get("category_state_version")) != CATEGORY_STATE_VERSION:
+        raise ValueError(
+            "config.json category_state_version stimmt nicht mit category_state.py überein."
         )
     return config
 
@@ -699,15 +705,24 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
         flash_signals=flash_signals,
         intraday_by_display=intraday_by_display,
     )
+    category_trends, category_trend_stats = update_category_state(
+        path=CATEGORY_STATE_PATH,
+        assessments=category_assessments,
+        now_ms=now_ms,
+        config=config,
+    )
     for category in category_assessments.values():
+        trend = category_trends.get(category.code)
         print(
             f"Kategorie {category.code}: {category.score:.1f} {category.color}; "
             f"Breite+={category.positive_breadth:.0%} Breite-={category.negative_breadth:.0%} "
-            f"Slots={category.max_slots} Abdeckung={category.coverage:.0%}."
+            f"Slots={category.max_slots} Abdeckung={category.coverage:.0%} "
+            f"Fading={float(trend.fading_score if trend else 0.0):.1f}."
         )
     category_line = format_category_line(
         category_assessments,
         config=config,
+        btc_color=market_quality.btc_reference_color,
         generated_at=now,
         timezone=str(config.get("timezone", "Europe/Berlin")),
     )
@@ -755,15 +770,21 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
         display, api_code = pair
         signal = flash_signals.get(display)
         fallback = pre_anomaly_score(current_by_code[api_code], reference_current)
-        public_entry, _public_exit, public_quality = public_probe(display)
+        public_entry, public_exit, public_quality = public_probe(display)
         category = coin_category_context.get(display)
         category_boost = float(category.category_boost if category else 0.0)
         laggard = float(category.laggard_score if category else 0.0)
         event_penalty = float(category.event_penalty if category else 0.0)
-        primary = max(float(signal.entry_score if signal else 0.0), fallback * 0.32, public_entry)
+        category_code = str(category.category_code if category else "")
+        category_trend = category_trends.get(category_code)
+        category_fading = float(category_trend.fading_score if category_trend else 0.0)
+        entry_primary = max(float(signal.entry_score if signal else 0.0), fallback * 0.32, public_entry)
+        exit_primary = max(float(signal.exit_score if signal else 0.0), public_exit)
+        exit_primary *= 0.72 + 0.28 * min(1.0, category_fading / 60.0)
+        primary = max(entry_primary, exit_primary)
         volume_context = volume_7d_context.get(display) or {}
-        priority = combined_priority(
-            primary_gap_score=primary,
+        entry_priority = combined_priority(
+            primary_gap_score=entry_primary,
             volume_7d_bonus=float(volume_context.get("bonus") or 0.0),
             market_cap_bonus=float(cap_bonuses.get(display, 0.0)),
             volatility_score=float(signal.volatility_score if signal else 0.0),
@@ -771,17 +792,27 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
             unlock_penalty=float((unlock_by_display.get(display) or {}).get("penalty") or 0.0),
             quality=max(float(signal.quality if signal else 0.35), public_quality),
         )
-        priority += category_boost + min(12.0, laggard * 0.12) - event_penalty
+        entry_priority += category_boost + min(12.0, laggard * 0.12) - event_penalty
+        exit_priority = (
+            exit_primary
+            + min(14.0, category_fading * 0.14)
+            + min(8.0, public_exit * 0.08)
+        )
+        priority = max(entry_priority, exit_priority)
         return (
-            primary + max(0.0, category_boost) + min(10.0, laggard * 0.10),
+            max(
+                entry_primary + max(0.0, category_boost) + min(10.0, laggard * 0.10),
+                exit_primary + min(12.0, category_fading * 0.12),
+            ),
             priority,
             primary,
             max(float(signal.quality if signal else 0.0), public_quality),
             display,
         )
 
-    # Entry-only detail preselection.  Strong categories and their stable active
-    # laggards are examined first; turnover and rotation preserve broad coverage.
+    # Mixed detail preselection. Strong category laggards and elevated coins in
+    # fading categories are examined first; turnover and rotation preserve broad
+    # coverage for both entry and exit signals.
     positive_ranked = sorted(resolved_pool, key=flash_order_key, reverse=True)
     candidate_order: list[tuple[str, str]] = []
 
@@ -1047,6 +1078,7 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
             live_target=live_target_profiles.get(display),
             unlock_penalty=float((unlock_by_display.get(display) or {}).get("penalty") or 0.0),
             category_context=(coin_category_context.get(display).to_dict() if coin_category_context.get(display) else None),
+            category_trend=(category_trends.get(coin_category_context.get(display).category_code).to_dict() if coin_category_context.get(display) and category_trends.get(coin_category_context.get(display).category_code) else None),
             event_penalty=float(coin_category_context.get(display).event_penalty if coin_category_context.get(display) else 0.0),
             config=config,
         )
@@ -1075,18 +1107,21 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
         opportunity_by_display,
         category_assessments,
         top_count=top_count,
+        config=config,
     )
     for item in top_analyses:
         print(
-            f"Chance {item.display_code}: Rang={item.opportunity_score:.1f} "
-            f"Entry={item.entry_score:.1f} Kategorie={item.category_code}/{item.category_score:.1f} "
+            f"Signal {item.display_code}: Rang={item.opportunity_score:.1f} "
+            f"Entry={item.entry_score:.1f} Exit={item.exit_score:.1f} "
+            f"Kategorie={item.category_code}/{item.category_score:.1f} "
+            f"Fading={item.category_fading_score:.1f} "
             f"Nachzügler={item.laggard_score:.1f} Nachfrage={item.demand_score:.1f} "
             f"Basis={item.base_quality_score:.1f} Raum={item.room_to_target_score:.1f} "
             f"Quelle={item.market_data_provider} Unlock=-{item.unlock_penalty:.1f} "
             f"Event=-{item.event_penalty:.1f}."
         )
     if not top_analyses:
-        print("Keine aktuell ausreichend abgesicherte Kaufchance; nur Kategorienzeile wird gesendet.")
+        print("Kein ausreichend bestätigtes Kauf- oder Verkaufssignal; nur Kopfzeile wird gesendet.")
     report = build_report(
         category_line,
         top_analyses,
@@ -1119,6 +1154,11 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
                 "market_quality": market_quality.to_dict(),
                 "category_line": category_line,
                 "categories": {code: value.to_dict() for code, value in category_assessments.items()},
+                "category_trends": {code: value.to_dict() for code, value in category_trends.items()},
+                "category_trend_state": {
+                    "version": CATEGORY_STATE_VERSION,
+                    "stats": category_trend_stats,
+                },
                 "coin_category_context": {display: value.to_dict() for display, value in coin_category_context.items()},
                 "market_data": {
                     "stats": market_data_stats,

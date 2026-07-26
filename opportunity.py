@@ -1,6 +1,6 @@
-"""Entry-only opportunity scoring with category rotation for v3.4."""
+"""Mixed entry/exit opportunity scoring with category rotation for v3.4.1."""
 
-# v3.4 r4 expanded-69 rebuild; source revalidated 2026-07-26.
+# v3.4.1: category-aware entries plus confirmed orange/red sell warnings.
 from __future__ import annotations
 
 import math
@@ -24,6 +24,8 @@ class MarketQuality:
     positive_breadth: float
     negative_breadth: float
     exact_volume: bool
+    btc_reference_score: float
+    btc_reference_color: str
     reasons: tuple[str, ...] = tuple()
 
     def to_dict(self) -> dict[str, Any]:
@@ -59,6 +61,7 @@ class OpportunityAssessment:
     falling_knife: bool
     late_entry: bool
     qualified_entry: bool
+    qualified_exit: bool
     category_code: str
     category_score: float
     category_color: str
@@ -66,6 +69,8 @@ class OpportunityAssessment:
     laggard_score: float
     activity_score: float
     event_penalty: float
+    category_fading_score: float
+    category_trend_confidence: float
     volume_colors: dict[int, str] = field(default_factory=dict)
     reasons: tuple[str, ...] = tuple()
 
@@ -193,6 +198,21 @@ def build_market_quality(
         reasons.append("breiter Verkaufsdruck")
     if btc.exact_interval_volume:
         reasons.append("BTC-Intervallvolumen bestätigt")
+    btc_reference_score = max(0.0, min(100.0, 0.58 * structure + 0.42 * demand))
+    if btc.data_quality == "insufficient":
+        btc_reference_color = "🟤"
+    elif btc_reference_score >= 78.0:
+        btc_reference_color = PURPLE
+    elif btc_reference_score >= 62.0:
+        btc_reference_color = GREEN
+    elif btc_reference_score >= 48.0:
+        btc_reference_color = BLUE
+    elif btc_reference_score >= 36.0:
+        btc_reference_color = YELLOW
+    elif btc_reference_score >= 24.0:
+        btc_reference_color = ORANGE
+    else:
+        btc_reference_color = RED
     return MarketQuality(
         score=round(signed, 4),
         color=color,
@@ -204,6 +224,8 @@ def build_market_quality(
         positive_breadth=round(positive_breadth, 5),
         negative_breadth=round(negative_breadth, 5),
         exact_volume=btc.exact_interval_volume,
+        btc_reference_score=round(btc_reference_score, 4),
+        btc_reference_color=btc_reference_color,
         reasons=tuple(reasons),
     )
 
@@ -277,6 +299,7 @@ def assess_opportunity(
     live_target: Mapping[str, Any] | None,
     unlock_penalty: float,
     category_context: Mapping[str, Any] | None,
+    category_trend: Mapping[str, Any] | None,
     event_penalty: float,
     config: Mapping[str, Any],
 ) -> OpportunityAssessment:
@@ -302,6 +325,7 @@ def assess_opportunity(
     )
 
     category_context = category_context if isinstance(category_context, Mapping) else {}
+    category_trend = category_trend if isinstance(category_trend, Mapping) else {}
     category_score = float(category_context.get("category_score", 50.0))
     category_color = str(category_context.get("category_color") or YELLOW)
     category_code = str(category_context.get("category_code") or "?")
@@ -312,6 +336,8 @@ def assess_opportunity(
         float((config.get("event_risk") or {}).get("maximum_penalty", 12.0)),
         max(0.0, float(event_penalty)),
     )
+    category_fading = max(0.0, min(100.0, float(category_trend.get("fading_score", 0.0))))
+    category_trend_confidence = max(0.0, min(1.0, float(category_trend.get("confidence", 0.0))))
 
     # BTC remains an internal regime guard.  Category rotation now carries more
     # weight, while BTC can only nudge an otherwise valid setup.
@@ -361,14 +387,28 @@ def assess_opportunity(
     base_break = 100.0 if metrics.falling_knife else 100.0 * _clamp((-p60 - 0.25) / 1.8)
     failed_run = max(float(metrics.overextension_penalty), 100.0 * _clamp((p180 - 2.0) / 7.0) * _clamp((55.0 - demand) / 40.0))
     market_negative = max(0.0, -market_quality.score)
-    exit_raw = (
-        0.44 * negative_gap
-        + 0.18 * float(metrics.sell_pressure_score)
-        + 0.15 * base_break
-        + 0.09 * failed_run
-        + 0.08 * market_negative
-        + 0.06 * min(100.0, bounded_unlock * 5.0)
+    range_position = float(metrics.range_position_180) if metrics.range_position_180 is not None else 0.50
+    elevated = max(
+        float(metrics.overextension_penalty),
+        100.0 * _clamp((range_position - 0.70) / 0.30),
+        100.0 * _clamp((p180 - 1.50) / 5.50),
     )
+    reversal = max(
+        base_break,
+        100.0 * _clamp((-p60 - 0.05) / 1.40),
+        100.0 * _clamp((0.50 - float(metrics.taker_buy_share.get(30) or 0.50)) / 0.14),
+    )
+    missing_support = max(negative_gap, float(metrics.sell_pressure_score))
+    # The sell side mirrors the entry idea but is not a simple inversion:
+    # elevated price, fading demand and a weakening category must agree.
+    exit_raw = (
+        0.30 * missing_support
+        + 0.25 * elevated
+        + 0.20 * category_fading
+        + 0.15 * reversal
+        + 0.10 * (100.0 * data_confidence)
+    )
+    exit_raw += 0.04 * market_negative + 0.03 * min(100.0, bounded_unlock * 5.0)
     # A visibly rising price with clearly shrinking/lagging volume is the
     # canonical unsupported-run warning.  Preserve that signal even when the
     # broader base has not broken yet.
@@ -377,12 +417,12 @@ def assess_opportunity(
     unsupported_run_floor = 0.0
     if p30 >= 0.35 and v30 is not None and float(v30) <= 0.82:
         unsupported_run_floor = 44.0 + min(24.0, (p30 - 0.35) * 7.0 + (0.82 - float(v30)) * 55.0)
+        unsupported_run_floor += min(12.0, category_fading * 0.12)
     exit_score = max(0.0, min(100.0, max(exit_raw, unsupported_run_floor))) * (0.76 + 0.24 * data_confidence)
     if metrics.falling_knife:
         exit_score = max(exit_score, 58.0 + min(28.0, abs(p60) * 10.0))
 
-    # Exit pressure is retained only as an internal safety filter.  It can no
-    # longer rank into Discord as a sell recommendation.
+    # Exit pressure also remains an entry safety drag.
     safety_drag = max(0.0, exit_score - 34.0) * 0.24
     entry = max(0.0, entry - safety_drag)
 
@@ -391,6 +431,9 @@ def assess_opportunity(
     entry_blue = float(thresholds.get("entry_blue", 38.0))
     entry_green = float(thresholds.get("entry_green", 60.0))
     entry_purple = float(thresholds.get("entry_purple", 80.0))
+    exit_orange = float(thresholds.get("exit_orange", 48.0))
+    exit_red = float(thresholds.get("exit_red", 70.0))
+    minimum_exit = float(thresholds.get("minimum_display_exit", exit_orange))
     minimum_display = float(thresholds.get("minimum_display_entry", entry_blue))
     maximum_exit = float(thresholds.get("maximum_exit_risk_for_display", 62.0))
     category_rules = config.get("category_rotation") if isinstance(config, Mapping) else None
@@ -410,6 +453,22 @@ def assess_opportunity(
         and room >= 28.0
         and data_confidence >= 0.55
     )
+    fading_confirmed = category_fading >= float(thresholds.get("minimum_category_fading_for_exit", 28.0))
+    elevated_without_demand = elevated >= 28.0 and demand <= 58.0 and missing_support >= 34.0
+    qualified_exit = (
+        exit_score >= minimum_exit
+        and fading_confirmed
+        and elevated_without_demand
+        and category_trend_confidence >= float(thresholds.get("minimum_category_trend_confidence", 0.34))
+        and data_confidence >= 0.55
+    )
+    # Never publish contradictory directions. A materially stronger side wins.
+    if qualified and qualified_exit:
+        if exit_score >= entry + 7.0:
+            qualified = False
+        else:
+            qualified_exit = False
+
     if qualified:
         direction = "▲"
         if entry >= entry_purple and exact and base >= 62.0 and laggard_score >= 18.0:
@@ -420,6 +479,11 @@ def assess_opportunity(
             color = BLUE
         count = min(8, max(2, int(round(entry / 12.5))))
         ranking = entry + 3.0 * data_confidence + min(4.0, laggard_score * 0.04)
+    elif qualified_exit:
+        direction = "▼"
+        color = RED if exit_score >= exit_red else ORANGE
+        count = min(8, max(2, int(round(exit_score / 12.5))))
+        ranking = exit_score + 2.5 * data_confidence + min(5.0, category_fading * 0.05)
     else:
         direction = "="
         color = YELLOW
@@ -434,6 +498,9 @@ def assess_opportunity(
         reasons.append(f"Nachzügler {laggard_score:.0f}")
     if exit_score > maximum_exit:
         reasons.append("interne Risikosperre")
+    if qualified_exit:
+        reasons.append(f"Verkauf {exit_score:.0f}")
+        reasons.append(f"Kategorie fällt {category_fading:.0f}")
     if target_confidence >= 0.35:
         reasons.append(f"3/5%-Historie {target_score:.0f}")
     if market_adjustment <= -6:
@@ -475,6 +542,7 @@ def assess_opportunity(
         falling_knife=metrics.falling_knife,
         late_entry=metrics.late_entry,
         qualified_entry=qualified,
+        qualified_exit=qualified_exit,
         category_code=category_code,
         category_score=round(category_score, 4),
         category_color=category_color,
@@ -482,6 +550,8 @@ def assess_opportunity(
         laggard_score=round(laggard_score, 4),
         activity_score=round(activity_score, 4),
         event_penalty=round(bounded_event, 4),
+        category_fading_score=round(category_fading, 4),
+        category_trend_confidence=round(category_trend_confidence, 4),
         volume_colors=visible_colors,
         reasons=tuple(dict.fromkeys(reasons)),
     )
