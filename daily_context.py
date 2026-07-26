@@ -1,4 +1,4 @@
-"""Stable v3.3.3 daily cache with histories, weekday context and target priors."""
+"""Stable v3.4 daily cache with histories, weekday context and target priors."""
 
 from __future__ import annotations
 
@@ -31,8 +31,8 @@ from analysis import (
     rolling_week_returns,
 )
 
-STATE_VERSION = "3.3.3"
-STATE_REVISION = "complete-weeks-pool-neutral-target-r3-v333"
+STATE_VERSION = "3.4.0"
+STATE_REVISION = "complete-weeks-pool-neutral-target-r4-v340"
 
 
 def local_day_key(now: datetime, timezone: str) -> str:
@@ -528,7 +528,7 @@ def build_daily_contexts(
             current=raw.current,
             best_weekdays=stable_days,
             samples=raw.samples,
-            source=f"daily-v333-opportunity-{mode}",
+            source=f"daily-v340-category-{mode}",
             current_score=raw.current_score,
             current_confidence=raw.current_confidence,
             weekday_scores=raw.weekday_scores,

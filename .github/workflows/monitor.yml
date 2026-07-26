@@ -1,7 +1,7 @@
 name: Crypto Signal Monitor
 
-# v3.3.3: mixed entry/exit opportunities, exact public interval-volume confirmation,
-# 3h-base/late-entry guards, +3/+5% target memory and BTC market-quality reference.
+# v3.4: category rotation, entry-only top list, stable active laggards,
+# exact interval-volume confirmation, 3h guards and +3/+5% target memory.
 on:
   workflow_dispatch:
     inputs:
@@ -43,8 +43,10 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: .cache/seasonality
-          key: seasonality-v333-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
+          key: seasonality-v340-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
           restore-keys: |
+            seasonality-v340-${{ steps.context-key.outputs.day }}-
+            seasonality-v340-
             seasonality-v333-${{ steps.context-key.outputs.day }}-
             seasonality-v333-
             seasonality-v332-${{ steps.context-key.outputs.day }}-
@@ -58,8 +60,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: .cache/flash
-          key: flash-v333-${{ github.run_id }}-${{ github.run_attempt }}
+          key: flash-v340-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            flash-v340-
             flash-v333-
             flash-v332-
             flash-v331-
@@ -70,8 +73,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: .cache/opportunity
-          key: opportunity-v333-${{ github.run_id }}-${{ github.run_attempt }}
+          key: opportunity-v340-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            opportunity-v340-
             opportunity-v333-
 
       - name: Abhängigkeiten installieren
@@ -90,7 +94,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: .cache/seasonality
-          key: seasonality-v333-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
+          key: seasonality-v340-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
 
       - name: Frische Analyse ausführen
         env:
@@ -105,11 +109,11 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: .cache/flash
-          key: flash-v333-${{ github.run_id }}-${{ github.run_attempt }}
+          key: flash-v340-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Gelernten Zielausgang speichern
         if: always() && hashFiles('.cache/opportunity/state.json') != ''
         uses: actions/cache/save@v5
         with:
           path: .cache/opportunity
-          key: opportunity-v333-${{ github.run_id }}-${{ github.run_attempt }}
+          key: opportunity-v340-${{ github.run_id }}-${{ github.run_attempt }}

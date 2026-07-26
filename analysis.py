@@ -1,5 +1,5 @@
-# v3.3.3 opportunity/exit analysis engine
-"""Core LCW analysis used by the v3.3.3 opportunity and exit-warning layers."""
+# v3.4 category-rotation entry-opportunity analysis engine
+"""Core LCW analysis used by the v3.4 entry-only category-rotation layer."""
 
 from __future__ import annotations
 
@@ -160,6 +160,14 @@ class CoinAnalysis:
     base_quality_score: float = 0.0
     room_to_target_score: float = 0.0
     target_prior_score: float = 50.0
+    qualified_entry: bool = False
+    category_code: str = "?"
+    category_score: float = 50.0
+    category_color: str = YELLOW
+    category_boost: float = 0.0
+    laggard_score: float = 0.0
+    activity_score: float = 0.0
+    event_penalty: float = 0.0
     visible_volume_colors: dict[int, str] = field(default_factory=dict)
     opportunity_reasons: tuple[str, ...] = tuple()
     market_quality_score: float = 0.0
@@ -264,7 +272,13 @@ CODE_ALIASES = {
     "ETH": "ETH",
     "SOL": "SOL",
     "XLM": "XLM",
-    "RENDER": "RND"
+    "RENDER": "RND",
+    "BNB": "BNB",
+    "XRP": "XRP",
+    "BCH": "BCH",
+    "LINK": "LNK",
+    "HBAR": "HBR",
+    "PENDLE": "PND"
 }
 
 
@@ -1480,7 +1494,7 @@ def _volume_divergence_metrics(
     window_quality: Mapping[int, str],
     config: Mapping[str, Any],
 ) -> tuple[float | None, float, str]:
-    """Primary v3.3.3 signal: direction-aware volume/price pressure over 30m.
+    """Primary v3.4 signal: direction-aware volume/price pressure over 30m.
 
     The 10m and 60m windows only corroborate the dominant 30m axis. Falling
     price with rising volume is explicitly negative selling pressure rather than
@@ -1877,7 +1891,7 @@ def build_short_metrics(
         price_changes=price_changes,
         volume_strengths=volume_strengths,
     )
-    # v3.3.3: the 30-minute volume/price gap is the dominant flash layer.
+    # v3.4: the 30-minute volume/price gap is the dominant flash layer.
     flash_score = max(flash_score * 0.35, divergence_score)
     if divergence_direction != "=":
         flash_direction = divergence_direction
@@ -2715,18 +2729,18 @@ def strength_count(item: CoinAnalysis) -> int:
 
 
 def confidence_sort_key(item: CoinAnalysis) -> tuple[float, ...]:
-    """Mixed ordering: strongest entry chances and exit warnings compete equally."""
+    """Entry-only ordering; internal sell pressure can only reject a setup."""
     quality_rank = {"good": 2.0, "uncertain": 1.0, "insufficient": 0.0}.get(item.short.data_quality, 0.0)
-    direction_strength = max(float(item.entry_score), float(item.exit_score), float(item.opportunity_score))
     exact_rank = 1.0 if item.exact_interval_volume else 0.0
     return (
-        float(math.floor(direction_strength * 10.0)),
+        1.0 if item.qualified_entry else 0.0,
+        float(math.floor(item.entry_score * 10.0)),
         float(math.floor(item.opportunity_score * 10.0)),
+        float(math.floor(item.laggard_score * 10.0)),
+        float(math.floor(item.category_score * 10.0)),
         float(math.floor(item.opportunity_data_confidence * 100.0)),
         exact_rank,
-        float(math.floor(item.flash_score * 10.0)),
         quality_rank,
-        float(strength_count(item)),
     )
 
 
@@ -2736,7 +2750,7 @@ def apply_opportunity_analysis(
     *,
     market_quality: Mapping[str, Any] | None = None,
 ) -> CoinAnalysis:
-    """Attach v3.3.3 opportunity data without disturbing legacy diagnostics."""
+    """Attach v3.4 opportunity data without disturbing legacy diagnostics."""
     item.entry_score = float(assessment.get("entry_score", 0.0))
     item.exit_score = float(assessment.get("exit_score", 0.0))
     item.opportunity_score = float(assessment.get("ranking_score", max(item.entry_score, item.exit_score)))
@@ -2751,6 +2765,14 @@ def apply_opportunity_analysis(
     item.base_quality_score = float(assessment.get("base_quality_score", 0.0))
     item.room_to_target_score = float(assessment.get("room_to_target_score", 0.0))
     item.target_prior_score = float(assessment.get("target_prior_score", 50.0))
+    item.qualified_entry = bool(assessment.get("qualified_entry", False))
+    item.category_code = str(assessment.get("category_code", "?"))
+    item.category_score = float(assessment.get("category_score", 50.0))
+    item.category_color = str(assessment.get("category_color", YELLOW))
+    item.category_boost = float(assessment.get("category_boost", 0.0))
+    item.laggard_score = float(assessment.get("laggard_score", 0.0))
+    item.activity_score = float(assessment.get("activity_score", 0.0))
+    item.event_penalty = float(assessment.get("event_penalty", 0.0))
     item.visible_volume_colors = {
         int(key): str(value) for key, value in (assessment.get("volume_colors") or {}).items()
     }
@@ -2762,16 +2784,10 @@ def apply_opportunity_analysis(
     # P is the visible pressure diagnostic. Once the new opportunity engine has
     # a non-neutral, higher-confidence direction, do not leave a contradictory
     # legacy pressure color on the same Discord line.
-    if item.opportunity_direction == "▲" and item.opportunity_color in {BLUE, GREEN, PURPLE}:
+    if item.qualified_entry and item.opportunity_color in {BLUE, GREEN, PURPLE}:
         item.short.pressure_color = item.opportunity_color
-    elif item.opportunity_direction == "▼" and item.opportunity_color in {ORANGE, RED}:
-        item.short.pressure_color = item.opportunity_color
-    if item.opportunity_direction == "▲":
         item.short.buy_count = item.opportunity_count
-        item.short.sell_count = min(item.short.sell_count, 2)
-    elif item.opportunity_direction == "▼":
-        item.short.sell_count = item.opportunity_count
-        item.short.buy_count = min(item.short.buy_count, 2)
+        item.short.sell_count = 0
     else:
         item.short.buy_count = item.short.sell_count = 0
     if market_quality:
@@ -2798,7 +2814,7 @@ def format_line(item: CoinAnalysis, *, generated_at: datetime, timezone: str) ->
 
 
 def build_report(
-    reference: CoinAnalysis,
+    category_line: str,
     top_coins: list[CoinAnalysis],
     *,
     generated_at: datetime,
@@ -2806,7 +2822,7 @@ def build_report(
 ) -> str:
     ordered = sorted(top_coins, key=confidence_sort_key, reverse=True)
     return "\n".join(
-        [format_line(reference, generated_at=generated_at, timezone=timezone)]
+        [category_line]
         + [format_line(item, generated_at=generated_at, timezone=timezone) for item in ordered]
     )
 

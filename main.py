@@ -1,4 +1,4 @@
-"""Entry point for crypto-signal-monitor v3.3.3 short-term opportunity ranking."""
+"""Entry point for crypto-signal-monitor v3.4 category-rotation opportunity ranking."""
 
 from __future__ import annotations
 
@@ -40,6 +40,11 @@ from flash_state import STATE_VERSION as FLASH_STATE_VERSION, update_and_score
 from unlock_context import unlock_context
 from market_data import IntradayMetrics, PublicMarketDataClient
 from opportunity import assess_opportunity, build_market_quality
+from category_context import (
+    build_category_context,
+    format_category_line,
+    select_category_entries,
+)
 from outcome_state import (
     STATE_VERSION as OUTCOME_STATE_VERSION,
     record_entry_candidates,
@@ -53,7 +58,7 @@ from ranking_context import (
     small_cap_bonuses,
 )
 
-APP_VERSION = "3.3.3"
+APP_VERSION = "3.4.0"
 ROOT = Path(__file__).resolve().parent
 DAILY_STATE_PATH = ROOT / ".cache" / "seasonality" / "state.json"
 CHANGED_FLAG = ROOT / ".cache" / "seasonality" / "changed.flag"
@@ -95,7 +100,7 @@ def env_bool(name: str, default: bool = True) -> bool:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Kompakter Krypto-Auffälligkeitsmonitor")
+    parser = argparse.ArgumentParser(description="Kompakter Krypto-Kategorien- und Chancenmonitor")
     parser.add_argument("--config", default=str(ROOT / "config.json"))
     parser.add_argument("--no-send", action="store_true")
     mode = parser.add_mutually_exclusive_group()
@@ -153,6 +158,29 @@ def parse_layout(
     missing_required = [name for name in required if name not in seen_displays]
     if missing_required:
         raise ValueError("Verbindliche aktive Coins fehlen: " + ", ".join(missing_required))
+
+    raw_categories = config.get("categories")
+    if not isinstance(raw_categories, list) or not raw_categories:
+        raise ValueError("config.json benötigt Kategorien für alle aktiven Coins.")
+    category_owner: dict[str, str] = {}
+    for raw_category in raw_categories:
+        if not isinstance(raw_category, Mapping):
+            raise ValueError("Ungültiger Kategorieeintrag in config.json.")
+        code = str(raw_category.get("code") or "").upper()
+        if not code or len(code) > 3:
+            raise ValueError(f"Ungültiges Kategorie-Kürzel: {code!r}")
+        for raw_name in raw_category.get("coins", []):
+            name = str(raw_name).upper()
+            if name in category_owner:
+                raise ValueError(f"Coin {name} ist doppelt kategorisiert: {category_owner[name]}, {code}")
+            category_owner[name] = code
+    missing_category = sorted(name for name in seen_displays if name not in category_owner)
+    unknown_category = sorted(name for name in category_owner if name not in seen_displays)
+    if missing_category or unknown_category:
+        raise ValueError(
+            "Kategorien stimmen nicht mit dem Coin-Pool überein; "
+            f"fehlend={missing_category}, unbekannt={unknown_category}."
+        )
     return reference, pool
 
 
@@ -258,9 +286,9 @@ def _log_weekday_context(display: str, context: Mapping[str, Any]) -> None:
 
 
 def prepare_daily_context(config: dict[str, Any], api_key: str) -> int:
-    """Prepare the exact v3.3.3 daily cache before any Discord message.
+    """Prepare the exact v3.4 daily cache before any Discord message.
 
-    Compatible v3.3.1/v3.3.0/v3.2.7 raw histories are reused; only newly added coins are bootstrapped.
+    Compatible v3.3.3 and older raw histories are reused; only newly added coins are bootstrapped.
     No long LCW requests are needed for that migration. On later calendar days,
     cached histories are updated with one recent request per existing coin.
     """
@@ -281,7 +309,7 @@ def prepare_daily_context(config: dict[str, Any], api_key: str) -> int:
     )
     if exact:
         print(
-            f"Tageskontext {today}: exakter v3.3.3-Cache, 0 Langzeitabfragen "
+            f"Tageskontext {today}: exakter v3.4-Cache, 0 Langzeitabfragen "
             f"({len(expected)} Coins)."
         )
         _set_changed(False)
@@ -665,6 +693,24 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
         f"negative Breite={market_quality.negative_breadth:.0%}."
     )
 
+    category_assessments, coin_category_context = build_category_context(
+        config=config,
+        flash_signals=flash_signals,
+        intraday_by_display=intraday_by_display,
+    )
+    for category in category_assessments.values():
+        print(
+            f"Kategorie {category.code}: {category.score:.1f} {category.color}; "
+            f"Breite+={category.positive_breadth:.0%} Breite-={category.negative_breadth:.0%} "
+            f"Slots={category.max_slots} Abdeckung={category.coverage:.0%}."
+        )
+    category_line = format_category_line(
+        category_assessments,
+        config=config,
+        generated_at=now,
+        timezone=str(config.get("timezone", "Europe/Berlin")),
+    )
+
     prices_by_display = {
         display: float(current_by_code[api_code].get("rate") or 0.0)
         for display, api_code in [resolved_reference, *resolved_pool]
@@ -708,8 +754,12 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
         display, api_code = pair
         signal = flash_signals.get(display)
         fallback = pre_anomaly_score(current_by_code[api_code], reference_current)
-        public_entry, public_exit, public_quality = public_probe(display)
-        primary = max(signal.score if signal else 0.0, fallback * 0.45, public_entry, public_exit)
+        public_entry, _public_exit, public_quality = public_probe(display)
+        category = coin_category_context.get(display)
+        category_boost = float(category.category_boost if category else 0.0)
+        laggard = float(category.laggard_score if category else 0.0)
+        event_penalty = float(category.event_penalty if category else 0.0)
+        primary = max(float(signal.entry_score if signal else 0.0), fallback * 0.32, public_entry)
         volume_context = volume_7d_context.get(display) or {}
         priority = combined_priority(
             primary_gap_score=primary,
@@ -720,73 +770,55 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
             unlock_penalty=float((unlock_by_display.get(display) or {}).get("penalty") or 0.0),
             quality=max(float(signal.quality if signal else 0.35), public_quality),
         )
+        priority += category_boost + min(12.0, laggard * 0.12) - event_penalty
         return (
-            max(
-                float(signal.entry_score if signal else 0.0),
-                float(signal.exit_score if signal else 0.0),
-                public_entry,
-                public_exit,
-                primary,
-            ),
+            primary + max(0.0, category_boost) + min(10.0, laggard * 0.10),
             priority,
             primary,
             max(float(signal.quality if signal else 0.0), public_quality),
             display,
         )
 
-    # Mixed preselection prevents a strong sell warning from hiding a strong entry
-    # setup, and vice versa.  Turnover and rotation keep quiet coins observable.
-    positive_ranked = sorted(
-        resolved_pool,
-        key=lambda pair: (
-            max(
-                float(flash_signals.get(pair[0]).entry_score if flash_signals.get(pair[0]) else 0.0),
-                public_probe(pair[0])[0],
-            ),
-            flash_order_key(pair),
-        ),
-        reverse=True,
-    )
-    negative_ranked = sorted(
-        resolved_pool,
-        key=lambda pair: (
-            max(
-                float(flash_signals.get(pair[0]).exit_score if flash_signals.get(pair[0]) else 0.0),
-                public_probe(pair[0])[1],
-            ),
-            flash_order_key(pair),
-        ),
-        reverse=True,
-    )
-    anomaly_ranked = sorted(resolved_pool, key=flash_order_key, reverse=True)
-    turnover_ranked = sorted(
-        resolved_pool,
-        key=lambda pair: _turnover_pct(current_by_code[pair[1]]),
-        reverse=True,
-    )
+    # Entry-only detail preselection.  Strong categories and their stable active
+    # laggards are examined first; turnover and rotation preserve broad coverage.
+    positive_ranked = sorted(resolved_pool, key=flash_order_key, reverse=True)
     candidate_order: list[tuple[str, str]] = []
 
     def add_candidate(pair: tuple[str, str]) -> None:
         if pair not in candidate_order:
             candidate_order.append(pair)
 
-    for index in range(max(len(positive_ranked), len(negative_ranked))):
-        if index < len(positive_ranked):
-            add_candidate(positive_ranked[index])
-        if index < len(negative_ranked):
-            add_candidate(negative_ranked[index])
-        if len(candidate_order) >= max(18, int(config.get("preselect_coin_count", 26)) - 4):
-            break
-    for pair in anomaly_ranked[:8]:
+    pair_by_display = {display: (display, api) for display, api in resolved_pool}
+    for raw_category in config.get("categories", []):
+        if not isinstance(raw_category, Mapping):
+            continue
+        code = str(raw_category.get("code") or "").upper()
+        category = category_assessments.get(code)
+        members = [
+            pair_by_display[display]
+            for display in (str(value).upper() for value in raw_category.get("coins", []))
+            if display in pair_by_display
+        ]
+        members.sort(key=flash_order_key, reverse=True)
+        keep = max(2, min(5, (category.max_slots if category else 1) + 2))
+        for pair in members[:keep]:
+            add_candidate(pair)
+
+    for pair in positive_ranked[: max(18, int(config.get("preselect_coin_count", 26)) - 3)]:
         add_candidate(pair)
-    for pair in turnover_ranked[:5]:
+    turnover_ranked = sorted(
+        resolved_pool,
+        key=lambda pair: _turnover_pct(current_by_code[pair[1]]),
+        reverse=True,
+    )
+    for pair in turnover_ranked[:4]:
         add_candidate(pair)
     rotation = sorted(resolved_pool, key=lambda pair: pair[0])
     if rotation:
         slot = int(now.timestamp() // 300)
-        for offset in range(min(3, len(rotation))):
+        for offset in range(min(2, len(rotation))):
             add_candidate(rotation[(slot + offset) % len(rotation)])
-    for pair in anomaly_ranked:
+    for pair in positive_ranked:
         add_candidate(pair)
 
     max_detail_requests = max(
@@ -904,9 +936,13 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
                 short_by_code[pair[1]], intraday_by_display.get(pair[0])
             )
         ]
+    if not valid_pairs:
+        raise RuntimeError("Kein Altcoin besitzt ausreichend belastbare Kurzzeitdaten.")
     if len(valid_pairs) < top_count:
-        raise RuntimeError(
-            f"Nur {len(valid_pairs)}/{top_count} Coins besitzen vollständige Kurzzeitdaten."
+        print(
+            f"HINWEIS: Nur {len(valid_pairs)}/{top_count} Altcoins mit belastbaren Detaildaten; "
+            "Bericht wird ohne schwache Füllzeilen erstellt.",
+            file=sys.stderr,
         )
 
     common = {
@@ -1009,6 +1045,8 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
             historical_target=target_profile_for_coin(daily_state, display),
             live_target=live_target_profiles.get(display),
             unlock_penalty=float((unlock_by_display.get(display) or {}).get("penalty") or 0.0),
+            category_context=(coin_category_context.get(display).to_dict() if coin_category_context.get(display) else None),
+            event_penalty=float(coin_category_context.get(display).event_penalty if coin_category_context.get(display) else 0.0),
             config=config,
         )
         opportunity_by_display[display] = assessment.to_dict()
@@ -1031,17 +1069,25 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
         config=config,
     )
 
-    top_analyses = sorted(analyses, key=confidence_sort_key, reverse=True)[:top_count]
+    top_analyses = select_category_entries(
+        analyses,
+        opportunity_by_display,
+        category_assessments,
+        top_count=top_count,
+    )
     for item in top_analyses:
         print(
             f"Chance {item.display_code}: Rang={item.opportunity_score:.1f} "
-            f"Entry={item.entry_score:.1f} Exit={item.exit_score:.1f} "
-            f"Nachfrage={item.demand_score:.1f} Basis={item.base_quality_score:.1f} "
-            f"Raum={item.room_to_target_score:.1f} Zielhistorie={item.target_prior_score:.1f} "
-            f"Quelle={item.market_data_provider} Unlock=-{item.unlock_penalty:.1f}."
+            f"Entry={item.entry_score:.1f} Kategorie={item.category_code}/{item.category_score:.1f} "
+            f"Nachzügler={item.laggard_score:.1f} Nachfrage={item.demand_score:.1f} "
+            f"Basis={item.base_quality_score:.1f} Raum={item.room_to_target_score:.1f} "
+            f"Quelle={item.market_data_provider} Unlock=-{item.unlock_penalty:.1f} "
+            f"Event=-{item.event_penalty:.1f}."
         )
+    if not top_analyses:
+        print("Keine aktuell ausreichend abgesicherte Kaufchance; nur Kategorienzeile wird gesendet.")
     report = build_report(
-        reference_analysis,
+        category_line,
         top_analyses,
         generated_at=now,
         timezone=str(config.get("timezone", "Europe/Berlin")),
@@ -1070,6 +1116,9 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
                 },
                 "flash_stats": flash_stats,
                 "market_quality": market_quality.to_dict(),
+                "category_line": category_line,
+                "categories": {code: value.to_dict() for code, value in category_assessments.items()},
+                "coin_category_context": {display: value.to_dict() for display, value in coin_category_context.items()},
                 "market_data": {
                     "stats": market_data_stats,
                     "coins": {

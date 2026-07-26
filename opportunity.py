@@ -1,4 +1,4 @@
-"""Entry-opportunity, exit-warning and market-regime scoring for v3.3.3."""
+"""Entry-only opportunity scoring with category rotation for v3.4."""
 
 from __future__ import annotations
 
@@ -57,6 +57,14 @@ class OpportunityAssessment:
     data_confidence: float
     falling_knife: bool
     late_entry: bool
+    qualified_entry: bool
+    category_code: str
+    category_score: float
+    category_color: str
+    category_boost: float
+    laggard_score: float
+    activity_score: float
+    event_penalty: float
     volume_colors: dict[int, str] = field(default_factory=dict)
     reasons: tuple[str, ...] = tuple()
 
@@ -267,6 +275,8 @@ def assess_opportunity(
     historical_target: Mapping[str, Any] | None,
     live_target: Mapping[str, Any] | None,
     unlock_penalty: float,
+    category_context: Mapping[str, Any] | None,
+    event_penalty: float,
     config: Mapping[str, Any],
 ) -> OpportunityAssessment:
     metrics = intraday if intraday and intraday.data_quality != "insufficient" else _fallback_intraday(short, display)
@@ -290,22 +300,45 @@ def assess_opportunity(
         float(metrics.sell_pressure_score) * 0.90,
     )
 
-    market_adjustment = max(-12.0, min(8.0, market_quality.score * 0.12))
+    category_context = category_context if isinstance(category_context, Mapping) else {}
+    category_score = float(category_context.get("category_score", 50.0))
+    category_color = str(category_context.get("category_color") or YELLOW)
+    category_code = str(category_context.get("category_code") or "?")
+    category_boost = float(category_context.get("category_boost", 0.0))
+    laggard_score = float(category_context.get("laggard_score", 0.0))
+    activity_score = float(category_context.get("activity_score", 0.0))
+    bounded_event = min(
+        float((config.get("event_risk") or {}).get("maximum_penalty", 12.0)),
+        max(0.0, float(event_penalty)),
+    )
+
+    # BTC remains an internal regime guard.  Category rotation now carries more
+    # weight, while BTC can only nudge an otherwise valid setup.
+    market_adjustment = max(-7.0, min(5.0, market_quality.score * 0.08))
     base = float(metrics.base_quality_score)
     room = float(metrics.room_to_target_score)
     demand = float(metrics.demand_score)
+    weights = (config.get("opportunity_score") or {}).get("entry_weights", {})
+    def weight(name: str, fallback: float) -> float:
+        try:
+            return max(0.0, float(weights.get(name, fallback)))
+        except (TypeError, ValueError):
+            return fallback
     raw_entry = (
-        0.28 * demand
-        + 0.20 * base
-        + 0.15 * positive_gap
-        + 0.10 * relative
-        + 0.10 * room
-        + 0.12 * target_score
-        + 0.05 * liquidity
+        weight("current_demand", 0.22) * demand
+        + weight("three_hour_base", 0.17) * base
+        + weight("volume_price_gap", 0.12) * positive_gap
+        + weight("relative_strength", 0.05) * relative
+        + weight("room_to_target", 0.10) * room
+        + weight("target_history", 0.10) * target_score
+        + weight("liquidity", 0.05) * liquidity
+        + weight("category_strength", 0.09) * category_score
+        + weight("category_laggard", 0.07) * laggard_score
+        + weight("recent_activity", 0.03) * activity_score
     )
 
-    falling_penalty = 78.0 if metrics.falling_knife else 0.0
-    late_penalty = 0.42 * float(metrics.overextension_penalty)
+    falling_penalty = 82.0 if metrics.falling_knife else 0.0
+    late_penalty = 0.46 * float(metrics.overextension_penalty)
     bounded_unlock = min(float(config.get("unlock_risk", {}).get("maximum_penalty", 20.0)), max(0.0, unlock_penalty))
     data_confidence = {
         "good": 1.0,
@@ -314,13 +347,13 @@ def assess_opportunity(
     }.get(metrics.data_quality, 0.45)
     if not exact:
         data_confidence = min(data_confidence, 0.72)
-    entry = raw_entry + market_adjustment - falling_penalty - late_penalty - bounded_unlock
+    entry = raw_entry + market_adjustment + category_boost - falling_penalty - late_penalty - bounded_unlock - bounded_event
     entry = max(0.0, min(100.0, entry))
     entry *= 0.72 + 0.28 * data_confidence
     if metrics.falling_knife:
-        entry = min(entry, 14.0)
+        entry = min(entry, 10.0)
     if metrics.late_entry:
-        entry = min(entry, 58.0)
+        entry = min(entry, 52.0)
 
     p60 = float(metrics.price_changes.get(60) or 0.0)
     p180 = float(metrics.price_changes.get(180) or 0.0)
@@ -347,50 +380,67 @@ def assess_opportunity(
     if metrics.falling_knife:
         exit_score = max(exit_score, 58.0 + min(28.0, abs(p60) * 10.0))
 
+    # Exit pressure is retained only as an internal safety filter.  It can no
+    # longer rank into Discord as a sell recommendation.
+    safety_drag = max(0.0, exit_score - 34.0) * 0.24
+    entry = max(0.0, entry - safety_drag)
+
     thresholds = config.get("opportunity_score") if isinstance(config, Mapping) else None
     thresholds = thresholds if isinstance(thresholds, Mapping) else {}
-    entry_blue = float(thresholds.get("entry_blue", 42.0))
-    entry_green = float(thresholds.get("entry_green", 62.0))
-    entry_purple = float(thresholds.get("entry_purple", 82.0))
-    exit_orange = float(thresholds.get("exit_orange", 44.0))
-    exit_red = float(thresholds.get("exit_red", 70.0))
+    entry_blue = float(thresholds.get("entry_blue", 38.0))
+    entry_green = float(thresholds.get("entry_green", 60.0))
+    entry_purple = float(thresholds.get("entry_purple", 80.0))
+    minimum_display = float(thresholds.get("minimum_display_entry", entry_blue))
+    maximum_exit = float(thresholds.get("maximum_exit_risk_for_display", 62.0))
+    category_rules = config.get("category_rotation") if isinstance(config, Mapping) else None
+    category_rules = category_rules if isinstance(category_rules, Mapping) else {}
+    minimum_category = float(category_rules.get("minimum_category_score", 36.0))
+    weak_exception = float(category_rules.get("weak_category_exception_entry", 58.0))
+    max_slots = int(category_context.get("max_slots", 0))
 
-    if entry >= exit_score + 2.0:
+    category_allowed = max_slots > 0 and (category_score >= minimum_category or entry >= weak_exception)
+    qualified = (
+        category_allowed
+        and entry >= minimum_display
+        and exit_score <= maximum_exit
+        and not metrics.falling_knife
+        and not metrics.late_entry
+        and base >= 40.0
+        and room >= 28.0
+        and data_confidence >= 0.55
+    )
+    if qualified:
         direction = "▲"
-        dominant = entry
-        if entry >= entry_purple and exact and base >= 62.0 and not metrics.late_entry:
+        if entry >= entry_purple and exact and base >= 62.0 and laggard_score >= 18.0:
             color = PURPLE
         elif entry >= entry_green:
             color = GREEN
-        elif entry >= entry_blue:
-            color = BLUE
         else:
-            color = YELLOW
-    elif exit_score >= entry + 2.0:
-        direction = "▼"
-        dominant = exit_score
-        color = RED if exit_score >= exit_red else (ORANGE if exit_score >= exit_orange else YELLOW)
+            color = BLUE
+        count = min(8, max(2, int(round(entry / 12.5))))
+        ranking = entry + 3.0 * data_confidence + min(4.0, laggard_score * 0.04)
     else:
-        direction = "▲" if entry >= exit_score else "▼"
-        dominant = max(entry, exit_score)
+        direction = "="
         color = YELLOW
-
-    count = 0 if color == YELLOW else min(8, max(2, int(round(dominant / 12.5))))
-    ranking = dominant + 3.0 * data_confidence
-    if color == YELLOW:
-        ranking *= 0.72
+        count = 0
+        ranking = max(0.0, entry * 0.45)
 
     reasons: list[str] = list(metrics.reasons)
     if entry >= entry_green:
         reasons.append(f"Entry {entry:.0f}")
-    if exit_score >= exit_orange:
-        reasons.append(f"Exit-Risiko {exit_score:.0f}")
+    reasons.append(f"Kategorie {category_code} {category_score:.0f}")
+    if laggard_score >= 20.0:
+        reasons.append(f"Nachzügler {laggard_score:.0f}")
+    if exit_score > maximum_exit:
+        reasons.append("interne Risikosperre")
     if target_confidence >= 0.35:
         reasons.append(f"3/5%-Historie {target_score:.0f}")
     if market_adjustment <= -6:
         reasons.append("schwacher Gesamtmarkt")
     if bounded_unlock >= 8:
         reasons.append("Unlock-Abzug")
+    if bounded_event >= 7:
+        reasons.append("Ereignis-Abzug")
 
     visible_colors = {
         window: metrics.volume_colors.get(window, short.volume_colors.get(window, WHITE))
@@ -423,6 +473,14 @@ def assess_opportunity(
         data_confidence=round(data_confidence, 4),
         falling_knife=metrics.falling_knife,
         late_entry=metrics.late_entry,
+        qualified_entry=qualified,
+        category_code=category_code,
+        category_score=round(category_score, 4),
+        category_color=category_color,
+        category_boost=round(category_boost, 4),
+        laggard_score=round(laggard_score, 4),
+        activity_score=round(activity_score, 4),
+        event_penalty=round(bounded_event, 4),
         volume_colors=visible_colors,
         reasons=tuple(dict.fromkeys(reasons)),
     )

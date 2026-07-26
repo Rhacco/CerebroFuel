@@ -1,4 +1,4 @@
-"""v3.3.3 bounded cross-sectional context and BTC comparison helpers.
+"""v3.4 bounded cross-sectional context and BTC comparison helpers.
 
 The primary ranking remains the recent volume/price divergence.  This module only
 provides bounded secondary context so market cap, seven-day volume and BTC

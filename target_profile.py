@@ -1,4 +1,4 @@
-"""Historical +3%/+5% target priors for v3.3.3.
+"""Historical +3%/+5% target priors for v3.4.
 
 The daily cache already stores LCW price observations.  This module uses only
 past points and never looks beyond an anchor's 24-hour horizon.  Sparse history

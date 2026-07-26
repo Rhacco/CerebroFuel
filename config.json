@@ -1,72 +1,11 @@
 {
-  "schema_version": "3.3.3",
+  "schema_version": "3.4.0",
   "reference_coin": "BTC",
   "groups": [
     {
-      "name": "top_3x_turnover",
+      "name": "mem",
       "coins": [
-        "ARKM",
-        {
-          "display": "MON",
-          "codes": [
-            "_________MON"
-          ]
-        },
-        "BOME",
-        "GALA",
-        "ORDI",
-        "TRB",
-        "KAITO",
-        "MOODENG",
-        {
-          "display": "BIO",
-          "codes": [
-            "__BIO"
-          ]
-        },
-        {
-          "display": "PNUT",
-          "codes": [
-            "_PNUT"
-          ]
-        }
-      ]
-    },
-    {
-      "name": "top_5x_turnover",
-      "coins": [
-        {
-          "display": "MEGA",
-          "codes": [
-            "__________________MEGA"
-          ]
-        },
-        "W",
-        {
-          "display": "XPL",
-          "codes": [
-            "_XPL"
-          ]
-        },
-        "FET",
-        "INJ",
-        "ENA",
-        "AAVE",
-        "OP",
-        "ARB",
-        "CRV"
-      ]
-    },
-    {
-      "name": "top_10x_turnover",
-      "coins": [
-        {
-          "display": "TRUMP",
-          "codes": [
-            "_______________________________TRUMP"
-          ]
-        },
-        "WIF",
+        "DOGE",
         {
           "display": "PEPE",
           "codes": [
@@ -79,79 +18,13 @@
             "__BONK"
           ]
         },
+        "WIF",
         {
-          "display": "SUI",
+          "display": "FLOKI",
           "codes": [
-            "_SUI"
+            "_FLOKI"
           ]
         },
-        "UNI",
-        {
-          "display": "TAO",
-          "codes": [
-            "____TAO"
-          ]
-        },
-        "LTC",
-        "DOGE",
-        "ADA"
-      ]
-    },
-    {
-      "name": "fast_swing_screenshot_additions",
-      "coins": [
-        {
-          "display": "IO",
-          "codes": [
-            "_IO"
-          ]
-        },
-        "RAY",
-        "S",
-        {
-          "display": "ATH",
-          "codes": [
-            "____________ATH"
-          ]
-        },
-        "SUSHI",
-        "APE",
-        "FARTCOIN",
-        {
-          "display": "ZETA",
-          "codes": [
-            "_ZETA"
-          ]
-        },
-        "SEI"
-      ]
-    },
-    {
-      "name": "restored_liquid_fast_swing",
-      "coins": [
-        {
-          "display": "HYPE",
-          "codes": [
-            "______HYPE"
-          ]
-        },
-        "AVAX",
-        "NEAR",
-        "ONDO",
-        "DOT",
-        {
-          "display": "WLD",
-          "codes": [
-            "__WLD"
-          ]
-        },
-        {
-          "display": "MORPHO",
-          "codes": [
-            "_MORPHO"
-          ]
-        },
-        "FIL",
         {
           "display": "PENGU",
           "codes": [
@@ -159,24 +32,136 @@
           ]
         },
         {
+          "display": "TRUMP",
+          "codes": [
+            "_______________________________TRUMP"
+          ]
+        },
+        "MOODENG",
+        {
+          "display": "PNUT",
+          "codes": [
+            "_PNUT"
+          ]
+        },
+        "FARTCOIN"
+      ]
+    },
+    {
+      "name": "ai",
+      "coins": [
+        {
+          "display": "TAO",
+          "codes": [
+            "____TAO"
+          ]
+        },
+        "FET",
+        "RENDER",
+        {
+          "display": "IO",
+          "codes": [
+            "_IO"
+          ]
+        },
+        {
+          "display": "WLD",
+          "codes": [
+            "__WLD"
+          ]
+        },
+        "LINK",
+        "KAITO",
+        "ARKM",
+        {
+          "display": "ATH",
+          "codes": [
+            "____________ATH"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pay",
+      "coins": [
+        "XRP",
+        "XLM",
+        "LTC",
+        "BCH"
+      ]
+    },
+    {
+      "name": "utl",
+      "coins": [
+        {
+          "display": "HYPE",
+          "codes": [
+            "______HYPE"
+          ]
+        },
+        "UNI",
+        "AAVE",
+        "CRV",
+        "RAY",
+        "SUSHI",
+        "INJ",
+        "ONDO",
+        {
+          "display": "MORPHO",
+          "codes": [
+            "_MORPHO"
+          ]
+        },
+        "LDO",
+        {
           "display": "ETHFI",
           "codes": [
             "_ETHFI"
           ]
         },
+        "JTO",
+        "PYTH",
+        "FIL",
+        "GALA",
+        "PENDLE",
+        "W",
+        {
+          "display": "BIO",
+          "codes": [
+            "__BIO"
+          ]
+        },
+        "APE",
+        "ENA",
+        "KMNO"
+      ]
+    },
+    {
+      "name": "scp",
+      "coins": [
+        "ETH",
+        "SOL",
+        "BNB",
+        "ADA",
+        {
+          "display": "SUI",
+          "codes": [
+            "_SUI"
+          ]
+        },
+        "APT",
+        "AVAX",
+        "NEAR",
+        "DOT",
+        "HBAR",
+        "SEI",
+        "S",
+        "OP",
+        "ARB",
         {
           "display": "TIA",
           "codes": [
             "_TIA"
-          ]
-        },
-        "LDO",
-        "PYTH",
-        "JTO",
-        {
-          "display": "FLOKI",
-          "codes": [
-            "_FLOKI"
           ]
         },
         {
@@ -185,11 +170,24 @@
             "ZK"
           ]
         },
-        "KMNO",
-        "ETH",
-        "SOL",
-        "XLM",
-        "RENDER"
+        {
+          "display": "MEGA",
+          "codes": [
+            "__________________MEGA"
+          ]
+        },
+        {
+          "display": "XPL",
+          "codes": [
+            "_XPL"
+          ]
+        },
+        {
+          "display": "MON",
+          "codes": [
+            "_________MON"
+          ]
+        }
       ]
     }
   ],
@@ -269,7 +267,7 @@
     "30": -0.2
   },
   "request_timeout_seconds": 25,
-  "discord_username": "Krypto-Monitor",
+  "discord_username": "Krypto-Monitor v3.4",
   "now_signal": {
     "light": 0.35,
     "clear": 1.05,
@@ -288,7 +286,7 @@
   "temporal_axis_strong": 0.34,
   "temporal_confirmation_points": 3,
   "seasonality_lookback_days": 300,
-  "quality_revision": "complete-weeks-pool-neutral-target-r3-v333",
+  "quality_revision": "complete-weeks-pool-neutral-target-r4-v340",
   "temporal_guard_threshold": 0.1,
   "daily_history_days": 300,
   "weekday_enter_confirmations": 2,
@@ -309,8 +307,8 @@
   "exit_red_score": 68.0,
   "max_short_detail_requests": 28,
   "flash_retention_minutes": 780,
-  "flash_snapshot_version": "flash-v333-early-opportunity-r1",
-  "volume_priority_revision": "entry-exit-exact-volume-target-r1",
+  "flash_snapshot_version": "flash-v340-category-opportunity-r1",
+  "volume_priority_revision": "category-laggard-entry-only-r1",
   "primary_gap_window_minutes": 30,
   "volume_windows_minutes": [
     5,
@@ -329,159 +327,106 @@
     "24h",
     "7d"
   ],
-  "coin_universe_revision": "v333-60-altcoins-opportunity-target-r1",
+  "coin_universe_revision": "v340-63-altcoins-category-rotation-penalty-expanded-r3",
   "coin_selection": {
     "required_active": [
-      "ARKM",
-      "MON",
-      "BOME",
+      "DOGE",
+      "PEPE",
+      "BONK",
+      "WIF",
+      "FLOKI",
+      "PENGU",
+      "TAO",
+      "FET",
+      "RENDER",
+      "IO",
+      "WLD",
+      "LINK",
+      "XRP",
+      "XLM",
+      "LTC",
+      "BCH",
+      "HYPE",
+      "UNI",
+      "AAVE",
+      "CRV",
+      "RAY",
+      "SUSHI",
+      "INJ",
+      "ONDO",
+      "MORPHO",
+      "LDO",
+      "ETHFI",
+      "JTO",
+      "PYTH",
+      "FIL",
       "GALA",
-      "ORDI",
-      "TRB",
+      "PENDLE",
+      "ETH",
+      "SOL",
+      "BNB",
+      "ADA",
+      "SUI",
+      "APT",
+      "AVAX",
+      "NEAR",
+      "DOT",
+      "HBAR",
+      "SEI",
+      "S",
+      "OP",
+      "ARB",
+      "TIA",
+      "ZKSYNC",
+      "MEGA",
+      "W",
+      "XPL",
+      "TRUMP",
       "KAITO",
       "MOODENG",
       "BIO",
       "PNUT",
+      "APE",
+      "FARTCOIN",
+      "ARKM",
+      "MON",
+      "ATH",
+      "ENA",
+      "KMNO"
+    ],
+    "unique_altcoin_count": 63,
+    "reason": "category-rotation-expanded-with-bounded-event-and-unlock-penalties-r3",
+    "removed_high_event_or_launch_dependency": [
+      "BOME",
+      "ORDI",
+      "TRB",
+      "ZETA"
+    ],
+    "added_mature_liquid": [
+      "BNB",
+      "XRP",
+      "BCH",
+      "LINK",
+      "HBAR",
+      "PENDLE"
+    ],
+    "readded_with_penalties": [
       "MEGA",
       "W",
       "XPL",
-      "FET",
-      "INJ",
-      "ENA",
-      "AAVE",
-      "OP",
-      "ARB",
-      "CRV",
       "TRUMP",
-      "WIF",
-      "PEPE",
-      "BONK",
-      "SUI",
-      "UNI",
-      "TAO",
-      "LTC",
-      "DOGE",
-      "ADA",
-      "IO",
-      "RAY",
-      "S",
-      "ATH",
-      "SUSHI",
-      "APE",
-      "FARTCOIN",
-      "ZETA",
-      "SEI",
-      "HYPE",
-      "AVAX",
-      "NEAR",
-      "ONDO",
-      "DOT",
-      "WLD",
-      "MORPHO",
-      "FIL",
-      "PENGU",
-      "ETHFI",
-      "TIA",
-      "LDO",
-      "PYTH",
-      "JTO",
-      "FLOKI",
-      "ZKSYNC",
-      "KMNO",
-      "ETH",
-      "SOL",
-      "XLM",
-      "RENDER"
-    ],
-    "top_3x": [
-      "ARKM",
-      "MON",
-      "BOME",
-      "GALA",
-      "ORDI",
-      "TRB",
       "KAITO",
       "MOODENG",
       "BIO",
-      "PNUT"
-    ],
-    "top_5x": [
-      "MEGA",
-      "W",
-      "XPL",
-      "FET",
-      "INJ",
-      "ENA",
-      "AAVE",
-      "OP",
-      "ARB",
-      "CRV"
-    ],
-    "top_10x": [
-      "TRUMP",
-      "WIF",
-      "PEPE",
-      "BONK",
-      "SUI",
-      "UNI",
-      "TAO",
-      "LTC",
-      "DOGE",
-      "ADA"
-    ],
-    "screenshot_top15": [
-      "MEGA",
-      "W",
-      "ARKM",
-      "MON",
-      "XPL",
-      "TRUMP",
-      "BOME",
-      "GALA",
-      "ORDI",
-      "TRB",
-      "KAITO",
-      "FET",
-      "MOODENG",
-      "WIF",
-      "BIO"
-    ],
-    "fast_swing_screenshot": [
-      "IO",
-      "RAY",
-      "S",
-      "ATH",
-      "MOODENG",
-      "SUSHI",
+      "PNUT",
       "APE",
       "FARTCOIN",
-      "ZETA",
-      "SEI"
-    ],
-    "unique_altcoin_count": 60,
-    "reason": "top-10-per-leverage-plus-screenshot-fast-swing-plus-21-restored-liquid-candidates",
-    "restored_liquid_fast_swing": [
-      "HYPE",
-      "AVAX",
-      "NEAR",
-      "ONDO",
-      "DOT",
-      "WLD",
-      "MORPHO",
-      "FIL",
-      "PENGU",
-      "ETHFI",
-      "TIA",
-      "LDO",
-      "PYTH",
-      "JTO",
-      "FLOKI",
-      "ZKSYNC",
+      "ARKM",
+      "MON",
+      "ATH",
+      "ENA",
       "KMNO",
-      "ETH",
-      "SOL",
-      "XLM",
-      "RENDER"
+      "APT"
     ]
   },
   "falling_knife_pct": {
@@ -491,34 +436,10 @@
     "30": -0.3,
     "60": -0.55
   },
-  "flash_two_tail": {
-    "positive_blue": 24.0,
-    "positive_green": 50.0,
-    "positive_purple": 76.0,
-    "negative_orange": 24.0,
-    "negative_red": 68.0,
-    "description": "positive only when price is stable; negative when volume underperforms price or confirms a falling knife"
-  },
   "unlock_risk": {
     "enabled": true,
     "maximum_penalty": 20.0,
     "events": {
-      "W": {
-        "date": "2026-07-24",
-        "base_penalty": 19.0,
-        "structural_penalty": 7.0,
-        "risk": "very_high",
-        "recipient": "Core Contributors",
-        "source": "https://tokenomist.ai/wormhole/unlock-events"
-      },
-      "XPL": {
-        "date": "2026-07-25",
-        "base_penalty": 18.0,
-        "structural_penalty": 8.0,
-        "risk": "very_high",
-        "recipient": "Ecosystem and Growth",
-        "source": "https://tokenomist.ai/plasma/updates"
-      },
       "SUI": {
         "date": "2026-08-01",
         "base_penalty": 17.0,
@@ -526,22 +447,6 @@
         "risk": "very_high",
         "recipient": "Community Reserve",
         "source": "https://tokenomist.ai/sui/unlock-events"
-      },
-      "ZETA": {
-        "date": "2026-08-01",
-        "base_penalty": 14.0,
-        "structural_penalty": 5.0,
-        "risk": "high",
-        "recipient": "Core Contributors",
-        "source": "https://tokenomist.ai/zetachain/unlock-events"
-      },
-      "ENA": {
-        "date": "2026-08-02",
-        "base_penalty": 17.0,
-        "structural_penalty": 8.0,
-        "risk": "very_high",
-        "recipient": "Core Contributors",
-        "source": "https://tokenomist.ai/ethena/updates"
       },
       "ARB": {
         "date": "2026-08-16",
@@ -551,14 +456,6 @@
         "recipient": "Arbitrum DAO Treasury",
         "source": "https://tokenomist.ai/arbitrum/unlock-events"
       },
-      "KAITO": {
-        "date": "2026-08-20",
-        "base_penalty": 16.0,
-        "structural_penalty": 9.0,
-        "risk": "very_high",
-        "recipient": "Core Contributors",
-        "source": "https://tokenomist.ai/kaito/unlock-events"
-      },
       "OP": {
         "date": "2026-10-11",
         "base_penalty": 9.0,
@@ -566,22 +463,6 @@
         "risk": "high",
         "recipient": "Seed Fund",
         "source": "https://tokenomist.ai/optimism/unlock-events"
-      },
-      "MON": {
-        "date": "2026-11-24",
-        "base_penalty": 7.0,
-        "structural_penalty": 4.0,
-        "risk": "medium",
-        "recipient": "Category Labs Treasury",
-        "source": "https://tokenomist.ai/monad/updates"
-      },
-      "ATH": {
-        "date": null,
-        "base_penalty": 0.0,
-        "structural_penalty": 3.0,
-        "risk": "medium",
-        "recipient": "linear emissions",
-        "source": "https://tokenomist.ai/aethir/unlock-events"
       },
       "HYPE": {
         "date": "2026-08-06",
@@ -591,15 +472,6 @@
         "recipient": "Core Contributors",
         "source": "https://tokenomist.ai/hyperliquid/unlock-events",
         "note": "Only about 22.24% of total supply reported unlocked; cliff schedule into 2027."
-      },
-      "KMNO": {
-        "date": "2026-07-30",
-        "base_penalty": 18.0,
-        "structural_penalty": 9.0,
-        "risk": "very_high",
-        "recipient": "Core Contributors",
-        "source": "https://tokenomist.ai/kamino/unlock-events",
-        "note": "About 51.1% unlocked; cliff schedule into 2027."
       },
       "AVAX": {
         "date": "2026-08-10",
@@ -681,29 +553,140 @@
         "recipient": "inflation/release mechanisms",
         "source": "https://tokenomist.ai/render-token/unlock-events",
         "note": "No upcoming cliff shown; about 80.52% released with long-run mechanisms."
+      },
+      "MEGA": {
+        "date": null,
+        "base_penalty": 0.0,
+        "structural_penalty": 10.0,
+        "risk": "very_high",
+        "recipient": "KPI rewards, VC, team/advisors and ecosystem mechanisms",
+        "source": "https://www.megaeth.com/token",
+        "note": "Only a small part of supply is circulating; 53% is KPI-based and other allocations vest through 2030."
+      },
+      "W": {
+        "date": "2026-08-07",
+        "base_penalty": 16.0,
+        "structural_penalty": 7.0,
+        "risk": "very_high",
+        "recipient": "Core Contributors",
+        "source": "https://tokenomist.ai/wormhole/unlock-events",
+        "note": "About 62.33% unlocked; release schedule continues into 2028."
+      },
+      "XPL": {
+        "date": "2026-07-28",
+        "base_penalty": 18.0,
+        "structural_penalty": 9.0,
+        "risk": "very_high",
+        "recipient": "Ecosystem and Growth",
+        "source": "https://tokenomist.ai/plasma/unlock-events",
+        "note": "Near cliff and an open-ended supply schedule; latest researched date supersedes the prior July 25 entry."
+      },
+      "TRUMP": {
+        "date": null,
+        "base_penalty": 0.0,
+        "structural_penalty": 10.0,
+        "risk": "very_high",
+        "recipient": "Creators and CIC Digital linear releases",
+        "source": "https://defillama.com/unlocks/official-trump",
+        "note": "Ongoing daily insider releases and heavy political/news dependence."
+      },
+      "KAITO": {
+        "date": "2026-08-20",
+        "base_penalty": 16.0,
+        "structural_penalty": 10.0,
+        "risk": "very_high",
+        "recipient": "Core Contributors",
+        "source": "https://tokenomist.ai/kaito/unlock-events",
+        "note": "Only about 24.14% unlocked; vesting extends into 2029."
+      },
+      "BIO": {
+        "date": null,
+        "base_penalty": 0.0,
+        "structural_penalty": 6.0,
+        "risk": "high",
+        "recipient": "Ecosystem, contributors, investors and advisors",
+        "source": "https://tokenomist.ai/bio-protocol/unlock-events",
+        "note": "About 64.61% released; remaining release mechanisms extend into 2030."
+      },
+      "ARKM": {
+        "date": null,
+        "base_penalty": 0.0,
+        "structural_penalty": 5.0,
+        "risk": "high",
+        "recipient": "Ecosystem, core contributors and investors",
+        "source": "https://tokenomist.ai/arkham/tokenomics",
+        "note": "About 67.70% released; remaining schedule extends into 2030."
+      },
+      "MON": {
+        "date": "2026-11-24",
+        "base_penalty": 9.0,
+        "structural_penalty": 8.0,
+        "risk": "very_high",
+        "recipient": "Category Labs Treasury",
+        "source": "https://tokenomist.ai/monad/unlock-events",
+        "note": "Only about 11.83% unlocked; very large long-run dilution over a schedule extending to 2050."
+      },
+      "ATH": {
+        "date": null,
+        "base_penalty": 0.0,
+        "structural_penalty": 5.0,
+        "risk": "high",
+        "recipient": "Compute providers, ecosystem, team and investors",
+        "source": "https://tokenomist.ai/aethir/unlock-events",
+        "note": "About 47.93% released; predominantly linear emissions continue into 2028."
+      },
+      "ENA": {
+        "date": "2026-08-02",
+        "base_penalty": 17.0,
+        "structural_penalty": 8.0,
+        "risk": "very_high",
+        "recipient": "Core Contributors",
+        "source": "https://tokenomist.ai/ethena/unlock-events",
+        "note": "About 63.74% unlocked; vesting continues into 2028."
+      },
+      "KMNO": {
+        "date": "2026-07-30",
+        "base_penalty": 18.0,
+        "structural_penalty": 9.0,
+        "risk": "very_high",
+        "recipient": "Core Contributors",
+        "source": "https://tokenomist.ai/kamino/unlock-events",
+        "note": "About 51.4% unlocked; cliff schedule continues into 2027."
+      },
+      "APT": {
+        "date": "2026-08-12",
+        "base_penalty": 15.0,
+        "structural_penalty": 8.0,
+        "risk": "high",
+        "recipient": "Community",
+        "source": "https://tokenomist.ai/aptos/unlock-events",
+        "note": "About 40.24% of total supply was unlocked on 2026-07-24; recurring releases and the long schedule to 2050 justify a persistent dilution penalty."
       }
     },
-    "as_of": "2026-07-22",
-    "method": "near cliff = dynamic; linear/ongoing release = bounded structural penalty; expired events decay automatically; stale config is logged",
+    "as_of": "2026-07-26",
+    "method": "near cliff = dynamic; ongoing/low-float release = bounded structural penalty; event risk scored separately",
     "stale_warning_days": 14
   },
-  "outcome_state_version": "opportunity-v333-target-r2",
+  "outcome_state_version": "opportunity-v340-category-target-r1",
   "opportunity_score": {
-    "entry_blue": 42.0,
-    "entry_green": 62.0,
-    "entry_purple": 82.0,
-    "exit_orange": 44.0,
-    "exit_red": 70.0,
+    "entry_blue": 38.0,
+    "entry_green": 60.0,
+    "entry_purple": 80.0,
+    "minimum_display_entry": 38.0,
+    "maximum_exit_risk_for_display": 62.0,
     "entry_weights": {
-      "current_demand": 0.28,
-      "three_hour_base": 0.2,
-      "volume_price_gap": 0.15,
-      "relative_strength": 0.1,
+      "current_demand": 0.22,
+      "three_hour_base": 0.17,
+      "volume_price_gap": 0.12,
+      "relative_strength": 0.05,
       "room_to_target": 0.1,
-      "target_history": 0.12,
-      "liquidity": 0.05
+      "target_history": 0.1,
+      "liquidity": 0.05,
+      "category_strength": 0.09,
+      "category_laggard": 0.07,
+      "recent_activity": 0.03
     },
-    "description": "mixed top-8: strongest entry opportunities and exit warnings compete equally"
+    "description": "entry-only top-8; exit score is internal safety filter, category strength and stable active laggards are rewarded"
   },
   "target_horizon_hours": 24,
   "target_anchor_spacing_hours": 12,
@@ -719,7 +702,7 @@
     "binance_base_url": "https://data-api.binance.vision",
     "coinbase_base_url": "https://api.exchange.coinbase.com",
     "timeout_seconds": 12,
-    "maximum_requests_per_run": 80,
+    "maximum_requests_per_run": 90,
     "parallel_requests": 6,
     "request_spacing_seconds": 0.03,
     "candle_limit": 300,
@@ -751,26 +734,8 @@
       "S": [
         "S"
       ],
-      "W": [
-        "W"
-      ],
       "IO": [
         "IO"
-      ],
-      "MEGA": [
-        "MEGA"
-      ],
-      "XPL": [
-        "XPL"
-      ],
-      "TRUMP": [
-        "TRUMP"
-      ],
-      "FARTCOIN": [
-        "FARTCOIN"
-      ],
-      "MOODENG": [
-        "MOODENG"
       ],
       "PENGU": [
         "PENGU"
@@ -778,14 +743,59 @@
       "ETHFI": [
         "ETHFI"
       ],
-      "KMNO": [
-        "KMNO"
-      ],
       "HYPE": [
         "HYPE"
       ],
-      "MON": [
-        "MON"
+      "BNB": [
+        "BNB"
+      ],
+      "XRP": [
+        "XRP"
+      ],
+      "BCH": [
+        "BCH"
+      ],
+      "LINK": [
+        "LINK"
+      ],
+      "HBAR": [
+        "HBAR"
+      ],
+      "PENDLE": [
+        "PENDLE"
+      ],
+      "DOGE": [
+        "DOGE"
+      ],
+      "PEPE": [
+        "PEPE"
+      ],
+      "BONK": [
+        "BONK"
+      ],
+      "WIF": [
+        "WIF"
+      ],
+      "FLOKI": [
+        "FLOKI"
+      ],
+      "MEGA": [
+        "MEGA"
+      ],
+      "W": [
+        "W"
+      ],
+      "XPL": [
+        "XPL"
+      ],
+      "TRUMP": [
+        "TRUMP"
+      ],
+      "KAITO": [
+        "KAITO"
+      ],
+      "MOODENG": [
+        "MOODENG"
       ],
       "BIO": [
         "BIO"
@@ -793,13 +803,413 @@
       "PNUT": [
         "PNUT"
       ],
-      "KAITO": [
-        "KAITO"
+      "APE": [
+        "APE"
+      ],
+      "FARTCOIN": [
+        "FARTCOIN"
+      ],
+      "ARKM": [
+        "ARKM"
+      ],
+      "MON": [
+        "MON"
+      ],
+      "ATH": [
+        "ATH"
+      ],
+      "ENA": [
+        "ENA"
+      ],
+      "KMNO": [
+        "KMNO"
+      ],
+      "APT": [
+        "APT"
       ]
     },
     "fallback": "LCW rolling-volume divergence remains active when no public pair or provider is available",
-    "scope": "complete resolved pool before LCW detail preselection"
+    "scope": "complete expanded 63-altcoin category pool before LCW detail preselection"
   },
   "lcw_nominal_max_requests_per_monitor_run": 31,
-  "lcw_nominal_daily_budget_note": "map + BTC + up to 28 alt details + one BTC safety retry; daily context update is separate"
+  "lcw_nominal_daily_budget_note": "1 map + BTC/detail histories; category scoring uses existing map/flash and public candle data without extra LCW credits",
+  "categories": [
+    {
+      "code": "MEM",
+      "name": "Meme",
+      "coins": [
+        "DOGE",
+        "PEPE",
+        "BONK",
+        "WIF",
+        "FLOKI",
+        "PENGU",
+        "TRUMP",
+        "MOODENG",
+        "PNUT",
+        "FARTCOIN"
+      ]
+    },
+    {
+      "code": "AI",
+      "name": "AI & Compute",
+      "coins": [
+        "TAO",
+        "FET",
+        "RENDER",
+        "IO",
+        "WLD",
+        "LINK",
+        "KAITO",
+        "ARKM",
+        "ATH"
+      ]
+    },
+    {
+      "code": "PAY",
+      "name": "Payment & Investment",
+      "coins": [
+        "BTC",
+        "XRP",
+        "XLM",
+        "LTC",
+        "BCH"
+      ]
+    },
+    {
+      "code": "UTL",
+      "name": "Utility, DeFi & Exchange",
+      "coins": [
+        "HYPE",
+        "UNI",
+        "AAVE",
+        "CRV",
+        "RAY",
+        "SUSHI",
+        "INJ",
+        "ONDO",
+        "MORPHO",
+        "LDO",
+        "ETHFI",
+        "JTO",
+        "PYTH",
+        "FIL",
+        "GALA",
+        "PENDLE",
+        "W",
+        "BIO",
+        "APE",
+        "ENA",
+        "KMNO"
+      ]
+    },
+    {
+      "code": "SCP",
+      "name": "Smart Contract Platforms",
+      "coins": [
+        "ETH",
+        "SOL",
+        "BNB",
+        "ADA",
+        "SUI",
+        "APT",
+        "AVAX",
+        "NEAR",
+        "DOT",
+        "HBAR",
+        "SEI",
+        "S",
+        "OP",
+        "ARB",
+        "TIA",
+        "ZKSYNC",
+        "MEGA",
+        "XPL",
+        "MON"
+      ]
+    }
+  ],
+  "category_rotation": {
+    "enabled": true,
+    "minimum_color_coverage": 0.4,
+    "thresholds": {
+      "purple": 78.0,
+      "green": 62.0,
+      "blue": 48.0,
+      "yellow": 36.0,
+      "orange": 24.0
+    },
+    "max_slots": {
+      "purple": 4,
+      "green": 3,
+      "blue": 2,
+      "yellow": 1,
+      "orange": 0,
+      "red": 0,
+      "brown": 0
+    },
+    "minimum_display_entry": 38.0,
+    "minimum_category_score": 36.0,
+    "weak_category_exception_entry": 58.0,
+    "description": "category medians+breadth+stability; strong categories lift stable active laggards; weak categories receive few or zero slots"
+  },
+  "event_risk": {
+    "enabled": true,
+    "maximum_penalty": 12.0,
+    "method": "bounded structural/news/launch sensitivity penalty; independent from dated unlock penalty",
+    "coin_penalties": {
+      "DOGE": {
+        "penalty": 3.0,
+        "reason": "meme sentiment"
+      },
+      "PEPE": {
+        "penalty": 6.0,
+        "reason": "meme sentiment"
+      },
+      "BONK": {
+        "penalty": 6.0,
+        "reason": "meme sentiment"
+      },
+      "WIF": {
+        "penalty": 7.0,
+        "reason": "meme sentiment"
+      },
+      "FLOKI": {
+        "penalty": 6.0,
+        "reason": "meme sentiment"
+      },
+      "PENGU": {
+        "penalty": 8.0,
+        "reason": "NFT/meme and release sensitivity"
+      },
+      "TAO": {
+        "penalty": 4.0,
+        "reason": "AI narrative and subnet events"
+      },
+      "FET": {
+        "penalty": 4.0,
+        "reason": "AI narrative and token migration sensitivity"
+      },
+      "RENDER": {
+        "penalty": 3.0,
+        "reason": "AI/GPU narrative"
+      },
+      "IO": {
+        "penalty": 8.0,
+        "reason": "young compute token"
+      },
+      "WLD": {
+        "penalty": 9.0,
+        "reason": "regulatory and supply sensitivity"
+      },
+      "LINK": {
+        "penalty": 2.0,
+        "reason": "oracle/integration events"
+      },
+      "XRP": {
+        "penalty": 2.0,
+        "reason": "regulatory headlines"
+      },
+      "XLM": {
+        "penalty": 2.0,
+        "reason": "payment partnership headlines"
+      },
+      "LTC": {
+        "penalty": 1.0,
+        "reason": "mature market"
+      },
+      "BCH": {
+        "penalty": 2.0,
+        "reason": "mature fork market"
+      },
+      "HYPE": {
+        "penalty": 8.0,
+        "reason": "young exchange/L1 and supply events"
+      },
+      "UNI": {
+        "penalty": 2.0,
+        "reason": "governance events"
+      },
+      "AAVE": {
+        "penalty": 2.0,
+        "reason": "protocol governance"
+      },
+      "CRV": {
+        "penalty": 3.0,
+        "reason": "protocol and collateral events"
+      },
+      "RAY": {
+        "penalty": 4.0,
+        "reason": "Solana DEX activity"
+      },
+      "SUSHI": {
+        "penalty": 4.0,
+        "reason": "protocol governance"
+      },
+      "INJ": {
+        "penalty": 4.0,
+        "reason": "ecosystem events"
+      },
+      "ONDO": {
+        "penalty": 6.0,
+        "reason": "RWA/regulatory and supply events"
+      },
+      "MORPHO": {
+        "penalty": 3.0,
+        "reason": "protocol governance"
+      },
+      "LDO": {
+        "penalty": 2.0,
+        "reason": "staking governance"
+      },
+      "ETHFI": {
+        "penalty": 3.0,
+        "reason": "restaking narrative"
+      },
+      "JTO": {
+        "penalty": 3.0,
+        "reason": "Solana staking events"
+      },
+      "PYTH": {
+        "penalty": 3.0,
+        "reason": "oracle/integration events"
+      },
+      "FIL": {
+        "penalty": 3.0,
+        "reason": "storage-network events"
+      },
+      "GALA": {
+        "penalty": 5.0,
+        "reason": "gaming/news sensitivity"
+      },
+      "PENDLE": {
+        "penalty": 3.0,
+        "reason": "yield-market events"
+      },
+      "ETH": {
+        "penalty": 1.0,
+        "reason": "mature market"
+      },
+      "SOL": {
+        "penalty": 2.0,
+        "reason": "network/ecosystem events"
+      },
+      "BNB": {
+        "penalty": 2.0,
+        "reason": "exchange/regulatory events"
+      },
+      "ADA": {
+        "penalty": 2.0,
+        "reason": "network upgrade events"
+      },
+      "SUI": {
+        "penalty": 7.0,
+        "reason": "young L1 and supply events"
+      },
+      "AVAX": {
+        "penalty": 3.0,
+        "reason": "network/supply events"
+      },
+      "NEAR": {
+        "penalty": 3.0,
+        "reason": "AI/ecosystem narrative"
+      },
+      "DOT": {
+        "penalty": 2.0,
+        "reason": "governance events"
+      },
+      "HBAR": {
+        "penalty": 2.0,
+        "reason": "enterprise partnership events"
+      },
+      "SEI": {
+        "penalty": 5.0,
+        "reason": "young L1 ecosystem"
+      },
+      "S": {
+        "penalty": 4.0,
+        "reason": "ecosystem migration sensitivity"
+      },
+      "OP": {
+        "penalty": 5.0,
+        "reason": "governance and supply events"
+      },
+      "ARB": {
+        "penalty": 5.0,
+        "reason": "governance and supply events"
+      },
+      "TIA": {
+        "penalty": 6.0,
+        "reason": "supply and modular-chain narrative"
+      },
+      "ZKSYNC": {
+        "penalty": 8.0,
+        "reason": "young L2 and supply events"
+      },
+      "MEGA": {
+        "penalty": 10.0,
+        "reason": "very young L2; KPI emissions, launch history and low-float sensitivity"
+      },
+      "W": {
+        "penalty": 7.0,
+        "reason": "bridge/security headlines and ongoing supply releases"
+      },
+      "XPL": {
+        "penalty": 10.0,
+        "reason": "very young L1; ecosystem incentives, launch and supply sensitivity"
+      },
+      "TRUMP": {
+        "penalty": 12.0,
+        "reason": "political meme/news dependence and concentrated insider supply"
+      },
+      "KAITO": {
+        "penalty": 10.0,
+        "reason": "young InfoFi/AI token with narrative and low-float sensitivity"
+      },
+      "MOODENG": {
+        "penalty": 10.0,
+        "reason": "pure meme sentiment and thin-liquidity event sensitivity"
+      },
+      "BIO": {
+        "penalty": 8.0,
+        "reason": "young DeSci token with narrative and release sensitivity"
+      },
+      "PNUT": {
+        "penalty": 10.0,
+        "reason": "pure meme sentiment and social-media dependence"
+      },
+      "APE": {
+        "penalty": 7.0,
+        "reason": "NFT/metaverse/Yuga ecosystem event sensitivity"
+      },
+      "FARTCOIN": {
+        "penalty": 11.0,
+        "reason": "pure meme sentiment and abrupt liquidity shifts"
+      },
+      "ARKM": {
+        "penalty": 7.0,
+        "reason": "blockchain-intelligence/AI narrative and supply sensitivity"
+      },
+      "MON": {
+        "penalty": 9.0,
+        "reason": "young L1 with launch, ecosystem and very-low-float sensitivity"
+      },
+      "ATH": {
+        "penalty": 7.0,
+        "reason": "young decentralized-compute token with AI narrative and emissions"
+      },
+      "ENA": {
+        "penalty": 8.0,
+        "reason": "synthetic-dollar/DeFi event, protocol and supply sensitivity"
+      },
+      "KMNO": {
+        "penalty": 7.0,
+        "reason": "Solana DeFi, protocol and supply-event sensitivity"
+      },
+      "APT": {
+        "penalty": 4.0,
+        "reason": "established L1, but ecosystem, partnership and network-upgrade headline sensitivity"
+      }
+    }
+  }
 }

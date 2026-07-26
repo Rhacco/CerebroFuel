@@ -1,4 +1,4 @@
-"""v3.3.3 full-pool early-opportunity flash scan.
+"""v3.4 full-pool category-opportunity flash scan.
 
 A single LCW map response supplies fresh rate, rolling 24h volume and market cap
 for every configured coin. Persisted five-minute observations turn that one
@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-STATE_VERSION = "flash-v333-early-opportunity-r1"
+STATE_VERSION = "flash-v340-category-opportunity-r1"
 WINDOWS = (5, 15, 30, 60)
 WINDOW_WEIGHTS = {5: 0.15, 15: 0.30, 30: 0.40, 60: 0.15}
 

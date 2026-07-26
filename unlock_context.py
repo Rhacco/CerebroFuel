@@ -1,4 +1,4 @@
-"""Dynamic, bounded unlock-risk deductions for v3.3.3 opportunity ranking."""
+"""Dynamic, bounded unlock-risk deductions for v3.4 opportunity ranking."""
 
 from __future__ import annotations
 

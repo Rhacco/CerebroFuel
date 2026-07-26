@@ -1,4 +1,4 @@
-"""Public exchange-candle confirmation for v3.3.3.
+"""Public exchange-candle confirmation for v3.4.
 
 LiveCoinWatch remains the broad, low-credit full-pool source.  This module adds
 optional five-minute candles for the detail candidates from public exchange
@@ -135,7 +135,7 @@ class PublicMarketDataClient:
             url,
             params=dict(params or {}),
             timeout=self.timeout,
-            headers={"Accept": "application/json", "User-Agent": "crypto-signal-monitor/3.3.3"},
+            headers={"Accept": "application/json", "User-Agent": "crypto-signal-monitor/3.4.0"},
         )
         if response.status_code == 429:
             retry = response.headers.get("Retry-After")

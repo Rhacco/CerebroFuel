@@ -1,66 +1,24 @@
-# Krypto-Monitor v3.3.3 – Discord-Legende
+# Krypto-Monitor v3.4 – Kurzlegende
 
-Ausgabe: **1× BTC-Marktqualität + 8 stärkste Kaufchancen oder Verkaufswarnungen**.
+**Pool:** BTC als interne Referenz + 63 Altcoins. Ausgabe: **1 Kategorienzeile + bis zu 8 Kaufchancen**; keine Verkaufszeilen.
 
 ```text
-[Signal][0–8][▲/▼/=]7[7D-Vol.]B[24H][7D]P[Druck]V[10][30][60]N[Erholung][Wochentage][Coin]
+MEM🟢AI🔵PAY🟡UTL🟣SCP🟢:01
+[Chance][0–8]▲7[7D]B[24H][7D]P[Druck]V[10][30][60]N[Erholung][Tage][Coin]
 ```
 
-Bei BTC steht am Ende statt des Coin-Kürzels die Laufminute, z. B. `:01`.
+## Kategorien und Farben
 
-## Farben
+`MEM` Meme · `AI` AI/Daten/Compute · `PAY` Zahlung/Investment (mit BTC) · `UTL` Utility/DeFi/Börsen/Oracles · `SCP` Smart-Contract-Plattformen/L1/L2; **APT gehört zu SCP**.
 
-| Farbe | Bedeutung |
-|---|---|
-| 🟣 | außergewöhnlich stark positiv / sehr gute Kaufchance |
-| 🟢 | klar positiv |
-| 🔵 | früher oder moderater positiver Hinweis |
-| 🟡 | neutral / derzeit kein klares Signal |
-| 🟠 | Verkaufs- oder Risikowarnung |
-| 🔴 | dringendes negatives Signal |
-| 🟤 | Daten unsicher oder teilweise unzuverlässig |
-| ⚪ | Daten fehlen |
+🟣 sehr stark · 🟢 stark · 🔵 positiv · 🟡 neutral · 🟠 schwach · 🔴 sehr schwach · 🟤 Daten unsicher. Schwache Kategorien erhalten wenige oder keine Plätze.
 
-Bei der **BTC-Zeile** beschreibt der erste Kreis die aktuelle Marktqualität. Bei den **Top 8** beschreibt er die Stärke der Kaufchance oder Verkaufswarnung.
+## Coin-Zeile
 
-## Discord-Kürzel
+🟣/🟢/🔵 = außergewöhnliche/klare/frühe Kaufchance · `0–8` Signalstärke · `▲` Kaufchance · `7` 7-Tage-Volumentrend · `B••` Kurs relativ zu BTC über 24 h/7 d · `P•` kurzfristiger Druck · `V•••` Volumen 10/30/60 min · `N•` Stabilisierung · `MO–SO` beste historische Wochentage.
 
-| Kürzel | Bedeutung |
-|---|---|
-| `0–8` | Signalstärke; keine Prozentangabe |
-| `▲` | Kaufchance / positiver Lauf |
-| `▼` | Verkaufswarnung / negativer Lauf |
-| `=` | kein klarer Ausschlag |
-| `7` | Volumentrend über 7 Tage |
-| `B••` | Kurs relativ zu BTC über 24 Stunden und 7 Tage; bei BTC absolute Entwicklung |
-| `P•` | aktueller Kauf- oder Verkaufsdruck |
-| `V•••` | Volumenentwicklung über 10, 30 und 60 Minuten |
-| `N•` | Stabilisierung oder Erholung nach einem Rückgang |
-| `MO–SO` | bis zu zwei historisch beste Wochentage |
+Orange/Rot in `P`, `V` oder `N`, Falling Knife, Late Entry sowie **Event- und Unlock-Abzüge** können einen Coin aus der Top 8 halten. APT hat einen dynamischen Unlock-Abzug bis zur Community-Freigabe am 12.08.2026 plus einen strukturellen Restabzug.
 
-`V` verwendet bevorzugt echte 5-Minuten-Börsenkerzen; ohne passendes Börsenpaar dient die LCW-Volumenentwicklung als Fallback.
+## Weniger offensichtliche Discord-Kürzel
 
-## Weniger offensichtliche Coin-Kürzel
-
-| Discord | Coin | Discord | Coin |
-|---|---|---|---|
-| `ARK` | Arkham | `MND` | Monad |
-| `BOM` | BOOK OF MEME | `GAL` | Gala |
-| `ORD` | Ordinals | `KAI` | Kaito |
-| `MOO` | Moo Deng | `PNT` | Peanut the Squirrel |
-| `MEG` | MegaETH | `WRM` | Wormhole |
-| `XPL` | Plasma | `AAV` | Aave |
-| `OPT` | Optimism | `TRP` | OFFICIAL TRUMP |
-| `PEP` | Pepe | `BNK` | Bonk |
-| `DGE` | Dogecoin | `ION` | IO.NET |
-| `SNC` | Sonic | `ATH` | Aethir |
-| `SSH` | SushiSwap | `FRT` | Fartcoin |
-| `ZET` | ZetaChain | `HYP` | Hyperliquid |
-| `AVX` | Avalanche | `NER` | NEAR Protocol |
-| `OND` | Ondo | `MRP` | Morpho |
-| `PGU` | Pudgy Penguins | `EFI` | ether.fi |
-| `PYT` | Pyth Network | `FLK` | FLOKI |
-| `ZKS` | zkSync | `KMN` | Kamino |
-| `RND` | Render | `BIO` | Bio Protocol |
-
-Alle anderen Coin-Kürzel entsprechen weitgehend ihrem üblichen Symbol, zum Beispiel `ETH`, `SOL`, `SUI`, `TAO`, `JTO`, `TIA`, `WLD`, `SEI`, `RAY`, `ARB` und `INJ`.
+`ARK` Arkham · `ATH` Aethir · `AVX` Avalanche · `BNK` Bonk · `DGE` Dogecoin · `EFI` ether.fi · `FLK` FLOKI · `FRT` Fartcoin · `GAL` Gala · `HBR` Hedera · `HYP` Hyperliquid · `ION` IO.NET · `KAI` Kaito · `KMN` Kamino · `LNK` Chainlink · `MEG` MegaETH · `MND` Monad · `MOO` Moo Deng · `MRP` Morpho · `NER` NEAR · `OND` Ondo · `OPT` Optimism · `PEP` Pepe · `PGU` Pudgy Penguins · `PND` Pendle · `PNT` Peanut · `PYT` Pyth · `RND` Render · `SNC` Sonic · `SSH` SushiSwap · `TRP` TRUMP · `WRM` Wormhole · `ZKS` zkSync. `APT` bleibt `APT`.

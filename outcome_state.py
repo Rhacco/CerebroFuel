@@ -1,4 +1,4 @@
-"""Live, setup-specific +3%/+5% outcome memory for v3.3.3.
+"""Live, setup-specific +3%/+5% outcome memory for v3.4.
 
 Every five-minute run can resolve previously recorded entry setups using fresh
 LCW map prices.  New setup events are rate-limited per coin.  The resulting
@@ -13,7 +13,7 @@ import statistics
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-STATE_VERSION = "opportunity-v333-target-r2"
+STATE_VERSION = "opportunity-v340-category-target-r1"
 
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
@@ -200,6 +200,7 @@ def record_entry_candidates(
         entry_score = float(item.get("entry_score") or 0.0)
         if (
             not display
+            or not bool(item.get("qualified_entry", False))
             or entry_score < minimum_score
             or bool(item.get("falling_knife"))
             or bool(item.get("late_entry"))
