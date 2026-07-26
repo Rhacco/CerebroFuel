@@ -1,5 +1,5 @@
 {
-  "schema_version": "3.4.1",
+  "schema_version": "3.5.0",
   "reference_coin": "BTC",
   "groups": [
     {
@@ -205,14 +205,14 @@
   "currency": "USD",
   "timezone": "Europe/Berlin",
   "top_coin_count": 8,
-  "preselect_coin_count": 28,
-  "short_history_minutes": 1440,
+  "preselect_coin_count": 12,
+  "short_history_minutes": 0,
   "history_days": 126,
   "history_parallel_requests": 1,
   "time_block_hours": 4,
   "seasonality_min_samples": 8,
   "seasonality_min_observations": 56,
-  "minimum_short_history_points": 8,
+  "minimum_short_history_points": 0,
   "minimum_reliable_volume_usd": 500000,
   "maximum_plausible_volume_jump_pct": 1500,
   "price": {
@@ -278,7 +278,7 @@
     "30": -0.2
   },
   "request_timeout_seconds": 25,
-  "discord_username": "Krypto-Monitor v3.4 · 69",
+  "discord_username": "CF v3.5.0",
   "now_signal": {
     "light": 0.35,
     "clear": 1.05,
@@ -297,7 +297,7 @@
   "temporal_axis_strong": 0.34,
   "temporal_confirmation_points": 3,
   "seasonality_lookback_days": 300,
-  "quality_revision": "complete-weeks-pool-neutral-target-r4-v340",
+  "quality_revision": "fresh-lcw-longterm-net-target-r1-v350",
   "temporal_guard_threshold": 0.1,
   "daily_history_days": 300,
   "weekday_enter_confirmations": 2,
@@ -316,10 +316,10 @@
   "exit_red_collapse": 66.0,
   "exit_red_memory": 42.0,
   "exit_red_score": 68.0,
-  "max_short_detail_requests": 28,
+  "max_short_detail_requests": 5,
   "flash_retention_minutes": 780,
-  "flash_snapshot_version": "flash-v340-category-opportunity-r1",
-  "volume_priority_revision": "category-laggard-entry-only-r1",
+  "flash_snapshot_version": "flash-v350-map-context-r1",
+  "volume_priority_revision": "one-minute-exchange-demand-lcw-context-r1",
   "primary_gap_window_minutes": 30,
   "volume_windows_minutes": [
     5,
@@ -338,7 +338,7 @@
     "24h",
     "7d"
   ],
-  "coin_universe_revision": "v341-69-altcoins-btc-header-week-regions-mixed-signals-r1",
+  "coin_universe_revision": "v350-fresh-69-altcoins-one-minute-category-state-r1",
   "coin_selection": {
     "required_active": [
       "DOGE",
@@ -412,7 +412,7 @@
       "MON"
     ],
     "unique_altcoin_count": 69,
-    "reason": "v3.4.1 category rotation with BTC header, grouped weekday regions and mixed entry/exit signals",
+    "reason": "v3.5 fresh start: 69 altcoins, one-minute exchange signals, LCW map and long-term context",
     "removed_high_event_or_launch_dependency": [
       "BOME",
       "TRB",
@@ -709,7 +709,7 @@
     "method": "near cliff = dynamic; ongoing/low-float release = bounded structural penalty; event risk scored separately",
     "stale_warning_days": 14
   },
-  "outcome_state_version": "opportunity-v340-category-target-r1",
+  "outcome_state_version": "outcome-v350-net-target-r1",
   "opportunity_score": {
     "entry_blue": 38.0,
     "entry_green": 60.0,
@@ -728,7 +728,7 @@
       "category_laggard": 0.07,
       "recent_activity": 0.03
     },
-    "description": "mixed top-8: category-backed stable laggard entries and confirmed orange/red exits; strongest signals compete, buys display first",
+    "description": "mixed strongest buy and sell signals from one-minute demand, category lead/fade, base, execution and net-target quality",
     "exit_orange": 48.0,
     "exit_red": 70.0,
     "minimum_display_exit": 48.0,
@@ -751,11 +751,11 @@
     "binance_base_url": "https://data-api.binance.vision",
     "coinbase_base_url": "https://api.exchange.coinbase.com",
     "timeout_seconds": 12,
-    "maximum_requests_per_run": 96,
-    "parallel_requests": 6,
-    "request_spacing_seconds": 0.03,
+    "maximum_requests_per_run": 120,
+    "parallel_requests": 8,
+    "request_spacing_seconds": 0.025,
     "candle_limit": 300,
-    "interval_minutes": 5,
+    "interval_minutes": 1,
     "asset_aliases": {
       "BTC": [
         "BTC"
@@ -971,11 +971,15 @@
         "MON"
       ]
     },
-    "fallback": "LCW rolling-volume divergence remains active when no public pair or provider is available",
-    "scope": "complete expanded 69-altcoin category pool before LCW detail preselection"
+    "fallback": "LCW map snapshots provide broad context only when no one-minute exchange pair is available",
+    "scope": "complete 69-altcoin pool plus BTC on every three-minute run",
+    "top_execution_checks": 12,
+    "minimum_pool_coverage": 0.35,
+    "minimum_exact_assets": 18,
+    "require_btc_one_minute": true
   },
-  "lcw_nominal_max_requests_per_monitor_run": 31,
-  "lcw_nominal_daily_budget_note": "1 map + BTC/detail histories; category scoring uses existing map/flash and public candle data without extra LCW credits",
+  "lcw_nominal_max_requests_per_monitor_run": 1,
+  "lcw_nominal_daily_budget_note": "Normaler 3-Minuten-Lauf: eine LCW-Gesamt-Map. Langzeit-Historien nur beim frischen Aufbau oder der täglichen Aktualisierung.",
   "categories": [
     {
       "code": "MEM",
@@ -1094,13 +1098,12 @@
       "blue": 2,
       "yellow": 1,
       "orange": 0,
-      "red": 0,
-      "brown": 0
+      "red": 0
     },
     "minimum_display_entry": 38.0,
     "minimum_category_score": 36.0,
     "weak_category_exception_entry": 58.0,
-    "description": "robust category medians+breadth+stability; BTC is a separate header anchor; strong categories lift stable active laggards; weak categories restrict entries",
+    "description": "robust category medians, breadth and trend; strong categories lift active stable laggards; weak categories restrict buys and can confirm exits",
     "header_order": [
       "BTC",
       "PAY",
@@ -1394,10 +1397,10 @@
       }
     }
   },
-  "category_state_version": "category-v341-trend-r1",
+  "category_state_version": "category-v350-trend-r1",
   "category_trend": {
     "enabled": true,
-    "state_version": "category-v341-trend-r1",
+    "state_version": "category-v350-trend-r1",
     "windows_minutes": [
       15,
       30,
@@ -1426,5 +1429,72 @@
     "display_positions": 2,
     "missing": "?",
     "description": "two strongest supported week regions; missing positions are ?"
-  }
+  },
+  "execution": {
+    "assumed_round_trip_fees_pct": 0.3,
+    "assumed_slippage_pct": 0.12,
+    "historical_spread_allowance_pct": 0.12,
+    "maximum_spread_pct": 1.0,
+    "warning_spread_pct": 0.6,
+    "minimum_execution_quality": 35.0,
+    "description": "spread plus conservative fee/slippage allowance are deducted from the net 3%/5% target quality"
+  },
+  "signal_state": {
+    "state_version": "signal-v350-r1",
+    "retention_minutes": 360,
+    "entry_blue": 38.0,
+    "entry_green": 60.0,
+    "entry_purple": 80.0,
+    "exit_orange": 48.0,
+    "exit_red": 70.0,
+    "green_confirmations": 2,
+    "red_confirmations": 2,
+    "acceleration_bonus_cap": 12.0,
+    "fallback_minimum_score": 20.0,
+    "spread_block_pct": 1.0,
+    "description": "3/6/12-minute score velocity and confirmation state; strong first-run signals can be blue/orange immediately",
+    "fallback_tie_ratio": 0.9,
+    "fallback_tie_gap": 5.0
+  },
+  "notifications": {
+    "heartbeat_minutes": 15,
+    "send_on_change": true,
+    "description": "calculate every three minutes; send on changed report or heartbeat"
+  },
+  "runtime": {
+    "cadence_minutes": 3,
+    "minimum_candidates": 1,
+    "maximum_fallback_candidates": 3,
+    "fallback_tie_points": 5.0,
+    "fallback_tie_fraction": 0.1,
+    "longterm_refresh_hours": 20,
+    "fresh_cache_namespace": "v350",
+    "ignore_previous_versions": true
+  },
+  "longterm": {
+    "build_when_missing": true,
+    "refresh_hours": 20,
+    "history_days": 300,
+    "chunk_days": 100,
+    "description": "LCW-only durable context: weekday regions, 7-day volume context and historical target prior"
+  },
+  "selection": {
+    "top_count": 8,
+    "always_show_minimum": 1,
+    "fallback_maximum": 3,
+    "fallback_tie_points": 5.0,
+    "fallback_tie_fraction": 0.1,
+    "maximum_exit_rows": 4,
+    "maximum_exit_rows_per_category": 2,
+    "no_neutral_candidates": true
+  },
+  "target_definition": {
+    "net_target_3_pct": 3.0,
+    "net_target_5_pct": 5.0,
+    "stop_3_pct": -1.5,
+    "stop_5_pct": -2.0,
+    "horizon_hours": 24,
+    "cost_adjusted": true
+  },
+  "discord_avatar_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Cryptocurrency_Logo.svg/330px-Cryptocurrency_Logo.svg.png"
 }

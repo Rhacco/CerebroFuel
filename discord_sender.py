@@ -1,7 +1,7 @@
-# v3.4.1 compact Discord sender; report format now includes B24/B7
+# v3.5 compact Discord sender; report format now includes B24/B7
 """Discord webhook sender with line-safe splitting."""
 
-# v3.4.1 mixed-signal output; source revalidated 2026-07-26.
+# v3.5 mixed-signal output; source revalidated 2026-07-26.
 from __future__ import annotations
 
 import time
@@ -34,14 +34,23 @@ def split_report(content: str, limit: int = 2000) -> list[str]:
     return chunks
 
 
-def send_discord(webhook_url: str, content: str, username: str, timeout: int = 30) -> None:
+def send_discord(
+    webhook_url: str,
+    content: str,
+    username: str,
+    avatar_url: str = "",
+    timeout: int = 30,
+) -> None:
     if not webhook_url:
         raise ValueError("DISCORD_WEBHOOK_URL fehlt.")
     chunks = split_report(content)
     for index, chunk in enumerate(chunks):
+        payload = {"content": chunk, "username": username}
+        if avatar_url:
+            payload["avatar_url"] = avatar_url
         response = requests.post(
             webhook_url,
-            json={"content": chunk, "username": username},
+            json=payload,
             timeout=timeout,
         )
         if response.status_code not in (200, 204):

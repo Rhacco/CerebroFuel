@@ -1,7 +1,7 @@
-# v3.4.1 category-rotation entry/exit analysis engine
-"""Core LCW analysis used by the v3.4.1 mixed opportunity layer."""
+# v3.5 one-minute category-rotation entry/exit analysis engine
+"""Shared diagnostics and compact Discord formatting for v3.5."""
 
-# v3.4.1: BTC header reference, weekday regions and mixed buy/sell output.
+# v3.5: BTC/category header, week regions and mixed buy/sell output.
 from __future__ import annotations
 
 import bisect
@@ -175,6 +175,11 @@ class CoinAnalysis:
     visible_volume_colors: dict[int, str] = field(default_factory=dict)
     opportunity_reasons: tuple[str, ...] = tuple()
     market_quality_score: float = 0.0
+    signal_state: str = "QUIET"
+    score_velocity: float = 0.0
+    execution_quality_score: float = 50.0
+    spread_pct: float | None = None
+    estimated_round_trip_cost_pct: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -971,7 +976,7 @@ def _temporal_context(
         current_negative and any(value >= guard_threshold for value in recent20)
     )
 
-    # Current data matters, but a robust median prevents one five-minute point
+    # Current data matters, but a robust median prevents one short-window point
     # from dominating the whole state.
     weights = [0.25, 0.20, 0.16, 0.13, 0.10, 0.07, 0.05, 0.04]
     weighted_axes: list[tuple[float, float]] = []
@@ -1503,7 +1508,7 @@ def _volume_divergence_metrics(
     window_quality: Mapping[int, str],
     config: Mapping[str, Any],
 ) -> tuple[float | None, float, str]:
-    """Primary v3.4 signal: direction-aware volume/price pressure over 30m.
+    """Primary v3.5 fallback signal: direction-aware volume/price pressure over 30m.
 
     The 10m and 60m windows only corroborate the dominant 30m axis. Falling
     price with rising volume is explicitly negative selling pressure rather than
@@ -1900,7 +1905,7 @@ def build_short_metrics(
         price_changes=price_changes,
         volume_strengths=volume_strengths,
     )
-    # v3.4: the 30-minute volume/price gap is the dominant flash layer.
+     # v3.5 fallback: the 30-minute volume/price gap is the dominant flash layer.
     flash_score = max(flash_score * 0.35, divergence_score)
     if divergence_direction != "=":
         flash_direction = divergence_direction
@@ -2759,7 +2764,7 @@ def apply_opportunity_analysis(
     *,
     market_quality: Mapping[str, Any] | None = None,
 ) -> CoinAnalysis:
-    """Attach v3.4.1 opportunity data without disturbing legacy diagnostics."""
+    """Attach v3.5 opportunity data without disturbing legacy diagnostics."""
     item.entry_score = float(assessment.get("entry_score", 0.0))
     item.exit_score = float(assessment.get("exit_score", 0.0))
     item.opportunity_score = float(assessment.get("ranking_score", max(item.entry_score, item.exit_score)))
@@ -2785,6 +2790,9 @@ def apply_opportunity_analysis(
     item.event_penalty = float(assessment.get("event_penalty", 0.0))
     item.category_fading_score = float(assessment.get("category_fading_score", 0.0))
     item.category_trend_confidence = float(assessment.get("category_trend_confidence", 0.0))
+    item.execution_quality_score = float(assessment.get("execution_quality_score", 50.0))
+    item.spread_pct = assessment.get("spread_pct")
+    item.estimated_round_trip_cost_pct = float(assessment.get("estimated_round_trip_cost_pct", 0.0))
     item.visible_volume_colors = {
         int(key): str(value) for key, value in (assessment.get("volume_colors") or {}).items()
     }

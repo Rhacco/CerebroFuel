@@ -1,4 +1,4 @@
-"""Persistent category trend cache for v3.4.1.
+"""Persistent category trend cache for v3.5.
 
 The current category score is robustly built from medians and breadth.  This
 module adds a short history so declining category demand can confirm sell
@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-STATE_VERSION = "category-v341-trend-r1"
+STATE_VERSION = "category-v350-trend-r1"
 
 
 @dataclass(frozen=True)
@@ -41,7 +41,7 @@ def _load(path: Path) -> dict[str, Any]:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {"version": STATE_VERSION, "categories": {}}
-    if not isinstance(raw, dict):
+    if not isinstance(raw, dict) or raw.get("version") != STATE_VERSION:
         return {"version": STATE_VERSION, "categories": {}}
     categories = raw.get("categories")
     if not isinstance(categories, dict):

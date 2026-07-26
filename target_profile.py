@@ -1,11 +1,11 @@
-"""Historical +3%/+5% target priors for v3.4.
+"""Historical net +3%/+5% target priors for v3.5.
 
 The daily cache already stores LCW price observations.  This module uses only
 past points and never looks beyond an anchor's 24-hour horizon.  Sparse history
 is explicitly confidence-capped rather than presented as precise intraday data.
 """
 
-# v3.4 r4 expanded-69 rebuild; source revalidated 2026-07-26.
+# v3.5: LCW long-term prior adjusted for estimated round-trip costs.
 from __future__ import annotations
 
 import math
@@ -56,6 +56,7 @@ def compute_target_profile(
     now_ms: int,
     horizon_hours: int = 24,
     minimum_anchor_spacing_hours: int = 12,
+    round_trip_cost_pct: float = 0.54,
 ) -> dict[str, Any]:
     ordered = sorted(
         {point.timestamp_ms: point for point in points if point.rate > 0}.values(),
@@ -117,6 +118,8 @@ def compute_target_profile(
             "method": "insufficient-covered-anchors",
         }
 
+    target3 = 3.0 + max(0.0, float(round_trip_cost_pct))
+    target5 = 5.0 + max(0.0, float(round_trip_cost_pct))
     hit3 = hit5 = 0
     resolved3 = resolved5 = 0
     times3: list[float] = []
@@ -136,7 +139,7 @@ def compute_target_profile(
                 if change <= -1.5:
                     first3 = "stop"
                     resolved3 += 1
-                elif change >= 3.0:
+                elif change >= target3:
                     first3 = "hit"
                     resolved3 += 1
                     hit3 += 1
@@ -145,7 +148,7 @@ def compute_target_profile(
                 if change <= -2.0:
                     first5 = "stop"
                     resolved5 += 1
-                elif change >= 5.0:
+                elif change >= target5:
                     first5 = "hit"
                     resolved5 += 1
                     hit5 += 1
@@ -187,5 +190,8 @@ def compute_target_profile(
         "median_hours_to_5": None if not times5 else round(statistics.median(times5), 3),
         "median_max_adverse_pct": None if not adverse else round(statistics.median(adverse), 4),
         "resolution_hours": round(resolution, 3),
-        "method": "past-only-24h-target-before-stop-r1",
+        "target3_gross_pct": round(target3, 4),
+        "target5_gross_pct": round(target5, 4),
+        "round_trip_cost_pct": round(max(0.0, float(round_trip_cost_pct)), 4),
+        "method": "past-only-24h-net-target-before-stop-r2",
     }

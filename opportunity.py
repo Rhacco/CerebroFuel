@@ -1,12 +1,9 @@
-"""Mixed entry/exit opportunity scoring with category rotation for v3.4.1."""
-
-# v3.4.1: category-aware entries plus confirmed orange/red sell warnings.
+"""Three-minute entry/exit opportunity scoring for v3.5."""
 from __future__ import annotations
 
 import math
-import statistics
 from dataclasses import asdict, dataclass, field
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
 from analysis import BLUE, GREEN, ORANGE, PURPLE, RED, WHITE, YELLOW, ShortMetrics, color_level
 from market_data import IntradayMetrics
@@ -50,6 +47,11 @@ class OpportunityAssessment:
     target_prior_score: float
     target_prior_confidence: float
     liquidity_score: float
+    execution_quality_score: float
+    spread_pct: float | None
+    estimated_round_trip_cost_pct: float
+    net_target_quality_score: float
+    category_lead_bonus: float
     market_adjustment: float
     unlock_penalty: float
     late_entry_penalty: float
@@ -70,6 +72,7 @@ class OpportunityAssessment:
     activity_score: float
     event_penalty: float
     category_fading_score: float
+    category_strengthening_score: float
     category_trend_confidence: float
     volume_colors: dict[int, str] = field(default_factory=dict)
     reasons: tuple[str, ...] = tuple()
@@ -131,20 +134,22 @@ def _market_color(score: float) -> str:
 def build_market_quality(
     *,
     btc_intraday: IntradayMetrics | None,
-    flash_signals: Mapping[str, Any],
+    intraday_by_display: Mapping[str, IntradayMetrics],
     rows_by_display: Mapping[str, Mapping[str, Any]],
     reference_display: str,
 ) -> MarketQuality:
     btc = btc_intraday or IntradayMetrics(display=reference_display)
+    p5 = float(btc.price_changes.get(5) or 0.0)
     p15 = float(btc.price_changes.get(15) or 0.0)
     p60 = float(btc.price_changes.get(60) or 0.0)
     p180 = float(btc.price_changes.get(180) or 0.0)
     structure = 50.0
-    structure += max(-28.0, min(28.0, p15 * 16.0))
+    structure += max(-16.0, min(16.0, p5 * 24.0))
+    structure += max(-25.0, min(25.0, p15 * 16.0))
     structure += max(-25.0, min(25.0, p60 * 8.0))
-    structure += max(-20.0, min(20.0, p180 * 3.5))
+    structure += max(-18.0, min(18.0, p180 * 3.2))
     if btc.falling_knife:
-        structure -= 35.0
+        structure -= 38.0
     if btc.late_entry:
         structure -= 8.0
     structure = max(0.0, min(100.0, structure))
@@ -153,66 +158,64 @@ def build_market_quality(
     demand -= 0.55 * float(btc.sell_pressure_score)
     demand = max(0.0, min(100.0, demand))
 
-    positives = negatives = usable = 0
-    for display, signal in flash_signals.items():
-        if display == reference_display:
-            continue
-        score = float(getattr(signal, "score", 0.0))
-        direction = str(getattr(signal, "direction", "="))
-        quality = float(getattr(signal, "quality", 0.0))
-        if quality < 0.45 or score < 18.0:
-            continue
-        usable += 1
-        positives += direction == "▲"
-        negatives += direction == "▼"
-    positive_breadth = positives / usable if usable else 0.0
-    negative_breadth = negatives / usable if usable else 0.0
-    flash_breadth = 50.0 + 75.0 * (positive_breadth - negative_breadth)
+    usable = [
+        item for display, item in intraday_by_display.items()
+        if display != reference_display and item.data_quality in {"good", "partial"}
+    ]
+    positives = sum(
+        float(item.demand_score) >= 58.0
+        and not item.falling_knife
+        and float(item.price_changes.get(30) or 0.0) >= -0.35
+        for item in usable
+    )
+    negatives = sum(
+        float(item.sell_pressure_score) >= 48.0 or item.falling_knife
+        for item in usable
+    )
+    positive_breadth = positives / len(usable) if usable else 0.0
+    negative_breadth = negatives / len(usable) if usable else 0.0
+    fast_breadth = 50.0 + 80.0 * (positive_breadth - negative_breadth)
 
-    day_values: list[float] = []
-    for display, row in rows_by_display.items():
-        if display == reference_display:
-            continue
-        day_values.append(_delta_pct((row.get("delta") or {}).get("day")))
+    day_values = [
+        _delta_pct((row.get("delta") or {}).get("day"))
+        for display, row in rows_by_display.items()
+        if display != reference_display
+    ]
     day_positive = sum(value > 0 for value in day_values) / len(day_values) if day_values else 0.5
-    day_breadth = 100.0 * day_positive
-    breadth = max(0.0, min(100.0, 0.68 * flash_breadth + 0.32 * day_breadth))
-
+    breadth = max(0.0, min(100.0, 0.78 * fast_breadth + 0.22 * 100.0 * day_positive))
     signed = (
         0.46 * (structure - 50.0) * 2.0
-        + 0.24 * (demand - 50.0) * 2.0
-        + 0.30 * (breadth - 50.0) * 2.0
+        + 0.27 * (demand - 50.0) * 2.0
+        + 0.27 * (breadth - 50.0) * 2.0
     )
     signed = max(-100.0, min(100.0, signed))
     color = _market_color(signed)
     direction = "▲" if signed >= 8.0 else ("▼" if signed <= -8.0 else "=")
-    count = 0 if color == YELLOW else min(8, max(2, int(round(abs(signed) / 12.5))))
+    count = 0 if color == YELLOW else min(8, max(1, int(round(abs(signed) / 12.5))))
     reasons: list[str] = []
     if structure >= 65:
         reasons.append("BTC-Struktur stabil")
     elif structure <= 35:
         reasons.append("BTC-Struktur schwach")
-    if positive_breadth >= 0.58:
-        reasons.append("breite positive Coin-Nachfrage")
-    if negative_breadth >= 0.48:
+    if positive_breadth >= 0.56:
+        reasons.append("breite positive Nachfrage")
+    if negative_breadth >= 0.45:
         reasons.append("breiter Verkaufsdruck")
     if btc.exact_interval_volume:
-        reasons.append("BTC-Intervallvolumen bestätigt")
+        reasons.append("BTC-1m-Volumen bestätigt")
     btc_reference_score = max(0.0, min(100.0, 0.58 * structure + 0.42 * demand))
-    if btc.data_quality == "insufficient":
-        btc_reference_color = "🟤"
-    elif btc_reference_score >= 78.0:
-        btc_reference_color = PURPLE
+    if btc_reference_score >= 78.0:
+        btc_color = PURPLE
     elif btc_reference_score >= 62.0:
-        btc_reference_color = GREEN
+        btc_color = GREEN
     elif btc_reference_score >= 48.0:
-        btc_reference_color = BLUE
+        btc_color = BLUE
     elif btc_reference_score >= 36.0:
-        btc_reference_color = YELLOW
+        btc_color = YELLOW
     elif btc_reference_score >= 24.0:
-        btc_reference_color = ORANGE
+        btc_color = ORANGE
     else:
-        btc_reference_color = RED
+        btc_color = RED
     return MarketQuality(
         score=round(signed, 4),
         color=color,
@@ -225,39 +228,38 @@ def build_market_quality(
         negative_breadth=round(negative_breadth, 5),
         exact_volume=btc.exact_interval_volume,
         btc_reference_score=round(btc_reference_score, 4),
-        btc_reference_color=btc_reference_color,
+        btc_reference_color=btc_color,
         reasons=tuple(reasons),
     )
 
 
-def _liquidity_score(current: Mapping[str, Any]) -> float:
-    volume = max(0.0, float(current.get("volume") or 0.0))
+def _liquidity_score(current: Mapping[str, Any], metrics: IntradayMetrics) -> float:
+    volume = max(0.0, float(current.get("volume") or metrics.quote_volume_24h or 0.0))
     cap = max(0.0, float(current.get("cap") or 0.0))
     absolute = _clamp((math.log10(max(volume, 1.0)) - 5.5) / 4.0)
     turnover = volume / cap if cap > 0 else 0.0
     turnover_score = _clamp(math.log10(1.0 + turnover * 100.0) / 1.7)
-    return 100.0 * (0.68 * absolute + 0.32 * turnover_score)
+    execution = _clamp(float(metrics.execution_quality_score) / 100.0)
+    return 100.0 * (0.52 * absolute + 0.23 * turnover_score + 0.25 * execution)
 
 
 def _relative_strength_score(
-    *,
-    intraday: IntradayMetrics | None,
-    btc_intraday: IntradayMetrics | None,
-    short: ShortMetrics,
+    *, intraday: IntradayMetrics, btc_intraday: IntradayMetrics | None, short: ShortMetrics
 ) -> float:
-    values: list[float] = []
-    if intraday and btc_intraday and intraday.data_quality != "insufficient" and btc_intraday.data_quality != "insufficient":
-        for window, weight in ((30, 0.60), (60, 0.40)):
+    values: list[tuple[float, float]] = []
+    if btc_intraday and btc_intraday.data_quality != "insufficient":
+        for window, weight in ((15, 0.25), (30, 0.45), (60, 0.30)):
             coin = intraday.price_changes.get(window)
             btc = btc_intraday.price_changes.get(window)
             if coin is not None and btc is not None:
-                values.append(50.0 + max(-50.0, min(50.0, (float(coin) - float(btc)) * 18.0)) * weight)
-    if values:
-        exact = sum(values) / len(values)
-    else:
-        exact = 50.0
+                score = 50.0 + max(-50.0, min(50.0, (float(coin) - float(btc)) * 18.0))
+                values.append((score, weight))
+    exact = (
+        sum(score * weight for score, weight in values) / sum(weight for _, weight in values)
+        if values else 50.0
+    )
     color_component = 50.0 + color_level(short.relative_color) * 14.0
-    return max(0.0, min(100.0, 0.68 * exact + 0.32 * color_component))
+    return max(0.0, min(100.0, 0.76 * exact + 0.24 * color_component))
 
 
 def _fallback_intraday(short: ShortMetrics, display: str) -> IntradayMetrics:
@@ -272,7 +274,7 @@ def _fallback_intraday(short: ShortMetrics, display: str) -> IntradayMetrics:
     negative_gap = short.divergence_score if short.flash_direction == "▼" else 0.0
     return IntradayMetrics(
         display=display,
-        provider="lcw-rolling-fallback",
+        provider="lcw-map-fallback",
         data_quality="partial" if short.data_quality != "insufficient" else "insufficient",
         exact_interval_volume=False,
         demand_score=positive_gap,
@@ -282,7 +284,7 @@ def _fallback_intraday(short: ShortMetrics, display: str) -> IntradayMetrics:
         falling_knife=falling,
         late_entry=False,
         volume_colors=dict(short.volume_colors),
-        reasons=("LCW-Rolling-Volumen-Fallback",),
+        reasons=("LCW-Map-Fallback",),
     )
 
 
@@ -307,22 +309,13 @@ def assess_opportunity(
     exact = bool(metrics.exact_interval_volume)
     target_score, target_confidence = combine_target_profiles(historical_target, live_target)
     relative = _relative_strength_score(intraday=metrics, btc_intraday=btc_intraday, short=short)
-    liquidity = _liquidity_score(current)
+    liquidity = _liquidity_score(current, metrics)
 
     flash_entry = float(getattr(flash_signal, "entry_score", 0.0)) if flash_signal else 0.0
     flash_exit = float(getattr(flash_signal, "exit_score", 0.0)) if flash_signal else 0.0
-    detailed_entry = float(short.divergence_score) if short.flash_direction == "▲" else 0.0
-    detailed_exit = float(short.divergence_score) if short.flash_direction == "▼" else 0.0
-    exact_gap = float(metrics.demand_score) * (
-        0.68 + 0.32 * _clamp(float(metrics.base_quality_score) / 100.0)
-    )
-    positive_gap = max(0.48 * max(flash_entry, detailed_entry) + 0.52 * exact_gap, exact_gap * 0.82)
-    legacy_negative = max(flash_exit, detailed_exit)
-    negative_gap = max(
-        legacy_negative,
-        0.45 * legacy_negative + 0.55 * float(metrics.sell_pressure_score),
-        float(metrics.sell_pressure_score) * 0.90,
-    )
+    exact_gap = float(metrics.demand_score) * (0.68 + 0.32 * _clamp(float(metrics.base_quality_score) / 100.0))
+    positive_gap = max(0.32 * flash_entry + 0.68 * exact_gap, exact_gap * 0.86)
+    negative_gap = max(flash_exit, float(metrics.sell_pressure_score), 0.30 * flash_exit + 0.70 * float(metrics.sell_pressure_score))
 
     category_context = category_context if isinstance(category_context, Mapping) else {}
     category_trend = category_trend if isinstance(category_trend, Mapping) else {}
@@ -332,19 +325,30 @@ def assess_opportunity(
     category_boost = float(category_context.get("category_boost", 0.0))
     laggard_score = float(category_context.get("laggard_score", 0.0))
     activity_score = float(category_context.get("activity_score", 0.0))
-    bounded_event = min(
-        float((config.get("event_risk") or {}).get("maximum_penalty", 12.0)),
-        max(0.0, float(event_penalty)),
-    )
     category_fading = max(0.0, min(100.0, float(category_trend.get("fading_score", 0.0))))
+    category_strengthening = max(0.0, min(100.0, float(category_trend.get("strengthening_score", 0.0))))
     category_trend_confidence = max(0.0, min(1.0, float(category_trend.get("confidence", 0.0))))
+    bounded_event = min(float((config.get("event_risk") or {}).get("maximum_penalty", 12.0)), max(0.0, float(event_penalty)))
+    bounded_unlock = min(float((config.get("unlock_risk") or {}).get("maximum_penalty", 20.0)), max(0.0, unlock_penalty))
 
-    # BTC remains an internal regime guard.  Category rotation now carries more
-    # weight, while BTC can only nudge an otherwise valid setup.
     market_adjustment = max(-7.0, min(5.0, market_quality.score * 0.08))
     base = float(metrics.base_quality_score)
     room = float(metrics.room_to_target_score)
     demand = float(metrics.demand_score)
+    spread = metrics.spread_pct
+    fee_pct = float((config.get("execution") or {}).get("assumed_round_trip_fees_pct", 0.30))
+    slippage_pct = float((config.get("execution") or {}).get("assumed_slippage_pct", 0.12))
+    spread_cost = 0.0 if spread is None else max(0.0, float(spread))
+    total_cost = fee_pct + slippage_pct + spread_cost
+    net_target_quality = 100.0 * _clamp((3.0 - total_cost - 0.6) / 2.4)
+    execution_quality = float(metrics.execution_quality_score)
+
+    p15 = float(metrics.price_changes.get(15) or 0.0)
+    p30 = float(metrics.price_changes.get(30) or 0.0)
+    category_lead = 0.0
+    if category_strengthening >= 25.0 and laggard_score >= 15.0 and p15 <= 0.9 and p30 <= 1.5:
+        category_lead = min(12.0, 0.075 * category_strengthening + 0.11 * laggard_score)
+
     weights = (config.get("opportunity_score") or {}).get("entry_weights", {})
     def weight(name: str, fallback: float) -> float:
         try:
@@ -363,30 +367,22 @@ def assess_opportunity(
         + weight("category_laggard", 0.07) * laggard_score
         + weight("recent_activity", 0.03) * activity_score
     )
-
-    falling_penalty = 82.0 if metrics.falling_knife else 0.0
-    late_penalty = 0.46 * float(metrics.overextension_penalty)
-    bounded_unlock = min(float(config.get("unlock_risk", {}).get("maximum_penalty", 20.0)), max(0.0, unlock_penalty))
-    data_confidence = {
-        "good": 1.0,
-        "partial": 0.78,
-        "insufficient": 0.45,
-    }.get(metrics.data_quality, 0.45)
+    falling_penalty = 84.0 if metrics.falling_knife else 0.0
+    late_penalty = 0.48 * float(metrics.overextension_penalty)
+    spread_penalty = 0.0 if spread is None else max(0.0, (float(spread) - 0.20) * 24.0)
+    entry = raw_entry + market_adjustment + category_boost + category_lead - falling_penalty - late_penalty - bounded_unlock - bounded_event - spread_penalty
+    data_confidence = {"good": 1.0, "partial": 0.78, "insufficient": 0.42}.get(metrics.data_quality, 0.42)
     if not exact:
-        data_confidence = min(data_confidence, 0.72)
-    entry = raw_entry + market_adjustment + category_boost - falling_penalty - late_penalty - bounded_unlock - bounded_event
-    entry = max(0.0, min(100.0, entry))
-    entry *= 0.72 + 0.28 * data_confidence
+        data_confidence = min(data_confidence, 0.68)
+    entry = max(0.0, min(100.0, entry)) * (0.70 + 0.30 * data_confidence)
+    entry *= 0.82 + 0.18 * _clamp(execution_quality / 100.0)
     if metrics.falling_knife:
-        entry = min(entry, 10.0)
+        entry = min(entry, 8.0)
     if metrics.late_entry:
-        entry = min(entry, 52.0)
+        entry = min(entry, 50.0)
 
     p60 = float(metrics.price_changes.get(60) or 0.0)
     p180 = float(metrics.price_changes.get(180) or 0.0)
-    base_break = 100.0 if metrics.falling_knife else 100.0 * _clamp((-p60 - 0.25) / 1.8)
-    failed_run = max(float(metrics.overextension_penalty), 100.0 * _clamp((p180 - 2.0) / 7.0) * _clamp((55.0 - demand) / 40.0))
-    market_negative = max(0.0, -market_quality.score)
     range_position = float(metrics.range_position_180) if metrics.range_position_180 is not None else 0.50
     elevated = max(
         float(metrics.overextension_penalty),
@@ -394,126 +390,93 @@ def assess_opportunity(
         100.0 * _clamp((p180 - 1.50) / 5.50),
     )
     reversal = max(
-        base_break,
-        100.0 * _clamp((-p60 - 0.05) / 1.40),
+        100.0 if metrics.falling_knife else 100.0 * _clamp((-p60 - 0.25) / 1.8),
         100.0 * _clamp((0.50 - float(metrics.taker_buy_share.get(30) or 0.50)) / 0.14),
     )
     missing_support = max(negative_gap, float(metrics.sell_pressure_score))
-    # The sell side mirrors the entry idea but is not a simple inversion:
-    # elevated price, fading demand and a weakening category must agree.
     exit_raw = (
-        0.30 * missing_support
+        0.31 * missing_support
         + 0.25 * elevated
         + 0.20 * category_fading
-        + 0.15 * reversal
+        + 0.14 * reversal
         + 0.10 * (100.0 * data_confidence)
     )
-    exit_raw += 0.04 * market_negative + 0.03 * min(100.0, bounded_unlock * 5.0)
-    # A visibly rising price with clearly shrinking/lagging volume is the
-    # canonical unsupported-run warning.  Preserve that signal even when the
-    # broader base has not broken yet.
-    p30 = float(metrics.price_changes.get(30) or 0.0)
     v30 = metrics.volume_ratios.get(30)
-    unsupported_run_floor = 0.0
+    unsupported_floor = 0.0
     if p30 >= 0.35 and v30 is not None and float(v30) <= 0.82:
-        unsupported_run_floor = 44.0 + min(24.0, (p30 - 0.35) * 7.0 + (0.82 - float(v30)) * 55.0)
-        unsupported_run_floor += min(12.0, category_fading * 0.12)
-    exit_score = max(0.0, min(100.0, max(exit_raw, unsupported_run_floor))) * (0.76 + 0.24 * data_confidence)
+        unsupported_floor = 44.0 + min(24.0, (p30 - 0.35) * 7.0 + (0.82 - float(v30)) * 55.0)
+        unsupported_floor += min(12.0, category_fading * 0.12)
+    exit_score = max(0.0, min(100.0, max(exit_raw, unsupported_floor))) * (0.76 + 0.24 * data_confidence)
     if metrics.falling_knife:
-        exit_score = max(exit_score, 58.0 + min(28.0, abs(p60) * 10.0))
+        exit_score = max(exit_score, 60.0 + min(26.0, abs(p60) * 9.0))
+    entry = max(0.0, entry - max(0.0, exit_score - 34.0) * 0.24)
 
-    # Exit pressure also remains an entry safety drag.
-    safety_drag = max(0.0, exit_score - 34.0) * 0.24
-    entry = max(0.0, entry - safety_drag)
-
-    thresholds = config.get("opportunity_score") if isinstance(config, Mapping) else None
+    thresholds = config.get("opportunity_score") if isinstance(config, Mapping) else {}
     thresholds = thresholds if isinstance(thresholds, Mapping) else {}
     entry_blue = float(thresholds.get("entry_blue", 38.0))
-    entry_green = float(thresholds.get("entry_green", 60.0))
-    entry_purple = float(thresholds.get("entry_purple", 80.0))
     exit_orange = float(thresholds.get("exit_orange", 48.0))
-    exit_red = float(thresholds.get("exit_red", 70.0))
-    minimum_exit = float(thresholds.get("minimum_display_exit", exit_orange))
-    minimum_display = float(thresholds.get("minimum_display_entry", entry_blue))
-    maximum_exit = float(thresholds.get("maximum_exit_risk_for_display", 62.0))
-    category_rules = config.get("category_rotation") if isinstance(config, Mapping) else None
+    max_exit = float(thresholds.get("maximum_exit_risk_for_display", 62.0))
+    category_rules = config.get("category_rotation") if isinstance(config, Mapping) else {}
     category_rules = category_rules if isinstance(category_rules, Mapping) else {}
     minimum_category = float(category_rules.get("minimum_category_score", 36.0))
     weak_exception = float(category_rules.get("weak_category_exception_entry", 58.0))
     max_slots = int(category_context.get("max_slots", 0))
+    spread_block = spread is not None and float(spread) >= float((config.get("execution") or {}).get("maximum_spread_pct", 1.0))
 
-    category_allowed = max_slots > 0 and (category_score >= minimum_category or entry >= weak_exception)
-    qualified = (
-        category_allowed
-        and entry >= minimum_display
-        and exit_score <= maximum_exit
+    qualified_entry = (
+        max_slots > 0
+        and (category_score >= minimum_category or entry >= weak_exception)
+        and entry >= entry_blue
+        and exit_score <= max_exit
         and not metrics.falling_knife
         and not metrics.late_entry
+        and not spread_block
         and base >= 40.0
         and room >= 28.0
+        and net_target_quality >= 35.0
         and data_confidence >= 0.55
     )
     fading_confirmed = category_fading >= float(thresholds.get("minimum_category_fading_for_exit", 28.0))
     elevated_without_demand = elevated >= 28.0 and demand <= 58.0 and missing_support >= 34.0
     qualified_exit = (
-        exit_score >= minimum_exit
+        exit_score >= exit_orange
         and fading_confirmed
         and elevated_without_demand
         and category_trend_confidence >= float(thresholds.get("minimum_category_trend_confidence", 0.34))
         and data_confidence >= 0.55
     )
-    # Never publish contradictory directions. A materially stronger side wins.
-    if qualified and qualified_exit:
+    if qualified_entry and qualified_exit:
         if exit_score >= entry + 7.0:
-            qualified = False
+            qualified_entry = False
         else:
             qualified_exit = False
 
-    if qualified:
-        direction = "▲"
-        if entry >= entry_purple and exact and base >= 62.0 and laggard_score >= 18.0:
-            color = PURPLE
-        elif entry >= entry_green:
-            color = GREEN
-        else:
-            color = BLUE
-        count = min(8, max(2, int(round(entry / 12.5))))
-        ranking = entry + 3.0 * data_confidence + min(4.0, laggard_score * 0.04)
+    if qualified_entry:
+        direction, color = "▲", BLUE
+        ranking = entry + 3.0 * data_confidence + category_lead
     elif qualified_exit:
-        direction = "▼"
-        color = RED if exit_score >= exit_red else ORANGE
-        count = min(8, max(2, int(round(exit_score / 12.5))))
+        direction, color = "▼", ORANGE
         ranking = exit_score + 2.5 * data_confidence + min(5.0, category_fading * 0.05)
     else:
-        direction = "="
-        color = YELLOW
-        count = 0
-        ranking = max(0.0, entry * 0.45)
+        direction = "▲" if entry >= exit_score else "▼"
+        color = BLUE if direction == "▲" else ORANGE
+        ranking = max(entry, exit_score)
+    count = min(8, max(1, int(round(max(entry, exit_score) / 12.5))))
 
     reasons: list[str] = list(metrics.reasons)
-    if entry >= entry_green:
-        reasons.append(f"Entry {entry:.0f}")
     reasons.append(f"Kategorie {category_code} {category_score:.0f}")
-    if laggard_score >= 20.0:
-        reasons.append(f"Nachzügler {laggard_score:.0f}")
-    if exit_score > maximum_exit:
-        reasons.append("interne Risikosperre")
-    if qualified_exit:
-        reasons.append(f"Verkauf {exit_score:.0f}")
-        reasons.append(f"Kategorie fällt {category_fading:.0f}")
+    if category_lead >= 4.0:
+        reasons.append("Kategorie führt, Coin zieht nach")
     if target_confidence >= 0.35:
         reasons.append(f"3/5%-Historie {target_score:.0f}")
-    if market_adjustment <= -6:
-        reasons.append("schwacher Gesamtmarkt")
+    if total_cost >= 0.8:
+        reasons.append("Handelskosten erhöht")
     if bounded_unlock >= 8:
         reasons.append("Unlock-Abzug")
     if bounded_event >= 7:
         reasons.append("Ereignis-Abzug")
 
-    visible_colors = {
-        window: metrics.volume_colors.get(window, short.volume_colors.get(window, WHITE))
-        for window in (10, 30, 60)
-    }
+    visible_colors = {window: metrics.volume_colors.get(window, short.volume_colors.get(window, WHITE)) for window in (10, 30, 60)}
     return OpportunityAssessment(
         display=display,
         entry_score=round(entry, 4),
@@ -531,6 +494,11 @@ def assess_opportunity(
         target_prior_score=round(target_score, 4),
         target_prior_confidence=round(target_confidence, 4),
         liquidity_score=round(liquidity, 4),
+        execution_quality_score=round(execution_quality, 4),
+        spread_pct=None if spread is None else round(float(spread), 5),
+        estimated_round_trip_cost_pct=round(total_cost, 5),
+        net_target_quality_score=round(net_target_quality, 4),
+        category_lead_bonus=round(category_lead, 4),
         market_adjustment=round(market_adjustment, 4),
         unlock_penalty=round(bounded_unlock, 4),
         late_entry_penalty=round(late_penalty, 4),
@@ -541,7 +509,7 @@ def assess_opportunity(
         data_confidence=round(data_confidence, 4),
         falling_knife=metrics.falling_knife,
         late_entry=metrics.late_entry,
-        qualified_entry=qualified,
+        qualified_entry=qualified_entry,
         qualified_exit=qualified_exit,
         category_code=category_code,
         category_score=round(category_score, 4),
@@ -551,6 +519,7 @@ def assess_opportunity(
         activity_score=round(activity_score, 4),
         event_penalty=round(bounded_event, 4),
         category_fading_score=round(category_fading, 4),
+        category_strengthening_score=round(category_strengthening, 4),
         category_trend_confidence=round(category_trend_confidence, 4),
         volume_colors=visible_colors,
         reasons=tuple(dict.fromkeys(reasons)),

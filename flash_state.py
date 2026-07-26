@@ -1,11 +1,11 @@
-"""v3.4 full-pool category-opportunity flash scan.
+"""v3.5 LCW full-map context and fallback snapshot scan.
 
 A single LCW map response supplies fresh rate, rolling 24h volume and market cap
-for every configured coin. Persisted five-minute observations turn that one
+for every configured coin. Persisted map observations turn that one
 request into 5/15/30/60-minute volume and price trends for the complete pool.
 """
 
-# v3.4 r4 expanded-69 rebuild; source revalidated 2026-07-26.
+# v3.5 fresh cache namespace; LCW map is context/fallback only.
 from __future__ import annotations
 
 import json
@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-STATE_VERSION = "flash-v340-category-opportunity-r1"
+STATE_VERSION = "flash-v350-map-context-r1"
 WINDOWS = (5, 15, 30, 60)
 WINDOW_WEIGHTS = {5: 0.15, 15: 0.30, 30: 0.40, 60: 0.15}
 
@@ -145,7 +145,11 @@ def _trend_strength(
 def load_state(path: Path) -> dict[str, Any]:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(raw, dict) and isinstance(raw.get("coins"), dict):
+        if (
+            isinstance(raw, dict)
+            and raw.get("version") == STATE_VERSION
+            and isinstance(raw.get("coins"), dict)
+        ):
             return raw
     except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
         pass

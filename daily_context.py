@@ -1,6 +1,6 @@
-"""Stable v3.4 daily cache with histories, weekday context and target priors."""
+"""Fresh v3.5 LCW long-term cache with weekday context and target priors."""
 
-# v3.4 r4 expanded-69 rebuild; source revalidated 2026-07-26.
+# v3.5 fresh long-term cache; no migration from earlier versions.
 from __future__ import annotations
 
 import json
@@ -32,8 +32,8 @@ from analysis import (
     rolling_week_returns,
 )
 
-STATE_VERSION = "3.4.0"
-STATE_REVISION = "complete-weeks-pool-neutral-target-r4-v340"
+STATE_VERSION = "3.5.0"
+STATE_REVISION = "fresh-lcw-longterm-net-target-r1-v350"
 
 
 def local_day_key(now: datetime, timezone: str) -> str:
@@ -60,9 +60,13 @@ def seasonality_from_dict(raw: Mapping[str, Any] | None) -> Seasonality:
 def load_state(path: Path) -> dict[str, Any]:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        return raw if isinstance(raw, dict) else {}
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
+    if not isinstance(raw, dict):
+        return {}
+    if raw.get("version") != STATE_VERSION or raw.get("revision") != STATE_REVISION:
+        return {}
+    return raw
 
 
 def save_state(path: Path, state: Mapping[str, Any]) -> None:
@@ -529,7 +533,7 @@ def build_daily_contexts(
             current=raw.current,
             best_weekdays=stable_days,
             samples=raw.samples,
-            source=f"daily-v340-category-{mode}",
+            source=f"daily-v350-longterm-{mode}",
             current_score=raw.current_score,
             current_confidence=raw.current_confidence,
             weekday_scores=raw.weekday_scores,
@@ -561,6 +565,11 @@ def build_daily_contexts(
                 now_ms=int(now.timestamp() * 1000),
                 horizon_hours=int(config.get("target_horizon_hours", 24)),
                 minimum_anchor_spacing_hours=int(config.get("target_anchor_spacing_hours", 12)),
+                round_trip_cost_pct=(
+                    float((config.get("execution") or {}).get("assumed_round_trip_fees_pct", 0.30))
+                    + float((config.get("execution") or {}).get("assumed_slippage_pct", 0.12))
+                    + float((config.get("execution") or {}).get("historical_spread_allowance_pct", 0.12))
+                ),
             ),
             "history_points": len(history),
             "history": compact_history(

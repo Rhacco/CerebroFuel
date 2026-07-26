@@ -1,6 +1,9 @@
-"""Entry point for crypto-signal-monitor v3.4.1 category-rotation ranking."""
+"""Fresh v3.5 crypto category and short-swing monitor.
 
-# v3.4.1: BTC header anchor, weekday regions and mixed buy/sell top eight.
+Fast runs use closed one-minute exchange candles. LiveCoinWatch is limited to
+one full-pool map request plus durable long-term histories. Older cache versions
+are intentionally ignored.
+"""
 from __future__ import annotations
 
 import argparse
@@ -9,20 +12,26 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
+from zoneinfo import ZoneInfo
 
 from analysis import (
+    BLUE,
+    ORANGE,
+    RED,
+    WHITE,
+    YELLOW,
     CoinAnalysis,
+    Seasonality,
     ShortMetrics,
     analysis_to_dict,
     apply_opportunity_analysis,
     build_coin_analysis,
     build_report,
-    build_short_metrics,
-    confidence_sort_key,
     normalize_history,
-    pre_anomaly_score,
 )
+from category_context import build_category_context, format_category_line, select_category_entries
+from category_state import STATE_VERSION as CATEGORY_STATE_VERSION, update_category_state
 from daily_context import (
     STATE_REVISION,
     STATE_VERSION,
@@ -32,214 +41,139 @@ from daily_context import (
     load_state,
     local_day_key,
     save_state,
-    volume_trend_from_context,
     target_profile_for_coin,
+    volume_trend_from_context,
 )
 from discord_sender import send_discord
-from lcw_client import LiveCoinWatchClient
 from flash_state import STATE_VERSION as FLASH_STATE_VERSION, update_and_score
-from unlock_context import unlock_context
+from lcw_client import LiveCoinWatchClient
 from market_data import IntradayMetrics, PublicMarketDataClient
+from notification_state import mark_report_sent, report_send_decision
 from opportunity import assess_opportunity, build_market_quality
-from category_context import (
-    build_category_context,
-    format_category_line,
-    select_category_entries,
-)
-from category_state import STATE_VERSION as CATEGORY_STATE_VERSION, update_category_state
 from outcome_state import (
     STATE_VERSION as OUTCOME_STATE_VERSION,
     record_entry_candidates,
     update_and_resolve,
 )
+from ranking_context import btc_performance_context, seven_day_volume_context, small_cap_bonuses
+from signal_state import STATE_VERSION as SIGNAL_STATE_VERSION, update_signal_states
+from unlock_context import unlock_context
 
-from ranking_context import (
-    btc_performance_context,
-    combined_priority,
-    seven_day_volume_context,
-    small_cap_bonuses,
-)
-
-APP_VERSION = "3.4.1"
+APP_VERSION = "3.5.0"
 ROOT = Path(__file__).resolve().parent
-DAILY_STATE_PATH = ROOT / ".cache" / "seasonality" / "state.json"
-CHANGED_FLAG = ROOT / ".cache" / "seasonality" / "changed.flag"
-FLASH_STATE_PATH = ROOT / ".cache" / "flash" / "state.json"
-OPPORTUNITY_STATE_PATH = ROOT / ".cache" / "opportunity" / "state.json"
-CATEGORY_STATE_PATH = ROOT / ".cache" / "category" / "state.json"
+CACHE_ROOT = ROOT / ".cache" / "v350"
+LONGTERM_STATE_PATH = CACHE_ROOT / "longterm" / "state.json"
+LONGTERM_BOOTSTRAP_PATH = CACHE_ROOT / "longterm" / "bootstrap.json"
+LONGTERM_CHANGED_FLAG = CACHE_ROOT / "longterm" / "changed.flag"
+FLASH_STATE_PATH = CACHE_ROOT / "runtime" / "flash.json"
+OUTCOME_STATE_PATH = CACHE_ROOT / "runtime" / "outcomes.json"
+CATEGORY_STATE_PATH = CACHE_ROOT / "runtime" / "categories.json"
+SIGNAL_STATE_PATH = CACHE_ROOT / "runtime" / "signals.json"
+NOTIFICATION_STATE_PATH = CACHE_ROOT / "runtime" / "notifications.json"
 
 
 def load_config(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as handle:
-        config = json.load(handle)
-    required = ["reference_coin", "groups", "currency", "timezone"]
+    config = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(config, dict):
+        raise ValueError("config.json ist kein JSON-Objekt.")
+    required = ["reference_coin", "groups", "categories", "currency", "timezone"]
     missing = [key for key in required if key not in config]
     if missing:
-        raise ValueError(f"Fehlende config.json-Felder: {', '.join(missing)}")
-    if str(config.get("schema_version")) != APP_VERSION:
-        raise ValueError(
-            f"config.json schema_version={config.get('schema_version')!r}, erwartet {APP_VERSION}."
-        )
-    if str(config.get("quality_revision")) != STATE_REVISION:
-        raise ValueError(
-            f"config.json quality_revision={config.get('quality_revision')!r}, erwartet {STATE_REVISION}."
-        )
-    if str(config.get("flash_snapshot_version")) != FLASH_STATE_VERSION:
-        raise ValueError(
-            "config.json flash_snapshot_version stimmt nicht mit flash_state.py überein."
-        )
-    if str(config.get("outcome_state_version")) != OUTCOME_STATE_VERSION:
-        raise ValueError(
-            "config.json outcome_state_version stimmt nicht mit outcome_state.py überein."
-        )
-    if str(config.get("category_state_version")) != CATEGORY_STATE_VERSION:
-        raise ValueError(
-            "config.json category_state_version stimmt nicht mit category_state.py überein."
-        )
+        raise ValueError("Fehlende config.json-Felder: " + ", ".join(missing))
+    checks = {
+        "schema_version": APP_VERSION,
+        "quality_revision": STATE_REVISION,
+        "flash_snapshot_version": FLASH_STATE_VERSION,
+        "outcome_state_version": OUTCOME_STATE_VERSION,
+        "category_state_version": CATEGORY_STATE_VERSION,
+    }
+    for key, expected in checks.items():
+        if str(config.get(key)) != str(expected):
+            raise ValueError(f"config.json {key}={config.get(key)!r}, erwartet {expected!r}.")
+    signal_version = str((config.get("signal_state") or {}).get("state_version") or "")
+    if signal_version != SIGNAL_STATE_VERSION:
+        raise ValueError("config.json signal_state.state_version stimmt nicht mit signal_state.py überein.")
     return config
 
 
 def env_bool(name: str, default: bool = True) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() not in {"0", "false", "no", "off"}
+    raw = os.getenv(name)
+    return default if raw is None else raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Kompakter Krypto-Kategorien- und Chancenmonitor")
+    parser = argparse.ArgumentParser(description="Krypto-Kategorienmonitor v3.5.0")
     parser.add_argument("--config", default=str(ROOT / "config.json"))
     parser.add_argument("--no-send", action="store_true")
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--daily-only", action="store_true")
-    mode.add_argument("--monitor-only", action="store_true")
+    parser.add_argument("--force-discord", action="store_true")
+    parser.add_argument("--longterm-only", action="store_true")
+    parser.add_argument("--force-longterm", action="store_true")
     return parser.parse_args()
 
 
 def parse_coin(item: Any) -> tuple[str, tuple[str, ...]]:
     if isinstance(item, str):
-        code = item.upper()
+        code = item.upper().strip()
         return code, (code,)
-    if isinstance(item, dict):
-        display = str(item.get("display") or item.get("code") or "").upper()
+    if isinstance(item, Mapping):
+        display = str(item.get("display") or item.get("code") or "").upper().strip()
         raw_codes = item.get("codes")
         if isinstance(raw_codes, list):
-            codes = tuple(str(code).upper() for code in raw_codes if str(code).strip())
+            codes = tuple(str(code).upper().strip() for code in raw_codes if str(code).strip())
         else:
-            code = str(item.get("code") or display).upper()
+            code = str(item.get("code") or display).upper().strip()
             codes = (code,) if code else tuple()
         if display and codes:
             return display, tuple(dict.fromkeys(codes))
     raise ValueError(f"Ungültiger Coin-Eintrag: {item!r}")
 
 
-def parse_layout(
-    config: dict[str, Any],
-) -> tuple[tuple[str, tuple[str, ...]], list[tuple[str, tuple[str, ...]]]]:
+def parse_layout(config: Mapping[str, Any]) -> tuple[tuple[str, tuple[str, ...]], list[tuple[str, tuple[str, ...]]]]:
     reference = parse_coin(config["reference_coin"])
     pool: list[tuple[str, tuple[str, ...]]] = []
-    seen_displays = {reference[0]}
-    seen_codes = {code: reference[0] for code in reference[1]}
+    displays = {reference[0]}
+    codes = {code: reference[0] for code in reference[1]}
     for group in config["groups"]:
-        items = group.get("coins") if isinstance(group, dict) else group
+        items = group.get("coins") if isinstance(group, Mapping) else group
         if not isinstance(items, list):
-            raise ValueError("Jede Gruppe benötigt eine Liste 'coins'.")
-        for item in items:
-            display, codes = parse_coin(item)
-            if display in seen_displays:
-                raise ValueError(f"Doppelter Coin-Anzeigename in config.json: {display}")
-            for code in codes:
-                owner = seen_codes.get(code)
-                if owner is not None:
-                    raise ValueError(f"LCW-Code {code} ist doppelt belegt: {owner} und {display}")
-                seen_codes[code] = display
-            seen_displays.add(display)
-            pool.append((display, codes))
-
-    selection = config.get("coin_selection")
-    mandatory = selection.get("mandatory_kept", []) if isinstance(selection, dict) else []
-    required_active = selection.get("required_active", []) if isinstance(selection, dict) else []
-    required = list(dict.fromkeys(
-        str(name).upper() for name in [*mandatory, *required_active] if str(name).strip()
-    ))
-    missing_required = [name for name in required if name not in seen_displays]
-    if missing_required:
-        raise ValueError("Verbindliche aktive Coins fehlen: " + ", ".join(missing_required))
-
-    raw_categories = config.get("categories")
-    if not isinstance(raw_categories, list) or not raw_categories:
-        raise ValueError("config.json benötigt Kategorien für alle aktiven Coins.")
-    category_owner: dict[str, str] = {}
-    for raw_category in raw_categories:
-        if not isinstance(raw_category, Mapping):
-            raise ValueError("Ungültiger Kategorieeintrag in config.json.")
-        code = str(raw_category.get("code") or "").upper()
+            raise ValueError("Jede Gruppe benötigt eine Coin-Liste.")
+        for raw in items:
+            display, candidates = parse_coin(raw)
+            if display in displays:
+                raise ValueError(f"Doppelter Coin: {display}")
+            for code in candidates:
+                if code in codes:
+                    raise ValueError(f"Doppelter LCW-Code {code}: {codes[code]} und {display}")
+                codes[code] = display
+            displays.add(display)
+            pool.append((display, candidates))
+    owners: dict[str, str] = {}
+    for category in config["categories"]:
+        code = str(category.get("code") or "").upper()
         if not code or len(code) > 3:
-            raise ValueError(f"Ungültiges Kategorie-Kürzel: {code!r}")
-        for raw_name in raw_category.get("coins", []):
-            name = str(raw_name).upper()
-            if name in category_owner:
-                raise ValueError(f"Coin {name} ist doppelt kategorisiert: {category_owner[name]}, {code}")
-            category_owner[name] = code
-    missing_category = sorted(name for name in seen_displays if name not in category_owner)
-    unknown_category = sorted(name for name in category_owner if name not in seen_displays)
-    if missing_category or unknown_category:
-        raise ValueError(
-            "Kategorien stimmen nicht mit dem Coin-Pool überein; "
-            f"fehlend={missing_category}, unbekannt={unknown_category}."
-        )
+            raise ValueError(f"Ungültige Kategorie {code!r}")
+        for display in category.get("coins", []):
+            name = str(display).upper()
+            if name in owners:
+                raise ValueError(f"Coin {name} doppelt kategorisiert.")
+            owners[name] = code
+    missing = sorted(displays - set(owners))
+    unknown = sorted(set(owners) - displays)
+    if missing or unknown:
+        raise ValueError(f"Kategorie-/Pool-Abweichung: fehlend={missing}, unbekannt={unknown}")
+    required = [str(x).upper() for x in (config.get("coin_selection") or {}).get("required_active", [])]
+    absent = [name for name in required if name not in displays]
+    if absent:
+        raise ValueError("Pflichtcoins fehlen: " + ", ".join(absent))
+    expected_count = int((config.get("coin_selection") or {}).get("unique_altcoin_count", len(pool)))
+    if len(pool) != expected_count:
+        raise ValueError(f"Altcoin-Anzahl {len(pool)} stimmt nicht mit {expected_count} überein.")
     return reference, pool
 
 
-def resolve_pair(
-    pair: tuple[str, tuple[str, ...]],
-    current_by_code: Mapping[str, Mapping[str, Any]],
-) -> tuple[str, str] | None:
+def resolve_pair(pair: tuple[str, tuple[str, ...]], rows: Mapping[str, Mapping[str, Any]]) -> tuple[str, str] | None:
     display, candidates = pair
-    for candidate in candidates:
-        if candidate in current_by_code:
-            return display, candidate
-    return None
-
-
-def _turnover_pct(row: Mapping[str, Any]) -> float:
-    volume = max(float(row.get("volume") or 0.0), 0.0)
-    cap = max(float(row.get("cap") or 0.0), 0.0)
-    return volume / cap * 100.0 if cap > 0 else 0.0
-
-
-def balanced_preselection(
-    pool: list[tuple[str, str]],
-    current_by_code: Mapping[str, Mapping[str, Any]],
-    reference_current: Mapping[str, Any],
-    count: int,
-    slot: int,
-) -> list[tuple[str, str]]:
-    ranked = sorted(
-        pool,
-        key=lambda pair: pre_anomaly_score(current_by_code[pair[1]], reference_current),
-        reverse=True,
-    )
-    selected: list[tuple[str, str]] = []
-
-    def add(pair: tuple[str, str]) -> None:
-        if pair not in selected and len(selected) < count:
-            selected.append(pair)
-
-    for pair in ranked[: max(10, count - 5)]:
-        add(pair)
-    for pair in sorted(pool, key=lambda pair: _turnover_pct(current_by_code[pair[1]]), reverse=True):
-        if len(selected) >= count - 2:
-            break
-        add(pair)
-    remaining = sorted((pair for pair in pool if pair not in selected), key=lambda pair: pair[0])
-    if remaining:
-        start = slot % len(remaining)
-        for offset in range(min(2, len(remaining))):
-            add(remaining[(start + offset) % len(remaining)])
-    for pair in ranked:
-        add(pair)
-    return selected[:count]
+    return next(((display, code) for code in candidates if code in rows), None)
 
 
 def _new_client(api_key: str, config: Mapping[str, Any]) -> LiveCoinWatchClient:
@@ -250,194 +184,173 @@ def _new_client(api_key: str, config: Mapping[str, Any]) -> LiveCoinWatchClient:
         request_interval_seconds=float(config.get("request_interval_seconds", 0.30)),
         burst_limit=int(config.get("request_burst_limit", 32)),
         burst_window_seconds=float(config.get("request_burst_window_seconds", 60)),
-        rate_state_path=os.getenv("LCW_RATE_STATE_PATH", str(ROOT / ".cache" / "lcw-rate.json")),
+        rate_state_path=os.getenv("LCW_RATE_STATE_PATH", str(CACHE_ROOT / "runtime" / "lcw-rate.json")),
     )
 
 
-def _merge_points(*series: list) -> list:
-    merged = {}
+def _merge_points(*series: Sequence[Any]) -> list[Any]:
+    merged: dict[int, Any] = {}
     for points in series:
         for point in points:
-            merged[point.timestamp_ms] = point
+            merged[int(point.timestamp_ms)] = point
     return [merged[key] for key in sorted(merged)]
 
 
-def _set_changed(changed: bool) -> None:
-    CHANGED_FLAG.parent.mkdir(parents=True, exist_ok=True)
+def _set_longterm_changed(changed: bool) -> None:
+    LONGTERM_CHANGED_FLAG.parent.mkdir(parents=True, exist_ok=True)
     if changed:
-        CHANGED_FLAG.write_text("changed\n", encoding="utf-8")
+        LONGTERM_CHANGED_FLAG.write_text("changed\n", encoding="utf-8")
     else:
-        CHANGED_FLAG.unlink(missing_ok=True)
-    output = os.getenv("GITHUB_OUTPUT")
-    if output:
-        with open(output, "a", encoding="utf-8") as handle:
-            handle.write(f"changed={'true' if changed else 'false'}\n")
+        LONGTERM_CHANGED_FLAG.unlink(missing_ok=True)
 
 
-def _log_weekday_context(display: str, context: Mapping[str, Any]) -> None:
-    diagnostics = context.get("weekday_diagnostics") or {}
-    top = diagnostics.get("top") or []
-    detail = " | ".join(
-        f"{item.get('day')} q={float(item.get('score', 0.0)):.4f} "
-        f"c={float(item.get('confidence', 0.0)):.2f}"
-        f"{' ✓' if item.get('selected') else ''}"
-        for item in top[:4]
-    ) or "keine positiven Kandidaten"
-    raw = "".join(diagnostics.get("raw") or []) or "—"
-    stable = "".join(diagnostics.get("stable") or []) or "—"
-    print(
-        f"Wochentage {display}: Wochen={diagnostics.get('complete_weeks', 0)} "
-        f"Roh={raw} Anzeige={stable} Beta={float(diagnostics.get('market_beta', 0.0)):.2f} "
-        f"Breite={float(diagnostics.get('market_breadth', 0.0)):.0f} | {detail}"
-    )
+def _load_bootstrap() -> dict[str, Any]:
+    try:
+        raw = json.loads(LONGTERM_BOOTSTRAP_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
+        return {"version": STATE_VERSION, "revision": STATE_REVISION, "coins": {}}
+    if not isinstance(raw, dict) or raw.get("version") != STATE_VERSION or raw.get("revision") != STATE_REVISION:
+        return {"version": STATE_VERSION, "revision": STATE_REVISION, "coins": {}}
+    return raw
 
 
-def prepare_daily_context(config: dict[str, Any], api_key: str) -> int:
-    """Prepare the exact v3.4 daily cache before any Discord message.
+def _save_bootstrap(histories: Mapping[str, Sequence[Any]], api_codes: Mapping[str, str]) -> None:
+    LONGTERM_BOOTSTRAP_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": STATE_VERSION,
+        "revision": STATE_REVISION,
+        "coins": {
+            display: {
+                "api_code": api_codes.get(display),
+                "history": [[p.timestamp_ms, p.rate, p.volume] for p in points],
+            }
+            for display, points in histories.items()
+        },
+    }
+    tmp = LONGTERM_BOOTSTRAP_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    tmp.replace(LONGTERM_BOOTSTRAP_PATH)
 
-    Compatible v3.3.3 and older raw histories are reused; only newly added coins are bootstrapped.
-    No long LCW requests are needed for that migration. On later calendar days,
-    cached histories are updated with one recent request per existing coin.
+
+def prepare_longterm_context(
+    config: dict[str, Any],
+    api_key: str,
+    *,
+    force: bool = False,
+) -> tuple[int, dict[str, dict[str, Any]] | None]:
+    """Build or refresh the fresh v3.5 LCW long-term cache.
+
+    A missing first cache is built immediately. Progress is checkpointed so an
+    interrupted bootstrap resumes instead of restarting. Old cache versions are
+    never read.
     """
-    reference_pair, pool_pairs = parse_layout(config)
-    all_pairs = [reference_pair, *pool_pairs]
-    expected = [display for display, _ in all_pairs]
+    reference, pool = parse_layout(config)
+    pairs = [reference, *pool]
+    expected = [display for display, _ in pairs]
     now = datetime.now(timezone.utc)
+    now_ms = int(now.timestamp() * 1000)
     timezone_name = str(config.get("timezone", "Europe/Berlin"))
     today = local_day_key(now, timezone_name)
-    previous = load_state(DAILY_STATE_PATH)
+    previous = load_state(LONGTERM_STATE_PATH)
     previous_coins = previous.get("coins") if isinstance(previous.get("coins"), dict) else {}
-
-    exact = (
-        previous.get("version") == STATE_VERSION
-        and previous.get("revision") == STATE_REVISION
+    all_present = all(display in previous_coins for display in expected)
+    retry_after = int(previous.get("retry_after_ms") or 0)
+    if (
+        not force
         and previous.get("date") == today
-        and all(display in previous_coins for display in expected)
-    )
-    if exact:
-        print(
-            f"Tageskontext {today}: exakter v3.4-Cache, 0 Langzeitabfragen "
-            f"({len(expected)} Coins)."
-        )
-        _set_changed(False)
-        return 0
+        and all_present
+        and (not previous.get("failures") or now_ms < retry_after)
+    ):
+        _set_longterm_changed(False)
+        print(f"LCW-Langzeitcache {today}: aktuell ({len(expected)} Assets), 0 Historienabfragen.")
+        return 0, None
 
-    # Reuse every compatible raw history stored by earlier revisions. This is the
-    # critical migration path that avoids a 100+ request rebuild.
-    histories: dict[str, list] = {}
+    histories: dict[str, list[Any]] = {}
     api_codes: dict[str, str] = {}
-    missing_pairs: list[tuple[str, tuple[str, ...]]] = []
-    for display, candidates in all_pairs:
+    for display, candidates in pairs:
         old = previous_coins.get(display) if isinstance(previous_coins, dict) else None
         cached = history_from_context(old if isinstance(old, Mapping) else None)
-        old_code = str((old or {}).get("api_code") or "").upper() if isinstance(old, Mapping) else ""
         if cached:
             histories[display] = cached
-            api_codes[display] = old_code or candidates[0]
-        else:
-            missing_pairs.append((display, candidates))
+            api_codes[display] = str((old or {}).get("api_code") or candidates[0]).upper()
 
-    same_calendar_day = previous.get("date") == today
-    client: LiveCoinWatchClient | None = None
-    request_count = 0
+    if not histories:
+        bootstrap = _load_bootstrap()
+        for display, raw in (bootstrap.get("coins") or {}).items():
+            points = history_from_context(raw if isinstance(raw, Mapping) else None)
+            if points:
+                histories[str(display).upper()] = points
+                api_codes[str(display).upper()] = str((raw or {}).get("api_code") or "").upper()
+
+    client = _new_client(api_key, config)
+    requests_used = 0
     failures: list[str] = []
-
-    def client_instance() -> LiveCoinWatchClient:
-        nonlocal client
-        if client is None:
-            client = _new_client(api_key, config)
-        return client
-
-    # If this is a new day, increment all cached histories once. If it is merely
-    # an algorithm migration on the same day, recompute locally with zero LCW calls.
-    if not same_calendar_day and histories:
-        from zoneinfo import ZoneInfo
-
-        local_midnight = now.astimezone(ZoneInfo(timezone_name)).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        end_ms = int(local_midnight.astimezone(timezone.utc).timestamp() * 1000)
-        incremental_days = int(config.get("daily_incremental_days", 12))
-        keep_days = int(config.get("daily_history_days", 300)) + 21
-        minimum_ms = end_ms - keep_days * 86_400_000
-        for display in list(histories):
-            cached = histories[display]
-            code = api_codes[display]
-            start_ms = max(
-                minimum_ms,
-                cached[-1].timestamp_ms - incremental_days * 86_400_000,
-            )
-            try:
-                raw = client_instance().get_history(code, start_ms, end_ms, allow_empty=True)
-                request_count += 1
-                fresh = normalize_history(raw)
-                histories[display] = [
-                    point
-                    for point in _merge_points(cached, fresh)
-                    if point.timestamp_ms >= minimum_ms
-                ]
-            except Exception as exc:
-                failures.append(display)
-                print(
-                    f"Tageskontext {display}: letzter gültiger Rohverlauf bleibt aktiv ({exc}).",
-                    file=sys.stderr,
-                )
-
-    # Only genuinely missing/new coins need a map lookup and chunked bootstrap.
-    if missing_pairs:
-        candidate_codes = list(dict.fromkeys(code for _, codes in missing_pairs for code in codes))
-        current_by_code = client_instance().get_coins(candidate_codes)
-        request_count += 1
-        from zoneinfo import ZoneInfo
-
-        local_midnight = now.astimezone(ZoneInfo(timezone_name)).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
+    map_rows: dict[str, dict[str, Any]] | None = None
+    missing = [(display, candidates) for display, candidates in pairs if not histories.get(display)]
+    if missing:
+        candidate_codes = list(dict.fromkeys(code for _, candidates in missing for code in candidates))
+        map_rows = client.get_coins(candidate_codes)
+        requests_used += 1
+        local_midnight = now.astimezone(ZoneInfo(timezone_name)).replace(hour=0, minute=0, second=0, microsecond=0)
         end_ms = int(local_midnight.astimezone(timezone.utc).timestamp() * 1000)
         start_ms = end_ms - (int(config.get("daily_history_days", 300)) + 2) * 86_400_000
-        for display, candidates in missing_pairs:
-            resolved = next((code for code in candidates if code in current_by_code), None)
+        for index, (display, candidates) in enumerate(missing, start=1):
+            resolved = next((code for code in candidates if code in map_rows), None)
+            api_codes[display] = resolved or candidates[0]
             if resolved is None:
-                failures.append(display)
                 histories[display] = []
-                api_codes[display] = candidates[0]
+                failures.append(display)
+            else:
+                try:
+                    raw, used, _ = client.get_history_chunked(
+                        resolved,
+                        start_ms,
+                        end_ms,
+                        chunk_days=int(config.get("daily_history_chunk_days", 100)),
+                    )
+                    requests_used += used
+                    histories[display] = normalize_history(raw)
+                except Exception as exc:
+                    histories[display] = []
+                    failures.append(display)
+                    print(f"Langzeitaufbau {display}: {exc}", file=sys.stderr)
+            if index % 5 == 0:
+                _save_bootstrap(histories, api_codes)
+    elif previous.get("date") != today or force:
+        local_midnight = now.astimezone(ZoneInfo(timezone_name)).replace(hour=0, minute=0, second=0, microsecond=0)
+        end_ms = int(local_midnight.astimezone(timezone.utc).timestamp() * 1000)
+        keep_after = end_ms - (int(config.get("daily_history_days", 300)) + 21) * 86_400_000
+        incremental_days = int(config.get("daily_incremental_days", 12))
+        for display in expected:
+            points = histories.get(display, [])
+            code = api_codes.get(display)
+            if not points or not code:
+                failures.append(display)
                 continue
-            api_codes[display] = resolved
+            start_ms = max(keep_after, points[-1].timestamp_ms - incremental_days * 86_400_000)
             try:
-                raw, used, _ = client_instance().get_history_chunked(
-                    resolved,
-                    start_ms,
-                    end_ms,
-                    chunk_days=int(config.get("daily_history_chunk_days", 100)),
-                )
-                request_count += used
-                histories[display] = normalize_history(raw)
+                raw = client.get_history(code, start_ms, end_ms, allow_empty=True)
+                requests_used += 1
+                histories[display] = [p for p in _merge_points(points, normalize_history(raw)) if p.timestamp_ms >= keep_after]
             except Exception as exc:
                 failures.append(display)
-                histories[display] = []
-                print(f"Tageskontext {display}: noch keine nutzbare Historie ({exc}).", file=sys.stderr)
+                print(f"Langzeitupdate {display}: letzter gültiger Verlauf bleibt aktiv ({exc}).", file=sys.stderr)
 
-    # Empty histories remain valid empty contexts; they do not force repeated
-    # requests within the day. The monitor can still show these coins via flash data.
-    for display, candidates in all_pairs:
+    for display, candidates in pairs:
         histories.setdefault(display, [])
         api_codes.setdefault(display, candidates[0])
 
-    use_hysteresis = previous.get("revision") == STATE_REVISION
     new_coins = build_daily_contexts(
         histories=histories,
         api_codes=api_codes,
-        reference_display=reference_pair[0],
+        reference_display=reference[0],
         now=now,
         timezone=timezone_name,
         config=config,
         previous_coins=previous_coins,
         computed_for=today,
-        use_previous_hysteresis=use_hysteresis,
+        use_previous_hysteresis=bool(previous_coins),
     )
-    for display in expected:
-        _log_weekday_context(display, new_coins[display])
-
     state = {
         "version": STATE_VERSION,
         "revision": STATE_REVISION,
@@ -447,289 +360,258 @@ def prepare_daily_context(config: dict[str, Any], api_key: str) -> int:
         "coins": new_coins,
         "complete_count": len(new_coins),
         "failures": sorted(set(failures)),
-        "migrated_from_version": previous.get("version"),
-        "migrated_from_revision": previous.get("revision"),
-        "long_requests": request_count,
+        "retry_after_ms": now_ms + (60 * 60_000 if failures else 0),
+        "long_requests": requests_used,
     }
-    save_state(DAILY_STATE_PATH, state)
-    visible = sum(bool(item.get("stable_best_weekdays")) for item in new_coins.values())
-    source = "lokale Cache-Migration" if same_calendar_day and request_count == 0 else "Tagesaktualisierung"
-    print(
-        f"Tageskontext {today}: {source}; {visible}/{len(new_coins)} Coins mit Top-Wochentag; "
-        f"{request_count} Langzeitabfragen."
+    save_state(LONGTERM_STATE_PATH, state)
+    LONGTERM_BOOTSTRAP_PATH.unlink(missing_ok=True)
+    _set_longterm_changed(True)
+    usable = sum(bool(history_from_context(item)) for item in new_coins.values())
+    print(f"LCW-Langzeitcache {today}: {usable}/{len(new_coins)} Historien, {requests_used} Requests, Fehler={len(set(failures))}.")
+    return requests_used, map_rows
+
+
+def _average(values: Sequence[float | None]) -> float | None:
+    valid = [float(value) for value in values if value is not None]
+    return sum(valid) / len(valid) if valid else None
+
+
+def _short_from_sources(
+    display: str,
+    metrics: IntradayMetrics | None,
+    flash: Any | None,
+    btc_metrics: IntradayMetrics | None,
+) -> ShortMetrics:
+    metrics = metrics or IntradayMetrics(display=display)
+    price_changes: dict[int, float | None] = {}
+    volume_changes: dict[int, float | None] = {}
+    volume_colors: dict[int, str] = {}
+    window_quality: dict[int, str] = {}
+    setup_scores: dict[int, float | None] = {}
+    price_strengths: dict[int, float | None] = {}
+    volume_strengths: dict[int, float | None] = {}
+    for window in (10, 30, 60):
+        price = metrics.price_changes.get(window)
+        if price is None and flash is not None:
+            if window == 10:
+                price = _average([flash.price_changes.get(5), flash.price_changes.get(15)])
+            else:
+                price = flash.price_changes.get(window)
+        ratio = metrics.volume_ratios.get(window)
+        volume = None if ratio is None else (float(ratio) - 1.0) * 100.0
+        if volume is None and flash is not None:
+            if window == 10:
+                volume = _average([flash.volume_changes.get(5), flash.volume_changes.get(15)])
+            else:
+                volume = flash.volume_changes.get(window)
+        price_changes[window] = price
+        volume_changes[window] = volume
+        volume_colors[window] = metrics.volume_colors.get(window) or ("⚪" if volume is None else YELLOW)
+        usable = price is not None and volume is not None
+        window_quality[window] = "good" if usable and metrics.data_quality == "good" else ("uncertain" if usable else "insufficient")
+        gap = None if not usable else float(volume) - float(price)
+        setup_scores[window] = None if gap is None else min(100.0, abs(gap) * 10.0)
+        price_strengths[window] = price
+        volume_strengths[window] = None if ratio is None else float(ratio) - 1.0
+    p30 = float(price_changes.get(30) or 0.0)
+    btc30 = float((btc_metrics.price_changes.get(30) if btc_metrics else 0.0) or 0.0)
+    relative = p30 - btc30
+    relative_color = BLUE if relative >= 0.35 else (ORANGE if relative <= -0.35 else YELLOW)
+    demand = float(metrics.demand_score)
+    sell = float(metrics.sell_pressure_score)
+    direction = "▲" if demand >= sell else "▼"
+    color = BLUE if direction == "▲" else ORANGE
+    quality = "good" if metrics.data_quality == "good" else ("uncertain" if metrics.data_quality == "partial" else "insufficient")
+    if metrics.data_quality == "insufficient" and flash is not None and int(getattr(flash, "covered_windows", 0)) >= 2:
+        quality = "uncertain"
+    divergence30 = None
+    if price_changes.get(30) is not None and volume_changes.get(30) is not None:
+        divergence30 = float(volume_changes[30]) - float(price_changes[30])
+    return ShortMetrics(
+        price_changes=price_changes,
+        volume_changes=volume_changes,
+        volume_colors=volume_colors,
+        relative_short_pct=relative,
+        relative_color=relative_color,
+        pressure_score=demand - sell,
+        pressure_color=color,
+        buy_count=min(8, max(1, int(round(demand / 12.5)))) if direction == "▲" else 0,
+        sell_count=min(8, max(1, int(round(sell / 12.5)))) if direction == "▼" else 0,
+        direction=direction,
+        signal_color=color,
+        anomaly_score=max(demand, sell),
+        data_quality=quality,
+        window_quality=window_quality,
+        window_setup_scores=setup_scores,
+        price_strengths=price_strengths,
+        volume_strengths=volume_strengths,
+        flash_score=max(demand, sell, float(getattr(flash, "score", 0.0) if flash else 0.0)),
+        flash_direction=direction,
+        divergence_30=divergence30,
+        divergence_score=max(demand, sell),
+        volatility_score=float(getattr(flash, "volatility_score", 0.0) if flash else 0.0),
+        recovery_score=float(getattr(flash, "recovery_score", 0.0) if flash else 0.0),
+        recovery_color=str(getattr(flash, "recovery_color", YELLOW) if flash else YELLOW),
+        recent_crash_pct=float(getattr(flash, "recent_crash_pct", 0.0) if flash else 0.0),
     )
-    _set_changed(True)
-    return 0
 
 
-def refresh_histories(
-    *,
-    client: LiveCoinWatchClient,
-    codes: list[str],
-    start_ms: int,
-    end_ms: int,
-    label: str,
-) -> tuple[dict[str, list], list[str]]:
-    histories: dict[str, list] = {}
-    failed: list[str] = []
-    for code in codes:
-        try:
-            histories[code] = normalize_history(client.get_history(code, start_ms, end_ms))
-            print(f"{label}: {code} ({len(histories[code])} Punkte)")
-        except Exception as exc:
-            failed.append(code)
-            print(f"HINWEIS: {label} {code} nicht verfügbar: {exc}", file=sys.stderr)
-    return histories, failed
-
-
-def log_quality(display: str, short: ShortMetrics) -> None:
-    if short.quality_reasons:
-        details = ", ".join(
-            f"{window}m={reason}" for window, reason in sorted(short.quality_reasons.items())
-        )
-        print(f"Datenhinweis {display}: {details}", file=sys.stderr)
-    if short.reversal_guard:
-        print(
-            f"Trendwechsel-Schutz {display}: Achse={short.temporal_score:+.3f}, "
-            f"Streak={short.positive_streak}/{short.negative_streak}.",
-            file=sys.stderr,
-        )
-
-
-def _short_is_displayable(
-    short: ShortMetrics,
-    intraday: IntradayMetrics | None = None,
-) -> bool:
-    """Accept robust detail data without making LCW's 10m density a fatal SPOF.
-
-    The 30- and 60-minute LCW windows remain mandatory for the legacy detail
-    engine. A single missing short window is acceptable when at least two LCW
-    setup windows are usable and public 5-minute candles independently cover
-    the short end. This prevents a valid report from being discarded merely
-    because LCW returned roughly 15-minute-spaced history points.
-    """
-    usable = sum(
-        short.window_setup_scores.get(window) is not None
-        for window in (10, 30, 60)
-    )
-    if (
-        short.data_quality != "insufficient"
-        and usable >= 2
-        and short.window_setup_scores.get(30) is not None
-        and short.window_setup_scores.get(60) is not None
-    ):
-        return True
-    if intraday is None or intraday.data_quality not in {"good", "partial"}:
-        return False
-    price_windows = sum(
-        intraday.price_changes.get(window) is not None
-        for window in (10, 30, 60)
-    )
-    volume_windows = sum(
-        intraday.volume_colors.get(window) not in {None, "⚪"}
-        for window in (10, 30, 60)
-    )
-    return (
-        usable >= 2
-        and short.window_setup_scores.get(30) is not None
-        and price_windows >= 2
-        and volume_windows >= 2
-    )
-
-
-def _build_short_for_pair(
+def _assessment_for(
     *,
     display: str,
     api_code: str,
     current_by_code: Mapping[str, Mapping[str, Any]],
-    histories: Mapping[str, list],
-    now_ms: int,
-    btc_short: ShortMetrics,
+    short_by_display: Mapping[str, ShortMetrics],
+    flash_signals: Mapping[str, Any],
+    intraday: Mapping[str, IntradayMetrics],
+    reference_display: str,
+    market_quality: Any,
+    daily_state: Mapping[str, Any],
+    live_profiles: Mapping[str, Mapping[str, Any]],
+    unlocks: Mapping[str, Mapping[str, Any]],
+    coin_categories: Mapping[str, Any],
+    category_trends: Mapping[str, Any],
     config: Mapping[str, Any],
-) -> ShortMetrics:
-    short = build_short_metrics(
+) -> dict[str, Any]:
+    category = coin_categories.get(display)
+    category_code = str(category.category_code if category else "")
+    trend = category_trends.get(category_code)
+    result = assess_opportunity(
+        display=display,
         current=current_by_code[api_code],
-        short_history=histories.get(api_code, []),
-        now_ms=now_ms,
-        btc_price_changes=btc_short.price_changes,
+        short=short_by_display[display],
+        flash_signal=flash_signals.get(display),
+        intraday=intraday.get(display),
+        btc_intraday=intraday.get(reference_display),
+        market_quality=market_quality,
+        historical_target=target_profile_for_coin(daily_state, display),
+        live_target=live_profiles.get(display),
+        unlock_penalty=float((unlocks.get(display) or {}).get("penalty") or 0.0),
+        category_context=category.to_dict() if category else None,
+        category_trend=trend.to_dict() if trend else None,
+        event_penalty=float(category.event_penalty if category else 0.0),
         config=config,
-        is_reference=False,
-        btc_short=btc_short,
     )
-    log_quality(display, short)
-    return short
+    return result.to_dict()
 
 
-def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_send: bool) -> int:
+def run_monitor(
+    config: dict[str, Any],
+    api_key: str,
+    webhook_url: str,
+    *,
+    should_send: bool,
+    force_discord: bool,
+    reused_map: dict[str, dict[str, Any]] | None = None,
+) -> int:
     reference_pair, pool_pairs = parse_layout(config)
-    print(f"Coin-Universum {config.get('coin_universe_revision', 'unbekannt')}: {len(pool_pairs)} Altcoins + BTC; Detailziel={int(config.get('preselect_coin_count', 24))}.")
     now = datetime.now(timezone.utc)
     now_ms = int(now.timestamp() * 1000)
-    today = local_day_key(now, str(config.get("timezone", "Europe/Berlin")))
-    daily_state = load_state(DAILY_STATE_PATH)
-    if not (
-        daily_state.get("version") == STATE_VERSION
-        and daily_state.get("revision") == STATE_REVISION
-        and daily_state.get("date") == today
-        and isinstance(daily_state.get("coins"), dict)
-    ):
-        raise RuntimeError("Kein aktueller kompatibler Tageskontext vorhanden; Versand wird verhindert.")
-    print(
-        f"Tageskontext: exact-current {STATE_REVISION}, "
-        f"0 Langzeitabfragen im Monitorlauf."
-    )
+    daily_state = load_state(LONGTERM_STATE_PATH)
+    if not daily_state or not isinstance(daily_state.get("coins"), dict):
+        raise RuntimeError("Der frische v3.5-Langzeitcache konnte nicht aufgebaut werden.")
 
     all_pairs = [reference_pair, *pool_pairs]
-    candidate_codes = list(dict.fromkeys(code for _, codes in all_pairs for code in codes))
+    candidate_codes = list(dict.fromkeys(code for _, candidates in all_pairs for code in candidates))
     client = _new_client(api_key, config)
-    print(f"Lade frische Map-Daten für {len(candidate_codes)} LCW-Codes ...")
-    current_by_code = client.get_coins(candidate_codes)
-
+    reuse_complete = bool(
+        reused_map
+        and all(any(code in reused_map for code in candidates) for _, candidates in all_pairs)
+    )
+    current_by_code = reused_map if reuse_complete else None
+    if current_by_code is None:
+        current_by_code = client.get_coins(candidate_codes)
     resolved_reference = resolve_pair(reference_pair, current_by_code)
     if resolved_reference is None:
-        raise ValueError(f"Referenzcoin {reference_pair[0]} fehlt in LCW.")
+        raise RuntimeError("BTC fehlt in der LCW-Gesamt-Map.")
     reference_display, reference_api = resolved_reference
-    reference_current = current_by_code[reference_api]
-
     resolved_pool: list[tuple[str, str]] = []
     unresolved: list[str] = []
     for pair in pool_pairs:
         resolved = resolve_pair(pair, current_by_code)
-        if resolved is None:
-            unresolved.append(pair[0])
-        else:
+        if resolved:
             resolved_pool.append(resolved)
+        else:
+            unresolved.append(pair[0])
     if unresolved:
-        print("HINWEIS: Aktuell nicht von LCW aufgelöst: " + ", ".join(unresolved), file=sys.stderr)
+        print("LCW nicht aufgelöst: " + ", ".join(unresolved), file=sys.stderr)
 
-    # One fresh /coins/map response checks the complete configured pool. The
-    # persisted map snapshots produce true 10/30/60-minute flash scores for every
-    # coin without spending one additional LCW credit.
+    resolved_all = [resolved_reference, *resolved_pool]
+    rows_by_display = {display: current_by_code[api] for display, api in resolved_all}
     flash_signals, flash_stats = update_and_score(
         path=FLASH_STATE_PATH,
-        resolved_pairs=[resolved_reference, *resolved_pool],
+        resolved_pairs=resolved_all,
         current_by_code=current_by_code,
         reference_display=reference_display,
         reference_api_code=reference_api,
         now_ms=now_ms,
         config=config,
     )
-    print(
-        f"Flash-Vollscan: {flash_stats.get('coins', 0)} Coins, "
-        f"{flash_stats.get('full_windows', 0)} mit 5/15/30/60m, "
-        f"Abdeckung={float(flash_stats.get('coverage', 0.0)) * 100:.0f}% "
-        f"(0 zusätzliche LCW-Requests)."
-    )
 
-    # Secondary context is calculated for the whole pool before detail selection.
-    # None of these bounded bonuses can overpower the primary 30-minute gap.
-    rows_by_display = {
-        display: current_by_code[api_code]
-        for display, api_code in [resolved_reference, *resolved_pool]
-    }
-    raw_volume_7d: dict[str, float | None] = {}
-    for display, api_code in [resolved_reference, *resolved_pool]:
-        raw_volume = current_by_code[api_code].get("volume")
-        current_volume = None if raw_volume in (None, "") else float(raw_volume)
-        raw_volume_7d[display] = volume_trend_from_context(
-            daily_state,
-            display,
-            current_volume=current_volume,
-            now_ms=now_ms,
-            days=7,
-        )
-    volume_7d_context = seven_day_volume_context(raw_volume_7d)
-    raw_cap_bonuses = small_cap_bonuses(
-        rows_by_display,
-        minimum_reliable_volume=float(config.get("minimum_reliable_volume_usd", 500_000)),
-    )
-    cap_scale = float((config.get("ranking_weights") or {}).get("small_market_cap_bonus_cap", 4.0)) / 10.0
-    cap_bonuses = {display: round(value * cap_scale, 4) for display, value in raw_cap_bonuses.items()}
-    btc_context = {
-        display: btc_performance_context(
-            current_by_code[api_code],
-            reference_current,
-            is_reference=(display == reference_display),
-        )
-        for display, api_code in [resolved_reference, *resolved_pool]
-    }
-    unlock_by_display = {
-        display: unlock_context(display, config, now=now)
-        for display, _ in [resolved_reference, *resolved_pool]
-    }
-    stale_unlocks = [
-        display for display, context in unlock_by_display.items()
-        if bool(context.get("stale"))
-    ]
-    if stale_unlocks:
-        print(
-            "HINWEIS: Unlock-Konfiguration ist älter als die Warnschwelle; "
-            "statische Abzüge bleiben begrenzt aktiv: " + ", ".join(stale_unlocks),
-            file=sys.stderr,
-        )
-
-    # Public five-minute candles are requested for the complete resolved pool, not
-    # only for an LCW preselection. This keeps a fresh exchange-volume impulse from
-    # being missed merely because the rolling LCW 24h-volume changed only slightly.
-    market_aliases = (
-        (config.get("market_data") or {}).get("asset_aliases", {})
-        if isinstance(config.get("market_data"), Mapping)
-        else {}
-    )
+    aliases = (config.get("market_data") or {}).get("asset_aliases", {})
     market_client = PublicMarketDataClient(config)
-    intraday_by_display, market_data_stats = market_client.fetch_many(
-        [reference_display, *[display for display, _ in resolved_pool]],
+    intraday, market_stats = market_client.fetch_many(
+        [display for display, _ in resolved_all],
         now_ms=now_ms,
-        aliases=market_aliases if isinstance(market_aliases, Mapping) else {},
+        aliases=aliases if isinstance(aliases, Mapping) else {},
     )
-    print(
-        f"Intervallvolumen-Vollscan: {market_data_stats.get('exact_count', 0)}/"
-        f"{market_data_stats.get('requested_coins', 0)} Coins bestätigt; "
-        f"{market_data_stats.get('requests', 0)} öffentliche Requests, 0 LCW-Credits."
+    market_section = config.get("market_data") or {}
+    exact_count = int(market_stats.get("exact_count", 0))
+    minimum_exact = max(
+        int(market_section.get("minimum_exact_assets", 18)),
+        int(len(resolved_all) * float(market_section.get("minimum_pool_coverage", 0.35))),
     )
-
+    btc_public = intraday.get(reference_display)
+    if bool(market_section.get("require_btc_one_minute", True)) and (
+        btc_public is None or btc_public.data_quality not in {"good", "partial"}
+    ):
+        raise RuntimeError("BTC-1-Minuten-Daten fehlen; aus Sicherheitsgründen kein Bericht.")
+    if exact_count < minimum_exact:
+        raise RuntimeError(
+            f"Zu wenig echte 1-Minuten-Daten ({exact_count}/{len(resolved_all)}, benötigt {minimum_exact}); "
+            "aus Sicherheitsgründen kein Bericht."
+        )
     market_quality = build_market_quality(
-        btc_intraday=intraday_by_display.get(reference_display),
-        flash_signals=flash_signals,
+        btc_intraday=intraday.get(reference_display),
+        intraday_by_display=intraday,
         rows_by_display=rows_by_display,
         reference_display=reference_display,
     )
-    print(
-        f"Marktqualität: {market_quality.score:+.1f} {market_quality.color}; "
-        f"positive Breite={market_quality.positive_breadth:.0%}, "
-        f"negative Breite={market_quality.negative_breadth:.0%}."
-    )
-
-    category_assessments, coin_category_context = build_category_context(
+    categories, coin_categories = build_category_context(
         config=config,
         flash_signals=flash_signals,
-        intraday_by_display=intraday_by_display,
+        intraday_by_display=intraday,
     )
-    category_trends, category_trend_stats = update_category_state(
+    category_trends, category_state_stats = update_category_state(
         path=CATEGORY_STATE_PATH,
-        assessments=category_assessments,
+        assessments=categories,
         now_ms=now_ms,
         config=config,
     )
-    for category in category_assessments.values():
-        trend = category_trends.get(category.code)
-        print(
-            f"Kategorie {category.code}: {category.score:.1f} {category.color}; "
-            f"Breite+={category.positive_breadth:.0%} Breite-={category.negative_breadth:.0%} "
-            f"Slots={category.max_slots} Abdeckung={category.coverage:.0%} "
-            f"Fading={float(trend.fading_score if trend else 0.0):.1f}."
-        )
-    category_line = format_category_line(
-        category_assessments,
-        config=config,
-        btc_color=market_quality.btc_reference_color,
-        generated_at=now,
-        timezone=str(config.get("timezone", "Europe/Berlin")),
-    )
 
-    prices_by_display = {
-        display: float(current_by_code[api_code].get("rate") or 0.0)
-        for display, api_code in [resolved_reference, *resolved_pool]
+    raw_volume_7d: dict[str, float | None] = {}
+    for display, api_code in resolved_all:
+        raw_volume = current_by_code[api_code].get("volume")
+        raw_volume_7d[display] = volume_trend_from_context(
+            daily_state,
+            display,
+            current_volume=None if raw_volume in (None, "") else float(raw_volume),
+            now_ms=now_ms,
+            days=7,
+        )
+    volume_context = seven_day_volume_context(raw_volume_7d)
+    cap_raw = small_cap_bonuses(rows_by_display, minimum_reliable_volume=float(config.get("minimum_reliable_volume_usd", 500_000)))
+    cap_scale = float((config.get("ranking_weights") or {}).get("small_market_cap_bonus_cap", 4.0)) / 10.0
+    cap_bonuses = {display: value * cap_scale for display, value in cap_raw.items()}
+    btc_context = {
+        display: btc_performance_context(current_by_code[api], current_by_code[reference_api], is_reference=(display == reference_display))
+        for display, api in resolved_all
+    }
+    unlocks = {display: unlock_context(display, config, now=now) for display, _ in resolved_all}
+
+    prices = {
+        display: float((intraday.get(display).latest_close if intraday.get(display) and intraday.get(display).latest_close else current_by_code[api].get("rate")) or 0.0)
+        for display, api in resolved_all
     }
     candle_ranges = {
         display: {
@@ -737,480 +619,209 @@ def run_monitor(config: dict[str, Any], api_key: str, webhook_url: str, should_s
             "high": metrics.latest_high,
             "low": metrics.latest_low,
         }
-        for display, metrics in intraday_by_display.items()
-        if metrics.latest_candle_open_ms is not None
+        for display, metrics in intraday.items()
     }
-    outcome_state, live_target_profiles, outcome_stats = update_and_resolve(
-        path=OPPORTUNITY_STATE_PATH,
-        prices=prices_by_display,
+    outcome_state, live_profiles, outcome_stats = update_and_resolve(
+        path=OUTCOME_STATE_PATH,
+        prices=prices,
         candle_ranges=candle_ranges,
         now_ms=now_ms,
         config=config,
     )
 
-    top_count = int(config.get("top_coin_count", 8))
-    initial_count = max(top_count, int(config.get("preselect_coin_count", 26)))
-
-    def public_probe(display: str) -> tuple[float, float, float]:
-        metrics = intraday_by_display.get(display)
-        if metrics is None or not metrics.exact_interval_volume:
-            return 0.0, 0.0, 0.0
-        base_factor = 0.40 + 0.60 * max(0.0, min(1.0, float(metrics.base_quality_score) / 100.0))
-        entry = float(metrics.demand_score) * base_factor
-        entry -= 0.48 * float(metrics.overextension_penalty)
-        if metrics.falling_knife:
-            entry = 0.0
-        elif metrics.late_entry:
-            entry = min(entry, 42.0)
-        exit_ = max(float(metrics.sell_pressure_score), 78.0 if metrics.falling_knife else 0.0)
-        quality = {"good": 1.0, "partial": 0.76, "insufficient": 0.0}.get(metrics.data_quality, 0.0)
-        return max(0.0, entry) * quality, max(0.0, exit_) * quality, quality
-
-    def flash_order_key(pair: tuple[str, str]) -> tuple[float, float, float, float, str]:
-        display, api_code = pair
-        signal = flash_signals.get(display)
-        fallback = pre_anomaly_score(current_by_code[api_code], reference_current)
-        public_entry, public_exit, public_quality = public_probe(display)
-        category = coin_category_context.get(display)
-        category_boost = float(category.category_boost if category else 0.0)
-        laggard = float(category.laggard_score if category else 0.0)
-        event_penalty = float(category.event_penalty if category else 0.0)
-        category_code = str(category.category_code if category else "")
-        category_trend = category_trends.get(category_code)
-        category_fading = float(category_trend.fading_score if category_trend else 0.0)
-        entry_primary = max(float(signal.entry_score if signal else 0.0), fallback * 0.32, public_entry)
-        exit_primary = max(float(signal.exit_score if signal else 0.0), public_exit)
-        exit_primary *= 0.72 + 0.28 * min(1.0, category_fading / 60.0)
-        primary = max(entry_primary, exit_primary)
-        volume_context = volume_7d_context.get(display) or {}
-        entry_priority = combined_priority(
-            primary_gap_score=entry_primary,
-            volume_7d_bonus=float(volume_context.get("bonus") or 0.0),
-            market_cap_bonus=float(cap_bonuses.get(display, 0.0)),
-            volatility_score=float(signal.volatility_score if signal else 0.0),
-            recovery_score=float(signal.recovery_score if signal else 0.0),
-            unlock_penalty=float((unlock_by_display.get(display) or {}).get("penalty") or 0.0),
-            quality=max(float(signal.quality if signal else 0.35), public_quality),
+    btc_metrics = intraday.get(reference_display)
+    short_by_display = {
+        display: _short_from_sources(display, intraday.get(display), flash_signals.get(display), btc_metrics)
+        for display, _ in resolved_all
+    }
+    preliminary = {
+        display: _assessment_for(
+            display=display,
+            api_code=api,
+            current_by_code=current_by_code,
+            short_by_display=short_by_display,
+            flash_signals=flash_signals,
+            intraday=intraday,
+            reference_display=reference_display,
+            market_quality=market_quality,
+            daily_state=daily_state,
+            live_profiles=live_profiles,
+            unlocks=unlocks,
+            coin_categories=coin_categories,
+            category_trends=category_trends,
+            config=config,
         )
-        entry_priority += category_boost + min(12.0, laggard * 0.12) - event_penalty
-        exit_priority = (
-            exit_primary
-            + min(14.0, category_fading * 0.14)
-            + min(8.0, public_exit * 0.08)
-        )
-        priority = max(entry_priority, exit_priority)
-        return (
-            max(
-                entry_primary + max(0.0, category_boost) + min(10.0, laggard * 0.10),
-                exit_primary + min(12.0, category_fading * 0.12),
-            ),
-            priority,
-            primary,
-            max(float(signal.quality if signal else 0.0), public_quality),
-            display,
-        )
-
-    # Mixed detail preselection. Strong category laggards and elevated coins in
-    # fading categories are examined first; turnover and rotation preserve broad
-    # coverage for both entry and exit signals.
-    positive_ranked = sorted(resolved_pool, key=flash_order_key, reverse=True)
-    candidate_order: list[tuple[str, str]] = []
-
-    def add_candidate(pair: tuple[str, str]) -> None:
-        if pair not in candidate_order:
-            candidate_order.append(pair)
-
-    pair_by_display = {display: (display, api) for display, api in resolved_pool}
-    for raw_category in config.get("categories", []):
-        if not isinstance(raw_category, Mapping):
-            continue
-        code = str(raw_category.get("code") or "").upper()
-        category = category_assessments.get(code)
-        members = [
-            pair_by_display[display]
-            for display in (str(value).upper() for value in raw_category.get("coins", []))
-            if display in pair_by_display
-        ]
-        members.sort(key=flash_order_key, reverse=True)
-        keep = max(2, min(5, (category.max_slots if category else 1) + 2))
-        for pair in members[:keep]:
-            add_candidate(pair)
-
-    for pair in positive_ranked[: max(18, int(config.get("preselect_coin_count", 26)) - 3)]:
-        add_candidate(pair)
-    turnover_ranked = sorted(
-        resolved_pool,
-        key=lambda pair: _turnover_pct(current_by_code[pair[1]]),
+        for display, api in resolved_pool
+    }
+    execution_candidates = sorted(
+        preliminary,
+        key=lambda display: max(float(preliminary[display].get("entry_score", 0.0)), float(preliminary[display].get("exit_score", 0.0))),
         reverse=True,
     )
-    for pair in turnover_ranked[:4]:
-        add_candidate(pair)
-    rotation = sorted(resolved_pool, key=lambda pair: pair[0])
-    if rotation:
-        slot = int(now.timestamp() // 300)
-        for offset in range(min(2, len(rotation))):
-            add_candidate(rotation[(slot + offset) % len(rotation)])
-    for pair in positive_ranked:
-        add_candidate(pair)
-
-    max_detail_requests = max(
-        int(config.get("preselect_coin_count", 26)),
-        int(config.get("max_short_detail_requests", 28)),
+    execution_stats = market_client.enrich_top_candidates(
+        intraday,
+        execution_candidates,
+        max_count=int((config.get("market_data") or {}).get("top_execution_checks", 12)),
     )
-
-    short_minutes = int(config.get("short_history_minutes", 720))
-    short_start_ms = int((now - timedelta(minutes=short_minutes)).timestamp() * 1000)
-    short_histories: dict[str, list] = {}
-    short_failures: list[str] = []
-    attempted_pairs: list[tuple[str, str]] = []
-    short_by_code: dict[str, ShortMetrics] = {}
-    short_request_count = 0
-
-    def load_short_batch(pairs: list[tuple[str, str]], *, include_reference: bool = False) -> None:
-        nonlocal short_request_count
-        fresh_pairs = [pair for pair in pairs if pair not in attempted_pairs]
-        attempted_pairs.extend(fresh_pairs)
-        codes = [api for _, api in fresh_pairs]
-        if include_reference and reference_api not in short_histories:
-            codes.insert(0, reference_api)
-        codes = list(dict.fromkeys(codes))
-        if not codes:
-            return
-        print(f"Lade frische Kurzzeithistorien für {len(codes)} Coins ({short_minutes} Min) ...")
-        histories, failures = refresh_histories(
-            client=client,
-            codes=codes,
-            start_ms=short_start_ms,
-            end_ms=now_ms,
-            label="Kurzzeit",
-        )
-        short_request_count += len(codes)
-        short_histories.update(histories)
-        short_failures.extend(failures)
-
-    initial_pairs = candidate_order[:initial_count]
-    load_short_batch(initial_pairs, include_reference=True)
-    btc_short = build_short_metrics(
-        current=reference_current,
-        short_history=short_histories.get(reference_api, []),
-        now_ms=now_ms,
-        btc_price_changes=None,
-        config=config,
-        is_reference=True,
-    )
-    log_quality(reference_display, btc_short)
-    btc_intraday_for_validation = intraday_by_display.get(reference_display)
-    if not _short_is_displayable(btc_short, btc_intraday_for_validation):
-        print("HINWEIS: BTC-Kurzzeitdaten unvollständig; Sicherheitsversuch ...", file=sys.stderr)
-        retry, failures = refresh_histories(
-            client=client,
-            codes=[reference_api],
-            start_ms=int((now - timedelta(minutes=max(short_minutes, 1440))).timestamp() * 1000),
-            end_ms=now_ms,
-            label="Kurzzeit-Retry",
-        )
-        short_request_count += 1
-        short_histories.update(retry)
-        short_failures.extend(failures)
-        btc_short = build_short_metrics(
-            current=reference_current,
-            short_history=short_histories.get(reference_api, []),
-            now_ms=now_ms,
-            btc_price_changes=None,
+    assessments = {
+        display: _assessment_for(
+            display=display,
+            api_code=api,
+            current_by_code=current_by_code,
+            short_by_display=short_by_display,
+            flash_signals=flash_signals,
+            intraday=intraday,
+            reference_display=reference_display,
+            market_quality=market_quality,
+            daily_state=daily_state,
+            live_profiles=live_profiles,
+            unlocks=unlocks,
+            coin_categories=coin_categories,
+            category_trends=category_trends,
             config=config,
-            is_reference=True,
         )
-        log_quality(reference_display, btc_short)
-    if not _short_is_displayable(btc_short, btc_intraday_for_validation):
-        raise RuntimeError(
-            "BTC-Kurzzeitdaten auch nach LCW-Retry und Börsenkerzen unvollständig; "
-            "Bericht verworfen."
-        )
-
-    def analyze_pairs(pairs: list[tuple[str, str]]) -> None:
-        for display, api_code in pairs:
-            if api_code in short_by_code:
-                continue
-            short_by_code[api_code] = _build_short_for_pair(
-                display=display,
-                api_code=api_code,
-                current_by_code=current_by_code,
-                histories=short_histories,
-                now_ms=now_ms,
-                btc_short=btc_short,
-                config=config,
-            )
-
-    analyze_pairs(initial_pairs)
-    valid_pairs = [
-        pair for pair in attempted_pairs
-        if pair[1] in short_by_code
-        and _short_is_displayable(
-            short_by_code[pair[1]], intraday_by_display.get(pair[0])
-        )
-    ]
-    cursor = initial_count
-    batch_size = max(1, int(config.get("short_fallback_batch_size", 6)))
-    while (
-        len(valid_pairs) < top_count
-        and cursor < len(candidate_order)
-        and len(attempted_pairs) < max_detail_requests
-    ):
-        remaining_budget = max_detail_requests - len(attempted_pairs)
-        batch = candidate_order[cursor : cursor + min(batch_size, remaining_budget)]
-        cursor += len(batch)
-        load_short_batch(batch)
-        analyze_pairs(batch)
-        valid_pairs = [
-            pair for pair in attempted_pairs
-            if pair[1] in short_by_code
-            and _short_is_displayable(
-                short_by_code[pair[1]], intraday_by_display.get(pair[0])
-            )
-        ]
-    if not valid_pairs:
-        raise RuntimeError("Kein Altcoin besitzt ausreichend belastbare Kurzzeitdaten.")
-    if len(valid_pairs) < top_count:
-        print(
-            f"HINWEIS: Nur {len(valid_pairs)}/{top_count} Altcoins mit belastbaren Detaildaten; "
-            "Bericht wird ohne schwache Füllzeilen erstellt.",
-            file=sys.stderr,
-        )
+        for display, api in resolved_pool
+    }
+    signal_states, signal_stats = update_signal_states(
+        path=SIGNAL_STATE_PATH,
+        assessments=assessments,
+        now_ms=now_ms,
+        config=config,
+    )
 
     common = {
         "now": now,
         "timezone": str(config.get("timezone", "Europe/Berlin")),
         "block_hours": int(config.get("time_block_hours", 4)),
         "min_samples": int(config.get("seasonality_min_samples", 8)),
-        "minimum_observations": int(config.get("seasonality_min_observations", 70)),
+        "minimum_observations": int(config.get("seasonality_min_observations", 56)),
         "config": config,
     }
-    def ranking_context_kwargs(display: str, api_code: str) -> dict[str, Any]:
-        signal = flash_signals.get(display)
-        volume_context = volume_7d_context.get(display) or {}
-        btc24, btc24_color, btc7, btc7_color = btc_context[display]
-        fallback = pre_anomaly_score(current_by_code[api_code], reference_current) * 0.45
-        return {
-            "map_flash_score": max(float(signal.score if signal else 0.0), fallback),
-            "map_flash_direction": signal.direction if signal else "=",
-            "map_volatility_score": float(signal.volatility_score if signal else 0.0),
-            "map_recovery_score": float(signal.recovery_score if signal else 0.0),
-            "map_recovery_color": signal.recovery_color if signal else "🟡",
-            "volume_7d_pct": volume_context.get("pct"),
-            "volume_7d_color": str(volume_context.get("color") or "⚪"),
-            "volume_7d_bonus": float(volume_context.get("bonus") or 0.0),
-            "btc_24h_pct": float(btc24),
-            "btc_24h_color": btc24_color,
-            "btc_7d_pct": float(btc7),
-            "btc_7d_color": btc7_color,
-            "market_cap_bonus": float(cap_bonuses.get(display, 0.0)),
-            "unlock_penalty": float((unlock_by_display.get(display) or {}).get("penalty") or 0.0),
-            "unlock_risk": str((unlock_by_display.get(display) or {}).get("risk") or "none"),
-            "unlock_event_date": (unlock_by_display.get(display) or {}).get("event_date"),
-        }
-
-    ref_seasonality, ref_week_returns = context_for_coin(daily_state, reference_display)
-    reference_analysis = build_coin_analysis(
-        display_code=reference_display,
-        api_code=reference_api,
-        current=reference_current,
-        short=btc_short,
-        history=[],
-        is_reference=True,
-        seasonality_override=ref_seasonality,
-        week_samples_override=ref_week_returns,
-        **ranking_context_kwargs(reference_display, reference_api),
-        **common,
-    )
-    btc_intraday = intraday_by_display.get(reference_display) or IntradayMetrics(display=reference_display)
-    reference_assessment = {
-        "entry_score": max(0.0, market_quality.score),
-        "exit_score": max(0.0, -market_quality.score),
-        "ranking_score": abs(market_quality.score),
-        "direction": market_quality.direction,
-        "color": market_quality.color,
-        "strength_count": market_quality.strength_count,
-        "exact_volume": btc_intraday.exact_interval_volume,
-        "provider": btc_intraday.provider,
-        "provider_symbol": btc_intraday.symbol,
-        "data_confidence": 1.0 if btc_intraday.data_quality == "good" else 0.72,
-        "demand_score": market_quality.btc_demand_score,
-        "base_quality_score": market_quality.btc_structure_score,
-        "room_to_target_score": 50.0,
-        "target_prior_score": 50.0,
-        "volume_colors": {
-            window: btc_intraday.volume_colors.get(window, btc_short.volume_colors.get(window, "⚪"))
-            for window in (10, 30, 60)
-        },
-        "reasons": market_quality.reasons,
-    }
-    apply_opportunity_analysis(
-        reference_analysis,
-        reference_assessment,
-        market_quality=market_quality.to_dict(),
-    )
-
     analyses: list[CoinAnalysis] = []
-    opportunity_by_display: dict[str, dict[str, Any]] = {}
-    for display, api_code in valid_pairs:
+    record_candidates: list[dict[str, Any]] = []
+    for display, api_code in resolved_pool:
         seasonality, week_returns = context_for_coin(daily_state, display)
-        analysis = build_coin_analysis(
+        vol = volume_context.get(display) or {}
+        btc24, btc24_color, btc7, btc7_color = btc_context[display]
+        flash = flash_signals.get(display)
+        unlock = unlocks.get(display) or {}
+        item = build_coin_analysis(
             display_code=display,
             api_code=api_code,
             current=current_by_code[api_code],
-            short=short_by_code[api_code],
+            short=short_by_display[display],
             history=[],
             is_reference=False,
             seasonality_override=seasonality,
             week_samples_override=week_returns,
-            **ranking_context_kwargs(display, api_code),
+            map_flash_score=float(flash.score if flash else 0.0),
+            map_flash_direction=str(flash.direction if flash else "="),
+            map_volatility_score=float(flash.volatility_score if flash else 0.0),
+            map_recovery_score=float(flash.recovery_score if flash else 0.0),
+            map_recovery_color=str(flash.recovery_color if flash else YELLOW),
+            volume_7d_pct=vol.get("pct"),
+            volume_7d_color=str(vol.get("color") or WHITE),
+            volume_7d_bonus=float(vol.get("bonus") or 0.0),
+            btc_24h_pct=float(btc24),
+            btc_24h_color=btc24_color,
+            btc_7d_pct=float(btc7),
+            btc_7d_color=btc7_color,
+            market_cap_bonus=float(cap_bonuses.get(display, 0.0)),
+            unlock_penalty=float(unlock.get("penalty") or 0.0),
+            unlock_risk=str(unlock.get("risk") or "none"),
+            unlock_event_date=unlock.get("event_date"),
             **common,
         )
-        assessment = assess_opportunity(
-            display=display,
-            current=current_by_code[api_code],
-            short=short_by_code[api_code],
-            flash_signal=flash_signals.get(display),
-            intraday=intraday_by_display.get(display),
-            btc_intraday=intraday_by_display.get(reference_display),
-            market_quality=market_quality,
-            historical_target=target_profile_for_coin(daily_state, display),
-            live_target=live_target_profiles.get(display),
-            unlock_penalty=float((unlock_by_display.get(display) or {}).get("penalty") or 0.0),
-            category_context=(coin_category_context.get(display).to_dict() if coin_category_context.get(display) else None),
-            category_trend=(category_trends.get(coin_category_context.get(display).category_code).to_dict() if coin_category_context.get(display) and category_trends.get(coin_category_context.get(display).category_code) else None),
-            event_penalty=float(coin_category_context.get(display).event_penalty if coin_category_context.get(display) else 0.0),
-            config=config,
-        )
-        opportunity_by_display[display] = assessment.to_dict()
-        apply_opportunity_analysis(
-            analysis,
-            assessment.to_dict(),
-            market_quality=market_quality.to_dict(),
-        )
-        analyses.append(analysis)
+        assessment = dict(assessments[display])
+        state = signal_states[display]
+        assessment.update({
+            "entry_score": state.entry_score,
+            "exit_score": state.exit_score,
+            "ranking_score": state.ranking_score,
+            "direction": state.direction,
+            "color": state.color,
+            "strength_count": state.strength_count,
+            "qualified_entry": state.qualified_entry,
+            "qualified_exit": state.qualified_exit,
+        })
+        apply_opportunity_analysis(item, assessment, market_quality=market_quality.to_dict())
+        item.signal_state = state.state
+        item.score_velocity = state.score_velocity
+        analyses.append(item)
+        record_candidates.append({"display": display, **assessment})
 
-    outcome_record_stats = record_entry_candidates(
-        path=OPPORTUNITY_STATE_PATH,
+    record_stats = record_entry_candidates(
+        path=OUTCOME_STATE_PATH,
         state=outcome_state,
-        candidates=[
-            {"display": display, **assessment}
-            for display, assessment in opportunity_by_display.items()
-        ],
-        prices=prices_by_display,
+        candidates=record_candidates,
+        prices=prices,
         now_ms=now_ms,
         config=config,
     )
 
-    top_analyses = select_category_entries(
+    top = select_category_entries(
         analyses,
-        opportunity_by_display,
-        category_assessments,
-        top_count=top_count,
+        assessments,
+        categories,
+        signal_states=signal_states,
+        top_count=int(config.get("top_coin_count", 8)),
         config=config,
     )
-    for item in top_analyses:
-        print(
-            f"Signal {item.display_code}: Rang={item.opportunity_score:.1f} "
-            f"Entry={item.entry_score:.1f} Exit={item.exit_score:.1f} "
-            f"Kategorie={item.category_code}/{item.category_score:.1f} "
-            f"Fading={item.category_fading_score:.1f} "
-            f"Nachzügler={item.laggard_score:.1f} Nachfrage={item.demand_score:.1f} "
-            f"Basis={item.base_quality_score:.1f} Raum={item.room_to_target_score:.1f} "
-            f"Quelle={item.market_data_provider} Unlock=-{item.unlock_penalty:.1f} "
-            f"Event=-{item.event_penalty:.1f}."
-        )
-    if not top_analyses:
-        print("Kein ausreichend bestätigtes Kauf- oder Verkaufssignal; nur Kopfzeile wird gesendet.")
-    report = build_report(
-        category_line,
-        top_analyses,
+    if not top:
+        raise RuntimeError("Keine auswertbaren Kauf-/Verkaufsseite im Pool; Bericht wird nicht gesendet.")
+    category_line = format_category_line(
+        categories,
+        config=config,
+        btc_color=market_quality.btc_reference_color,
         generated_at=now,
         timezone=str(config.get("timezone", "Europe/Berlin")),
     )
-    output_dir = ROOT / "output"
-    output_dir.mkdir(exist_ok=True)
-    (output_dir / "latest_report.txt").write_text(report + "\n", encoding="utf-8")
-    (output_dir / "latest_analysis.json").write_text(
-        json.dumps(
-            {
-                "version": APP_VERSION,
-                "cache_version": STATE_VERSION,
-                "revision": STATE_REVISION,
-                "generated_at": now.isoformat(),
-                "daily_context_date": daily_state.get("date"),
-                "daily_context_generated_at": daily_state.get("generated_at"),
-                "reference": analysis_to_dict(reference_analysis),
-                "top_coins": [analysis_to_dict(item) for item in top_analyses],
-                "detail_attempted": [display for display, _ in attempted_pairs],
-                "detail_valid": [display for display, _ in valid_pairs],
-                "unresolved": unresolved,
-                "short_history_failures": sorted(set(short_failures)),
-                "flash_pool": {
-                    display: signal.to_dict()
-                    for display, signal in sorted(flash_signals.items())
-                },
-                "flash_stats": flash_stats,
-                "market_quality": market_quality.to_dict(),
-                "category_line": category_line,
-                "categories": {code: value.to_dict() for code, value in category_assessments.items()},
-                "category_trends": {code: value.to_dict() for code, value in category_trends.items()},
-                "category_trend_state": {
-                    "version": CATEGORY_STATE_VERSION,
-                    "stats": category_trend_stats,
-                },
-                "coin_category_context": {display: value.to_dict() for display, value in coin_category_context.items()},
-                "market_data": {
-                    "stats": market_data_stats,
-                    "coins": {
-                        display: metrics.to_dict()
-                        for display, metrics in sorted(intraday_by_display.items())
-                    },
-                },
-                "opportunity": opportunity_by_display,
-                "historical_target_profiles": {
-                    display: target_profile_for_coin(daily_state, display)
-                    for display, _ in valid_pairs
-                },
-                "live_target_profiles": live_target_profiles,
-                "outcome_state": {
-                    "version": OUTCOME_STATE_VERSION,
-                    "update": outcome_stats,
-                    "record": outcome_record_stats,
-                },
-                "volume_7d_context": volume_7d_context,
-                "market_cap_bonuses": cap_bonuses,
-                "unlock_context": unlock_by_display,
-                "btc_performance": {
-                    display: {
-                        "relative_24h_pct": values[0],
-                        "relative_24h_color": values[1],
-                        "relative_7d_pct": values[2],
-                        "relative_7d_color": values[3],
-                    }
-                    for display, values in btc_context.items()
-                },
-                "lcw_requests_expected": 1 + short_request_count,
-                "lcw_request_cap_per_run": 1 + max_detail_requests + 2,
-                "public_market_requests": int(market_data_stats.get("requests", 0)),
-            },
-            indent=2,
-            ensure_ascii=False,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    print("\n" + report + "\n", flush=True)
+    report = build_report(category_line, top, generated_at=now, timezone=str(config.get("timezone", "Europe/Berlin")))
+
+    output = ROOT / "output"
+    output.mkdir(exist_ok=True)
+    (output / "latest_report.txt").write_text(report + "\n", encoding="utf-8")
+    (output / "latest_analysis.json").write_text(json.dumps({
+        "version": APP_VERSION,
+        "generated_at": now.isoformat(),
+        "category_line": category_line,
+        "top_coins": [analysis_to_dict(item) for item in top],
+        "categories": {code: item.to_dict() for code, item in categories.items()},
+        "category_trends": {code: item.to_dict() for code, item in category_trends.items()},
+        "market_quality": market_quality.to_dict(),
+        "market_data": {"stats": market_stats, "execution": execution_stats, "coins": {k: v.to_dict() for k, v in intraday.items()}},
+        "signal_state": {"version": SIGNAL_STATE_VERSION, "stats": signal_stats, "coins": {k: v.to_dict() for k, v in signal_states.items()}},
+        "flash": {"version": FLASH_STATE_VERSION, "stats": flash_stats},
+        "category_state": {"version": CATEGORY_STATE_VERSION, "stats": category_state_stats},
+        "outcomes": {"version": OUTCOME_STATE_VERSION, "update": outcome_stats, "record": record_stats},
+        "unresolved": unresolved,
+        "lcw_fast_requests": 1,
+        "public_requests": market_client.request_count,
+    }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    print("\n" + report + "\n")
     if should_send:
-        send_discord(
-            webhook_url=webhook_url,
-            content=report,
-            username=str(config.get("discord_username", "Krypto-Monitor")),
-            timeout=int(config.get("request_timeout_seconds", 25)),
+        send_now, reason, digest = report_send_decision(
+            path=NOTIFICATION_STATE_PATH,
+            report=report,
+            now_ms=now_ms,
+            config=config,
+            force=force_discord,
         )
-        print("Discord-Nachricht gesendet.")
+        if send_now:
+            send_discord(
+                webhook_url=webhook_url,
+                content=report,
+                username=str(config.get("discord_username", "CF v3.5.0")),
+                avatar_url=str(config.get("discord_avatar_url", "")).strip(),
+                timeout=int(config.get("request_timeout_seconds", 25)),
+            )
+            mark_report_sent(path=NOTIFICATION_STATE_PATH, digest=digest, now_ms=now_ms, reason=reason)
+            print(f"Discord gesendet ({reason}).")
+        else:
+            print("Discord nicht gesendet: Bericht unverändert und Herzschlag noch nicht fällig.")
     else:
-        print("Testmodus: keine Discord-Nachricht gesendet.")
+        print("Testmodus: keine Discord-Nachricht.")
     return 0
 
 
@@ -1218,18 +829,24 @@ def run() -> int:
     args = parse_args()
     config = load_config(Path(args.config))
     api_key = os.getenv("LCW_API_KEY", "").strip()
-    webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
-    should_send = env_bool("SEND_DISCORD", True) and not args.no_send and not args.daily_only
+    webhook = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
     if not api_key:
         raise ValueError("GitHub Secret LCW_API_KEY fehlt.")
-    if should_send and not webhook_url:
+    should_send = env_bool("SEND_DISCORD", True) and not args.no_send and not args.longterm_only
+    if should_send and not webhook:
         raise ValueError("GitHub Secret DISCORD_WEBHOOK_URL fehlt.")
-
-    if args.daily_only:
-        return prepare_daily_context(config, api_key)
-    if not args.monitor_only:
-        prepare_daily_context(config, api_key)
-    return run_monitor(config, api_key, webhook_url, should_send)
+    force_longterm = args.force_longterm or env_bool("FORCE_LONGTERM", False)
+    _, reusable_map = prepare_longterm_context(config, api_key, force=force_longterm)
+    if args.longterm_only:
+        return 0
+    return run_monitor(
+        config,
+        api_key,
+        webhook,
+        should_send=should_send,
+        force_discord=args.force_discord or env_bool("FORCE_DISCORD", False),
+        reused_map=reusable_map,
+    )
 
 
 if __name__ == "__main__":

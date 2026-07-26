@@ -1,11 +1,11 @@
-"""Live, setup-specific +3%/+5% outcome memory for v3.4.
+"""Live, setup-specific net +3%/+5% outcome memory for v3.5.
 
-Every five-minute run can resolve previously recorded entry setups using fresh
+Every three-minute run can resolve previously recorded entry setups using fresh
 LCW map prices.  New setup events are rate-limited per coin.  The resulting
 statistics start neutral and only influence ranking after enough real outcomes.
 """
 
-# v3.4 r4 expanded-69 rebuild; source revalidated 2026-07-26.
+# v3.5 fresh outcome memory; previous events are intentionally ignored.
 from __future__ import annotations
 
 import json
@@ -14,7 +14,7 @@ import statistics
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-STATE_VERSION = "opportunity-v340-category-target-r1"
+STATE_VERSION = "outcome-v350-net-target-r1"
 
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
@@ -34,7 +34,11 @@ def _wilson_lower(successes: int, total: int, z: float = 1.2816) -> float:
 def load_state(path: Path) -> dict[str, Any]:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(raw, dict) and isinstance(raw.get("events"), list):
+        if (
+            isinstance(raw, dict)
+            and raw.get("version") == STATE_VERSION
+            and isinstance(raw.get("events"), list)
+        ):
             return raw
     except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
         pass
@@ -85,7 +89,7 @@ def _profile(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "wilson5": round(lower5, 5),
         "median_hours_to_3": None if not times3 else round(statistics.median(times3), 3),
         "median_hours_to_5": None if not times5 else round(statistics.median(times5), 3),
-        "method": "live-setup-candle-range-target-before-stop-r2",
+        "method": "live-setup-candle-range-net-target-before-stop-r3",
     }
 
 
@@ -131,14 +135,17 @@ def update_and_resolve(
             event["max_return_pct"] = round(max(float(event.get("max_return_pct", high_change)), high_change), 5)
             event["min_return_pct"] = round(min(float(event.get("min_return_pct", low_change)), low_change), 5)
             age_hours = max(0.0, (now_ms - created) / 3_600_000.0)
+            cost_pct = max(0.0, float(event.get("round_trip_cost_pct") or 0.0))
+            target3 = 3.0 + cost_pct
+            target5 = 5.0 + cost_pct
             # Candle highs/lows avoid missing a target or stop that happened
-            # between two five-minute runs. If both lie inside the same candle,
+            # between two three-minute runs. If both lie inside the same candle,
             # order is unknowable, therefore resolve conservatively as stop first.
             if not event.get("result3"):
                 if low_change <= -1.5:
                     event["result3"] = "stop"
                     event["hours3"] = round(age_hours, 4)
-                elif high_change >= 3.0:
+                elif high_change >= target3:
                     event["result3"] = "hit"
                     event["hours3"] = round(age_hours, 4)
                 elif now_ms - created >= horizon_ms:
@@ -148,7 +155,7 @@ def update_and_resolve(
                 if low_change <= -2.0:
                     event["result5"] = "stop"
                     event["hours5"] = round(age_hours, 4)
-                elif high_change >= 5.0:
+                elif high_change >= target5:
                     event["result5"] = "hit"
                     event["hours5"] = round(age_hours, 4)
                 elif now_ms - created >= horizon_ms:
@@ -221,6 +228,7 @@ def record_entry_candidates(
                 "base_quality": round(float(item.get("base_quality_score") or 0.0), 4),
                 "demand_score": round(float(item.get("demand_score") or 0.0), 4),
                 "target_prior_score": round(float(item.get("target_prior_score") or 50.0), 4),
+                "round_trip_cost_pct": round(max(0.0, float(item.get("estimated_round_trip_cost_pct") or 0.0)), 5),
                 "result3": None,
                 "result5": None,
                 "hours3": None,
