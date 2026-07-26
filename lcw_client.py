@@ -295,4 +295,6 @@ class LiveCoinWatchClient:
             cursor_end = cursor_start
 
         return [merged[key] for key in sorted(merged)], requests_used, partial_note
-# Package revision: v3.5.0-balanced-entry-r4
+# Package revision: v3.5.0-buy-gate-fix-r5
+
+# Package revision: v3.5.0-buy-gate-fix-r5

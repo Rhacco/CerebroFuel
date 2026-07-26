@@ -413,6 +413,39 @@ def assess_opportunity(
         and p30 >= float(entry_guard.get("minimum_30m_price_pct", -0.55))
         and not metrics.falling_knife
     )
+    # A controlled blue-stage entry is intentionally broader than the fully
+    # confirmed recovery.  It still requires a real discount/laggard position,
+    # a held low and renewed one-minute demand, but it must not be invalidated
+    # later by reapplying the stricter green gate.
+    early_entry_ready = bool(
+        exact
+        and not metrics.falling_knife
+        and not metrics.late_entry
+        and low_age is not None
+        and 3.0 <= float(low_age) <= 210.0
+        and rebound_from_low <= 4.8
+        and p5 >= -0.18
+        and p15 >= -0.38
+        and p30 >= -0.72
+        and demand >= 47.0
+        and volume_confirmed
+        and (
+            (
+                cheap_score >= 42.0
+                and recent_drawdown >= 0.20
+                and pos180 <= 0.72
+                and stabilization_score >= 40.0
+            )
+            or (
+                category_score >= 48.0
+                and laggard_score >= 12.0
+                and cheap_score >= 39.0
+                and stabilization_score >= 38.0
+                and (recent_drawdown >= 0.15 or pos180 <= 0.58)
+                and pos180 <= 0.74
+            )
+        )
+    )
 
     confirmed_v5 = float(entry_guard.get("confirmed_minimum_5m_volume_ratio", 1.03))
     confirmed_v15 = float(entry_guard.get("confirmed_minimum_15m_volume_ratio", 1.02))
@@ -493,7 +526,7 @@ def assess_opportunity(
     # the score is capped below green so early setups cannot masquerade as fully
     # confirmed entries.
     entry_thresholds = config.get("opportunity_score") or {}
-    if not (discount_qualified and stabilized_after_drop and demand_confirmed):
+    if not early_entry_ready:
         entry = min(entry, float(entry_thresholds.get("entry_blue", 38.0)) - 0.25)
     elif not confirmed_recovery:
         entry = min(entry, float(entry_thresholds.get("entry_green", 60.0)) - 0.25)
@@ -548,11 +581,9 @@ def assess_opportunity(
         and not metrics.falling_knife
         and not metrics.late_entry
         and not spread_block
-        and discount_qualified
-        and stabilized_after_drop
-        and demand_confirmed
-        and base >= 40.0
-        and room >= 28.0
+        and early_entry_ready
+        and base >= 34.0
+        and room >= 24.0
         and net_target_quality >= 35.0
         and data_confidence >= 0.55
     )
@@ -589,6 +620,8 @@ def assess_opportunity(
         reasons.append("Kategorie führt, Coin zieht nach")
     if discount_qualified:
         reasons.append("Preis günstig nach Rücklauf")
+    if early_entry_ready and not stabilized_after_drop:
+        reasons.append("früher stabiler Kategorie-Nachzügler")
     if stabilized_after_drop:
         reasons.append("Stabilisierung beginnt")
     if confirmed_recovery:
@@ -666,4 +699,4 @@ def assess_opportunity(
         volume_colors=visible_colors,
         reasons=tuple(dict.fromkeys(reasons)),
     )
-# Package revision: v3.5.0-balanced-entry-r4
+# Package revision: v3.5.0-buy-gate-fix-r5

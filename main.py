@@ -856,4 +856,6 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"FEHLER: {exc}", file=sys.stderr, flush=True)
         sys.exit(1)
-# Package revision: v3.5.0-balanced-entry-r4
+# Package revision: v3.5.0-buy-gate-fix-r5
+
+# Package revision: v3.5.0-buy-gate-fix-r5

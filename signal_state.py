@@ -6,7 +6,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Mapping
 
-STATE_VERSION = "signal-v350-r1"
+STATE_VERSION = "signal-v350-r1"  # schema unchanged; logic revision r5
 
 
 @dataclass(frozen=True)
@@ -143,7 +143,10 @@ def update_signal_states(
         spread_pct = assessment.get("spread_pct")
         spread_block = spread_pct is not None and float(spread_pct) >= float(section.get("spread_block_pct", 1.0))
 
-        if falling or late or spread_block or not (discount_qualified and stabilized_after_drop and demand_confirmed):
+        # The opportunity engine already applies the complete blue-stage safety
+        # gate.  Do not silently reapply the stricter legacy recovery gate here,
+        # otherwise every valid early blue setup disappears.
+        if falling or late or spread_block:
             raw_entry_qualified = False
         if data_conf < 0.55:
             raw_entry_qualified = raw_exit_qualified = False
@@ -186,13 +189,33 @@ def update_signal_states(
             score = max(entry_adjusted, exit_adjusted)
 
         strength = min(8, max(1, int(round(score / 12.5))))
+        category_score = float(assessment.get("category_score") or 0.0)
+        cheap_score = float(assessment.get("cheap_price_score") or 0.0)
+        stabilization_score = float(assessment.get("stabilization_score") or 0.0)
+        demand_score = float(assessment.get("demand_score") or 0.0)
+        room_score = float(assessment.get("room_to_target_score") or 0.0)
+        category_fading = float(assessment.get("category_fading_score") or 0.0)
+        early_buy_fallback = bool(
+            side == "BUY"
+            and not falling
+            and not late
+            and category_score >= 48.0
+            and cheap_score >= 38.0
+            and stabilization_score >= 36.0
+            and demand_score >= 44.0
+            and room_score >= 20.0
+            and entry_adjusted >= exit_adjusted + 1.5
+        )
+        real_sell_fallback = bool(
+            side == "SELL"
+            and exit_adjusted >= 36.0
+            and exit_adjusted >= entry_adjusted + 3.0
+            and (falling or category_fading >= 12.0 or raw_exit_qualified)
+        )
         fallback_eligible = bool(
             data_conf >= 0.55
             and not spread_block
-            and (
-                (side == "BUY" and not falling and not late and discount_qualified and stabilized_after_drop and demand_confirmed)
-                or side == "SELL"
-            )
+            and (raw_entry_qualified or early_buy_fallback or raw_exit_qualified or real_sell_fallback)
             and score >= float(section.get("fallback_minimum_score", 24.0))
         )
         ranking = score + max(0.0, velocity) * 0.45 + (2.0 if confirmation >= 2 else 0.0)
@@ -240,4 +263,4 @@ def update_signal_states(
         "qualified_exits": sum(item.qualified_exit for item in result.values()),
         "fallback_eligible": sum(item.fallback_eligible for item in result.values()),
     }
-# Package revision: v3.5.0-balanced-entry-r4
+# Package revision: v3.5.0-buy-gate-fix-r5

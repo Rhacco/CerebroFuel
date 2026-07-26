@@ -588,14 +588,33 @@ def select_category_entries(
     # too, so close buy and sell leaders can coexist while the market is quiet.
     def safe_buy_fallback(item: Any) -> bool:
         return bool(
-            getattr(item, "discount_qualified", False)
-            and getattr(item, "stabilized_after_drop", False)
-            and getattr(item, "demand_confirmed", False)
-            and not bool(getattr(item, "falling_knife", False))
+            not bool(getattr(item, "falling_knife", False))
             and not bool(getattr(item, "late_entry", False))
+            and bool(getattr(item, "exact_interval_volume", False))
+            and float(getattr(item, "category_score", 0.0)) >= 48.0
+            and float(getattr(item, "cheap_price_score", 0.0)) >= 38.0
+            and float(getattr(item, "stabilization_score", 0.0)) >= 36.0
+            and float(getattr(item, "demand_score", 0.0)) >= 44.0
+            and float(getattr(item, "room_to_target_score", 0.0)) >= 20.0
+            and float(getattr(item, "entry_score", 0.0)) >= float(getattr(item, "exit_score", 0.0)) + 1.5
         )
 
-    fallback = [item for item in candidates if bool(getattr(state_for(item), "fallback_eligible", False))]
+    def safe_sell_fallback(item: Any) -> bool:
+        return bool(
+            float(getattr(item, "exit_score", 0.0)) >= 36.0
+            and float(getattr(item, "exit_score", 0.0)) >= float(getattr(item, "entry_score", 0.0)) + 3.0
+            and (
+                bool(getattr(item, "falling_knife", False))
+                or float(getattr(item, "category_fading_score", 0.0)) >= 12.0
+                or bool(getattr(item, "qualified_exit", False))
+            )
+        )
+
+    fallback = [
+        item for item in candidates
+        if bool(getattr(state_for(item), "fallback_eligible", False))
+        and ((direction_for(item) == "▲" and safe_buy_fallback(item)) or (direction_for(item) == "▼" and safe_sell_fallback(item)))
+    ]
     if not fallback:
         # When no formal signal qualifies, prefer a real sell/avoid warning.  A
         # buy-side fallback remains allowed only after the same discounted and
@@ -603,14 +622,19 @@ def select_category_entries(
         fallback = [
             item for item in candidates
             if float(getattr(item, "opportunity_data_confidence", 0.0)) >= 0.45
-            and (direction_for(item) == "▼" or safe_buy_fallback(item))
+            and (
+                (direction_for(item) == "▲" and safe_buy_fallback(item))
+                or (direction_for(item) == "▼" and safe_sell_fallback(item))
+            )
         ]
     if not fallback and candidates:
-        fallback = sorted(
-            candidates,
-            key=lambda item: (float(getattr(item, "exit_score", 0.0)), score_for(item)),
-            reverse=True,
-        )[:1]
+        # Last resort still has to be a genuine side.  Never relabel a failed
+        # buy gate as a sell merely to force a row into Discord.
+        safe_candidates = [
+            item for item in candidates
+            if safe_buy_fallback(item) or safe_sell_fallback(item)
+        ]
+        fallback = safe_candidates[:1]
     if not fallback:
         return []
 
@@ -638,11 +662,14 @@ def select_category_entries(
                 chosen.append(item)
                 side_selected += 1
 
+    valid_chosen: list[Any] = []
     for item in chosen:
         state = state_for(item)
         direction = str(getattr(state, "direction", "▲" if item.entry_score >= item.exit_score else "▼"))
         if direction == "▲" and not safe_buy_fallback(item):
-            direction = "▼"
+            continue
+        if direction == "▼" and not safe_sell_fallback(item):
+            continue
         item.opportunity_direction = direction
         item.opportunity_color = "🔵" if direction == "▲" else "🟠"
         item.opportunity_count = 1
@@ -654,5 +681,6 @@ def select_category_entries(
         item.short.pressure_color = item.opportunity_color
         item.short.buy_count = 1 if direction == "▲" else 0
         item.short.sell_count = 1 if direction == "▼" else 0
-    return chosen[:top_count]
-# Package revision: v3.5.0-balanced-entry-r4
+        valid_chosen.append(item)
+    return valid_chosen[:top_count]
+# Package revision: v3.5.0-buy-gate-fix-r5

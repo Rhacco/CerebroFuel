@@ -2932,4 +2932,6 @@ def build_report(
 
 def analysis_to_dict(item: CoinAnalysis) -> dict[str, Any]:
     return asdict(item)
-# Package revision: v3.5.0-balanced-entry-r4
+# Package revision: v3.5.0-buy-gate-fix-r5
+
+# Package revision: v3.5.0-buy-gate-fix-r5

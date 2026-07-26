@@ -8,7 +8,7 @@ BTC🟢PAY🔵SCP🟢UTL🟣AI🔵MEM🟡:03
 ```
 
 - `▲` Kauf · `▼` Verkauf · Zahl `1–8` Signalstärke
-- 🟣 außergewöhnlich bestätigt · 🟢 bestätigt · 🔵 früher günstiger Einstieg · 🟡 neutral · 🟠 Verkaufswarnung · 🔴 bestätigt negativ · ⚪ Daten fehlen
+- 🟣 außergewöhnlich bestätigt · 🟢 bestätigt · 🔵 früher günstiger/stabiler Nachzügler · 🟡 neutral · 🟠 Verkaufswarnung · 🔴 bestätigt negativ · ⚪ Daten fehlen
 - 🔵: echter Preisrückgang, beginnende Stabilisierung und erneut steigende Nachfrage
 - 🟢/🟣: strengere, über mehrere Läufe bestätigte Erholung
 - Falling Knife, Überdehnung, schlechter Spread sowie Unlock‑ und Ereignisrisiken sperren oder senken Signale
@@ -34,4 +34,4 @@ BTC🟢PAY🔵SCP🟢UTL🟣AI🔵MEM🟡:03
 
 Secrets: `LCW_API_KEY`, `DISCORD_WEBHOOK_URL` · Cloudflare‑Cron: `*/3 * * * *`
 
-<!-- package revision: v3.5.0-balanced-entry-r4 -->
+<!-- Package revision: v3.5.0-buy-gate-fix-r5 -->

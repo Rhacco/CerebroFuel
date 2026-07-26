@@ -241,4 +241,6 @@ def update_category_state(
         "insufficient": sum(value.data_quality == "insufficient" for value in trends.values()),
     }
     return trends, stats
-# Package revision: v3.5.0-balanced-entry-r4
+# Package revision: v3.5.0-buy-gate-fix-r5
+
+# Package revision: v3.5.0-buy-gate-fix-r5

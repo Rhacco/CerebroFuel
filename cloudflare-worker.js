@@ -81,4 +81,6 @@ async function triggerGitHubWithRetry(env, source) {
   }
   throw new Error(`GitHub konnte nicht gestartet werden: ${lastError}`);
 }
-// Package revision: v3.5.0-balanced-entry-r4
+// Package revision: v3.5.0-buy-gate-fix-r5
+
+// Package revision: v3.5.0-buy-gate-fix-r5

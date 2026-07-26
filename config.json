@@ -1514,7 +1514,7 @@
     "cost_adjusted": true
   },
   "discord_avatar_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Cryptocurrency_Logo.svg/330px-Cryptocurrency_Logo.svg.png",
-  "package_revision": "v3.5.0-balanced-entry-r4",
+  "package_revision": "v3.5.0-buy-gate-fix-r5",
   "entry_guard": {
     "require_exact_interval_volume": true,
     "minimum_cheap_price_score": 48.0,
