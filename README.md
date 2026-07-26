@@ -1,21 +1,24 @@
 # CF v3.5.0
 
-Alle 3 Minuten: geschlossene 1-Minuten-Börsenkerzen für schnelle Signale; LCW für Gesamt-Map und Langzeitkontext. Der vorhandene `v350`-Cache wird weiterverwendet.
+Alle 3 Minuten werden geschlossene 1‑Minuten‑Kerzen von Binance/Coinbase ausgewertet. LiveCoinWatch liefert Gesamt‑Map, Market Cap sowie Langzeit‑ und Wochenkontext. Die vorhandenen `v350`‑Caches bleiben gültig.
 
 ```text
 BTC🟢PAY🔵SCP🟢UTL🟣AI🔵MEM🟡:03
 🟢6▲7🟢B🟢🔵P🟢V🔵🟢🟢N🟡UWSJUP
 ```
 
-- `▲` Kaufchance · `▼` Verkaufswarnung · Zahl `1–8` Stärke
-- 🟣 außergewöhnlich · 🟢 klar · 🔵 früh · 🟡 neutral · 🟠 Warnung · 🔴 stark negativ · ⚪ fehlt
-- `7` 7-Tage-Volumen · `B` zu BTC 24h/7d · `P` Druck · `V` 10/30/60 Min · `N` Erholung
+- `▲` Kauf · `▼` Verkauf · Zahl `1–8` Signalstärke
+- 🟣 außergewöhnlich positiv · 🟢 klar positiv · 🔵 frühes Kaufsignal · 🟡 neutral · 🟠 Verkaufswarnung · 🔴 starkes Verkaufssignal · ⚪ Daten fehlen
+- Kauf nur nach echtem Preisrückgang: günstige Lage, gehaltenes 3‑Stunden‑Tief, abgeschlossene Stabilisierung und erneut steigende Nachfrage. Aktivität allein reicht nicht.
+- `7` 7‑Tage‑Volumen · `B` relativ zu BTC 24h/7d · `P` Druck · `V` 10/30/60 Min · `N` Erholung
 - Ende: Kategorie `P/S/U/A/M` + zwei Wochenbereiche: `S` Sa/So · `M` Mo/Di · `W` Mi · `D` Do/Fr · `?` nicht belastbar
-- Liste: Platz 1 immer; Platz 2/3 nur bei engem Abstand; weitere Plätze nur bei starker, bestätigter oder deutlich beschleunigender Lage.
+- Auswahl: stärkstes Signal immer. Bis zu zwei ähnlich auffällige Käufe und zwei ähnlich auffällige Verkäufe können gleichzeitig erscheinen. Weitere Plätze bis maximal acht benötigen starke, bestätigte oder schnell beschleunigende Signale.
+- Falling Knife, Überdehnung, schlechter Spread, geringe Ausführbarkeit sowie Unlock‑ und Ereignisrisiken sperren oder senken Signale.
+- Versand bei relevanter Änderung oder spätestens nach 15 Minuten.
 
-## Seltene Discord-Kürzel
+## Ungewöhnliche Kürzel
 
-| Kürzel | Vollständiger Coin | Kategorie |
+| Kürzel | Coin | Kategorie |
 |---|---|---|
 | `ARK` | Arkham (`ARKM`) | AI |
 | `MND` | Monad (`MON`) | SCP |
@@ -30,4 +33,6 @@ BTC🟢PAY🔵SCP🟢UTL🟣AI🔵MEM🟡:03
 | `CAK` | PancakeSwap (`CAKE`) | UTL |
 | `JUP` | Jupiter (`JUP`) | UTL |
 
-Secrets: `LCW_API_KEY`, `DISCORD_WEBHOOK_URL` · Cron: `*/3 * * * *`
+Secrets: `LCW_API_KEY`, `DISCORD_WEBHOOK_URL` · Cloudflare‑Cron: `*/3 * * * *`
+
+<!-- package revision: v3.5.0-dual-discount-r3 -->

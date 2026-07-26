@@ -728,7 +728,7 @@
       "category_laggard": 0.07,
       "recent_activity": 0.03
     },
-    "description": "mixed strongest buy and sell signals from one-minute demand, category lead/fade, base, execution and net-target quality",
+    "description": "mixed buy/sell ranking; buy requires discounted stabilized recovery plus renewed one-minute demand",
     "exit_orange": 48.0,
     "exit_red": 70.0,
     "minimum_display_exit": 48.0,
@@ -1452,7 +1452,7 @@
     "acceleration_bonus_cap": 12.0,
     "fallback_minimum_score": 20.0,
     "spread_block_pct": 1.0,
-    "description": "3/6/12-minute velocity and confirmation; runtime history is preserved and adaptive selection avoids routine full lists",
+    "description": "3/6/12-minute velocity and confirmation; buy states require discounted stabilized recovery; runtime history remains v350-compatible",
     "fallback_tie_ratio": 0.9,
     "fallback_tie_gap": 5.0
   },
@@ -1501,7 +1501,9 @@
     "warmup_exception_score": 70.0,
     "fallback_tie_ratio": 0.9,
     "fallback_tie_gap": 5.0,
-    "description": "adaptive output: leader always; up to three close peers; rows 4-8 only when strong, confirmed or accelerating"
+    "description": "adaptive output: strongest overall signal plus up to two close buy and two close sell leaders; buy fallbacks must pass the discount/stabilization gate",
+    "close_tie_maximum_per_side": 2,
+    "balanced_close_maximum": 4
   },
   "target_definition": {
     "net_target_3_pct": 3.0,
@@ -1511,5 +1513,24 @@
     "horizon_hours": 24,
     "cost_adjusted": true
   },
-  "discord_avatar_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Cryptocurrency_Logo.svg/330px-Cryptocurrency_Logo.svg.png"
+  "discord_avatar_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Cryptocurrency_Logo.svg/330px-Cryptocurrency_Logo.svg.png",
+  "package_revision": "v3.5.0-dual-discount-r3",
+  "entry_guard": {
+    "require_exact_interval_volume": true,
+    "minimum_cheap_price_score": 58.0,
+    "minimum_stabilization_score": 60.0,
+    "minimum_recent_drawdown_pct": 0.65,
+    "maximum_rebound_from_low_pct": 3.8,
+    "minimum_low_age_minutes": 8.0,
+    "maximum_low_age_minutes": 150.0,
+    "maximum_3h_range_position": 0.6,
+    "minimum_demand_score": 55.0,
+    "minimum_5m_volume_ratio": 1.03,
+    "minimum_15m_volume_ratio": 1.02,
+    "minimum_5m_price_pct": -0.08,
+    "minimum_15m_price_pct": -0.2,
+    "minimum_30m_price_pct": -0.42,
+    "recovery_setup_bonus_cap": 10.0,
+    "description": "Buy rows require a real recent discount, a held 3h low, completed stabilization and renewed one-minute demand; activity alone never qualifies."
+  }
 }

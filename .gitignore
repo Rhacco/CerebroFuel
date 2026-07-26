@@ -5,3 +5,4 @@ output/latest_analysis.json
 __pycache__/
 *.pyc
 .ruff_cache/
+# Package revision: v3.5.0-dual-discount-r3

@@ -132,6 +132,9 @@ def update_signal_states(
 
         raw_entry_qualified = bool(assessment.get("qualified_entry", False))
         raw_exit_qualified = bool(assessment.get("qualified_exit", False))
+        discount_qualified = bool(assessment.get("discount_qualified", False))
+        stabilized_after_drop = bool(assessment.get("stabilized_after_drop", False))
+        demand_confirmed = bool(assessment.get("demand_confirmed", False))
         falling = bool(assessment.get("falling_knife", False))
         late = bool(assessment.get("late_entry", False))
         data_conf = float(assessment.get("data_confidence") or 0.0)
@@ -139,7 +142,7 @@ def update_signal_states(
         spread_pct = assessment.get("spread_pct")
         spread_block = spread_pct is not None and float(spread_pct) >= float(section.get("spread_block_pct", 1.0))
 
-        if falling or late or spread_block:
+        if falling or late or spread_block or not (discount_qualified and stabilized_after_drop and demand_confirmed):
             raw_entry_qualified = False
         if data_conf < 0.55:
             raw_entry_qualified = raw_exit_qualified = False
@@ -183,7 +186,10 @@ def update_signal_states(
         fallback_eligible = bool(
             data_conf >= 0.55
             and not spread_block
-            and ((side == "BUY" and not falling and not late) or side == "SELL")
+            and (
+                (side == "BUY" and not falling and not late and discount_qualified and stabilized_after_drop and demand_confirmed)
+                or side == "SELL"
+            )
             and score >= float(section.get("fallback_minimum_score", 24.0))
         )
         ranking = score + max(0.0, velocity) * 0.45 + (2.0 if confirmation >= 2 else 0.0)
@@ -231,3 +237,4 @@ def update_signal_states(
         "qualified_exits": sum(item.qualified_exit for item in result.values()),
         "fallback_eligible": sum(item.fallback_eligible for item in result.values()),
     }
+# Package revision: v3.5.0-dual-discount-r3

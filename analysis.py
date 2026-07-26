@@ -159,6 +159,13 @@ class CoinAnalysis:
     opportunity_data_confidence: float = 0.0
     demand_score: float = 0.0
     base_quality_score: float = 0.0
+    cheap_price_score: float = 0.0
+    stabilization_score: float = 0.0
+    recent_drawdown_pct: float = 0.0
+    rebound_from_low_pct: float = 0.0
+    discount_qualified: bool = False
+    stabilized_after_drop: bool = False
+    demand_confirmed: bool = False
     room_to_target_score: float = 0.0
     target_prior_score: float = 50.0
     qualified_entry: bool = False
@@ -2779,6 +2786,13 @@ def apply_opportunity_analysis(
     item.opportunity_data_confidence = float(assessment.get("data_confidence", 0.0))
     item.demand_score = float(assessment.get("demand_score", 0.0))
     item.base_quality_score = float(assessment.get("base_quality_score", 0.0))
+    item.cheap_price_score = float(assessment.get("cheap_price_score", 0.0))
+    item.stabilization_score = float(assessment.get("stabilization_score", 0.0))
+    item.recent_drawdown_pct = float(assessment.get("recent_drawdown_pct", 0.0))
+    item.rebound_from_low_pct = float(assessment.get("rebound_from_low_pct", 0.0))
+    item.discount_qualified = bool(assessment.get("discount_qualified", False))
+    item.stabilized_after_drop = bool(assessment.get("stabilized_after_drop", False))
+    item.demand_confirmed = bool(assessment.get("demand_confirmed", False))
     item.room_to_target_score = float(assessment.get("room_to_target_score", 0.0))
     item.target_prior_score = float(assessment.get("target_prior_score", 50.0))
     item.qualified_entry = bool(assessment.get("qualified_entry", False))
@@ -2916,3 +2930,4 @@ def build_report(
 
 def analysis_to_dict(item: CoinAnalysis) -> dict[str, Any]:
     return asdict(item)
+# Package revision: v3.5.0-dual-discount-r3

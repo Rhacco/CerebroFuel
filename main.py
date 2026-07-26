@@ -102,7 +102,7 @@ def env_bool(name: str, default: bool = True) -> bool:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Krypto-Kategorienmonitor v3.5.0")
+    parser = argparse.ArgumentParser(description="CF v3.5.0")
     parser.add_argument("--config", default=str(ROOT / "config.json"))
     parser.add_argument("--no-send", action="store_true")
     parser.add_argument("--force-discord", action="store_true")
@@ -856,3 +856,4 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"FEHLER: {exc}", file=sys.stderr, flush=True)
         sys.exit(1)
+# Package revision: v3.5.0-dual-discount-r3

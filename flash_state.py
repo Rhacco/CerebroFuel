@@ -585,3 +585,4 @@ def update_and_score(
         "state_points": sum(len(item.get("points", [])) for item in coins.values()),
         "windows": list(WINDOWS),
     }
+# Package revision: v3.5.0-dual-discount-r3

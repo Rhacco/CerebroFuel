@@ -404,12 +404,14 @@ def select_category_entries(
     top_count: int,
     config: Mapping[str, Any],
 ) -> list[Any]:
-    """Return an adaptive 1–8 list instead of filling every available slot.
+    """Return an adaptive 1–8 list with independent buy/sell leaders.
 
-    The leader is always shown. Two close peers may follow. Remaining rows need
-    genuinely strong, confirmed or accelerating evidence and must stay close to
-    the leader. This keeps a full list meaningful without ever returning an
-    empty header-only report.
+    The strongest overall signal is always retained.  Buy and sell sides are
+    then evaluated independently, so up to two close leaders from each side can
+    appear together when the rest of the market is quiet.  Rows beyond that
+    balanced close group still require genuinely strong, confirmed or rapidly
+    accelerating evidence.  This preserves a meaningful full list without
+    hiding an equally notable signal in the opposite direction.
     """
     thresholds = config.get("opportunity_score") if isinstance(config, Mapping) else {}
     thresholds = thresholds if isinstance(thresholds, Mapping) else {}
@@ -419,9 +421,10 @@ def select_category_entries(
     max_exit_per_category = max(1, int(selection.get(
         "maximum_exit_rows_per_category", thresholds.get("maximum_exit_rows_per_category", 2)
     )))
-    close_maximum = max(1, min(3, int(selection.get("close_tie_maximum", 3))))
     close_ratio = max(0.0, min(1.0, float(selection.get("close_tie_ratio", 0.90))))
     close_gap = max(0.0, float(selection.get("close_tie_gap", 5.0)))
+    close_per_side = max(1, min(2, int(selection.get("close_tie_maximum_per_side", 2))))
+    balanced_close_maximum = max(1, min(top_count, int(selection.get("balanced_close_maximum", 4))))
     strong_minimum = max(0.0, float(selection.get("strong_minimum_score", 55.0)))
     leader_gap = max(close_gap, float(selection.get("maximum_leader_gap", 12.0)))
     strong_velocity = max(0.0, float(selection.get("strong_velocity", 4.0)))
@@ -438,6 +441,9 @@ def select_category_entries(
 
     def score_for(item: Any) -> float:
         return float(getattr(state_for(item), "ranking_score", getattr(item, "opportunity_score", 0.0)))
+
+    def is_close(score: float, reference: float) -> bool:
+        return bool(score >= reference * close_ratio or reference - score <= close_gap)
 
     candidates = sorted(
         analyses,
@@ -464,6 +470,18 @@ def select_category_entries(
             bool(getattr(state, "qualified_exit", context.get("qualified_exit", False))),
             code,
         )
+
+    def direction_for(item: Any) -> str:
+        is_entry, is_exit, _ = side_for(item)
+        if is_entry and not is_exit:
+            return "▲"
+        if is_exit and not is_entry:
+            return "▼"
+        state = state_for(item)
+        direction = str(getattr(state, "direction", getattr(item, "opportunity_direction", "=")))
+        if direction in {"▲", "▼"}:
+            return direction
+        return "▲" if float(getattr(item, "entry_score", 0.0)) >= float(getattr(item, "exit_score", 0.0)) else "▼"
 
     def can_add(item: Any) -> bool:
         nonlocal exit_total
@@ -493,18 +511,35 @@ def select_category_entries(
             add_item(selected, leader)
             leader_score = score_for(leader)
 
-            # Up to two genuinely close peers may accompany the leader even when
-            # they are only early blue/orange signals.
-            for item in qualified:
-                if item is leader or len(selected) >= close_maximum or not can_add(item):
+            # Build the quiet-market close group independently for both sides.
+            # This permits, for example, two close buys and two close sells to
+            # appear together instead of allowing one direction to crowd out
+            # the other before the stronger broad-market rules are evaluated.
+            for direction in ("▲", "▼"):
+                side_candidates = [
+                    item for item in qualified
+                    if direction_for(item) == direction
+                    and (item in selected or can_add(item))
+                ]
+                if not side_candidates:
                     continue
-                score = score_for(item)
-                if score >= leader_score * close_ratio or leader_score - score <= close_gap:
+                side_reference = next((item for item in side_candidates if item in selected), side_candidates[0])
+                side_reference_score = score_for(side_reference)
+                side_selected = sum(1 for item in selected if direction_for(item) == direction)
+                for item in side_candidates:
+                    if item in selected or len(selected) >= balanced_close_maximum or side_selected >= close_per_side:
+                        continue
+                    if not can_add(item):
+                        continue
+                    score = score_for(item)
+                    if not is_close(score, leader_score) or not is_close(score, side_reference_score):
+                        continue
                     add_item(selected, item)
+                    side_selected += 1
 
-            # Rows beyond the close group must be materially strong. A wide
-            # market move can still fill all eight rows, but ordinary threshold
-            # crossings no longer do so automatically.
+            # Rows beyond the balanced close group must be materially strong.
+            # A broad market move can still fill all eight rows, but ordinary
+            # threshold crossings no longer do so automatically.
             for item in qualified:
                 if item in selected or len(selected) >= top_count or not can_add(item):
                     continue
@@ -515,7 +550,7 @@ def select_category_entries(
                 confirmation = int(getattr(state, "confirmation_count", 0))
                 velocity = float(getattr(state, "score_velocity", 0.0))
                 color = str(getattr(state, "color", ""))
-                direction = str(getattr(state, "direction", "▲"))
+                direction = direction_for(item)
                 exact = bool(getattr(item, "exact_interval_volume", False))
                 execution = float(getattr(item, "execution_quality_score", 0.0))
                 demand = float(getattr(item, "demand_score", 0.0))
@@ -549,25 +584,65 @@ def select_category_entries(
                 return selected[:top_count]
 
     # No qualified signal survived: show the clearest real buy/sell side, never
-    # a neutral or brown placeholder. Places two and three require a close tie.
+    # a neutral or brown placeholder.  The fallback is balanced independently,
+    # too, so close buy and sell leaders can coexist while the market is quiet.
+    def safe_buy_fallback(item: Any) -> bool:
+        return bool(
+            getattr(item, "discount_qualified", False)
+            and getattr(item, "stabilized_after_drop", False)
+            and getattr(item, "demand_confirmed", False)
+            and not bool(getattr(item, "falling_knife", False))
+            and not bool(getattr(item, "late_entry", False))
+        )
+
     fallback = [item for item in candidates if bool(getattr(state_for(item), "fallback_eligible", False))]
     if not fallback:
-        fallback = [item for item in candidates if float(getattr(item, "opportunity_data_confidence", 0.0)) >= 0.45]
+        # When no formal signal qualifies, prefer a real sell/avoid warning.  A
+        # buy-side fallback remains allowed only after the same discounted and
+        # stabilized recovery gate used by normal buy recommendations.
+        fallback = [
+            item for item in candidates
+            if float(getattr(item, "opportunity_data_confidence", 0.0)) >= 0.45
+            and (direction_for(item) == "▼" or safe_buy_fallback(item))
+        ]
     if not fallback and candidates:
-        fallback = candidates[:1]
+        fallback = sorted(
+            candidates,
+            key=lambda item: (float(getattr(item, "exit_score", 0.0)), score_for(item)),
+            reverse=True,
+        )[:1]
     if not fallback:
         return []
-    top_score = score_for(fallback[0])
-    chosen = [fallback[0]]
+
     ratio = float(selection.get("fallback_tie_ratio", (config.get("signal_state") or {}).get("fallback_tie_ratio", 0.90)))
     gap = float(selection.get("fallback_tie_gap", (config.get("signal_state") or {}).get("fallback_tie_gap", 5.0)))
-    for item in fallback[1:3]:
-        score = score_for(item)
-        if score >= top_score * ratio or top_score - score <= gap:
-            chosen.append(item)
+
+    def fallback_close(score: float, reference: float) -> bool:
+        return bool(score >= reference * ratio or reference - score <= gap)
+
+    leader = fallback[0]
+    leader_score = score_for(leader)
+    chosen = [leader]
+    for direction in ("▲", "▼"):
+        side_candidates = [item for item in fallback if direction_for(item) == direction]
+        if not side_candidates:
+            continue
+        side_reference = next((item for item in side_candidates if item in chosen), side_candidates[0])
+        side_reference_score = score_for(side_reference)
+        side_selected = sum(1 for item in chosen if direction_for(item) == direction)
+        for item in side_candidates:
+            if item in chosen or len(chosen) >= balanced_close_maximum or side_selected >= close_per_side:
+                continue
+            score = score_for(item)
+            if fallback_close(score, leader_score) and fallback_close(score, side_reference_score):
+                chosen.append(item)
+                side_selected += 1
+
     for item in chosen:
         state = state_for(item)
         direction = str(getattr(state, "direction", "▲" if item.entry_score >= item.exit_score else "▼"))
+        if direction == "▲" and not safe_buy_fallback(item):
+            direction = "▼"
         item.opportunity_direction = direction
         item.opportunity_color = "🔵" if direction == "▲" else "🟠"
         item.opportunity_count = 1
@@ -579,5 +654,5 @@ def select_category_entries(
         item.short.pressure_color = item.opportunity_color
         item.short.buy_count = 1 if direction == "▲" else 0
         item.short.sell_count = 1 if direction == "▼" else 0
-    return chosen
-
+    return chosen[:top_count]
+# Package revision: v3.5.0-dual-discount-r3

@@ -241,3 +241,4 @@ def update_category_state(
         "insufficient": sum(value.data_quality == "insufficient" for value in trends.values()),
     }
     return trends, stats
+# Package revision: v3.5.0-dual-discount-r3

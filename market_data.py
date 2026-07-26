@@ -59,6 +59,12 @@ class IntradayMetrics:
     demand_score: float = 0.0
     sell_pressure_score: float = 0.0
     base_quality_score: float = 0.0
+    cheap_price_score: float = 0.0
+    stabilization_score: float = 0.0
+    recent_drawdown_pct: float = 0.0
+    rebound_from_low_pct: float = 0.0
+    discount_qualified: bool = False
+    stabilized_after_drop: bool = False
     room_to_target_score: float = 0.0
     overextension_penalty: float = 0.0
     falling_knife: bool = False
@@ -534,6 +540,29 @@ def _new_low_age_minutes(candles: Sequence[Candle], minutes: int = 180) -> float
     return float(len(selected) - 1 - index)
 
 
+def _discount_recovery_context(
+    candles: Sequence[Candle],
+    minutes: int = 180,
+) -> tuple[float, float, float | None]:
+    """Return pre-low drawdown, rebound from the low and low age in minutes.
+
+    Only information available at the current candle is used.  The prior high is
+    restricted to candles at or before the local low, preventing the later
+    rebound from inflating the measured discount.
+    """
+    selected = list(candles[-minutes:])
+    if len(selected) < max(30, minutes // 2):
+        return 0.0, 0.0, None
+    low_index = min(range(len(selected)), key=lambda position: selected[position].low)
+    low = float(selected[low_index].low)
+    close = float(selected[-1].close)
+    prior_high = max(float(item.high) for item in selected[: low_index + 1])
+    drawdown = max(0.0, (prior_high / low - 1.0) * 100.0) if low > 0 else 0.0
+    rebound = max(0.0, (close / low - 1.0) * 100.0) if low > 0 else 0.0
+    age = float(len(selected) - 1 - low_index)
+    return drawdown, rebound, age
+
+
 def _log_ratio_score(ratio: float | None) -> float:
     if ratio is None or ratio <= 0:
         return 0.0
@@ -599,7 +628,7 @@ def analyze_candles(
     pos180, low180, _ = _range_position(ordered, 180)
     pos300, low300, high300 = _range_position(ordered, min(300, len(ordered)))
     close = ordered[-1].close
-    age_low = _new_low_age_minutes(ordered, 180)
+    recent_drawdown, rebound_from_low, age_low = _discount_recovery_context(ordered, 180)
 
     high24 = _safe_float((ticker24 or {}).get("highPrice"))
     low24 = _safe_float((ticker24 or {}).get("lowPrice"))
@@ -657,6 +686,50 @@ def analyze_candles(
     if falling_knife:
         base_quality *= 0.12
 
+    # A buy setup must be discounted, not merely active.  The discount score
+    # combines a real preceding pullback with a low range position and distance
+    # from the 24h high.  Stabilization is deliberately separate: a fresh low
+    # remains unsafe until the short windows hold and a modest rebound survives.
+    range_discount = 1.0 - _clamp((float(pos180 or 0.50) - 0.18) / 0.52)
+    drawdown_discount = _clamp((recent_drawdown - 0.45) / 3.80)
+    day_discount = 1.0 - float(pos1440 if pos1440 is not None else pos300 if pos300 is not None else 0.50)
+    high_discount = 0.50 if distance_high is None else _clamp((float(distance_high) - 1.2) / 7.0)
+    cheap_price = 100.0 * (
+        0.36 * range_discount
+        + 0.31 * drawdown_discount
+        + 0.19 * day_discount
+        + 0.14 * high_discount
+    )
+
+    age_score = 0.0 if age_low is None else _clamp((float(age_low) - 6.0) / 30.0)
+    if age_low is not None and age_low > 150.0:
+        age_score *= _clamp((210.0 - float(age_low)) / 60.0)
+    hold5 = _clamp((p5 + 0.08) / 0.30)
+    hold15 = _clamp((p15 + 0.20) / 0.62)
+    hold30 = _clamp((p30 + 0.42) / 1.05)
+    short_hold = 0.42 * hold5 + 0.34 * hold15 + 0.24 * hold30
+    rebound_score = _clamp((rebound_from_low - 0.08) / 0.75)
+    if rebound_from_low > 3.5:
+        rebound_score *= _clamp((5.5 - rebound_from_low) / 2.0)
+    low_zone_hold = 1.0 - _clamp((float(pos180 or 0.50) - 0.52) / 0.30)
+    stabilization = 100.0 * (0.31 * age_score + 0.37 * short_hold + 0.20 * rebound_score + 0.12 * low_zone_hold)
+    if falling_knife or (age_low is not None and age_low < 6.0):
+        stabilization *= 0.10
+    if rebound_from_low > 4.5 or float(pos180 or 0.50) > 0.72:
+        stabilization *= 0.62
+
+    discount_qualified = bool(cheap_price >= 58.0 and recent_drawdown >= 0.65 and float(pos180 or 1.0) <= 0.60)
+    stabilized_after_drop = bool(
+        stabilization >= 60.0
+        and age_low is not None
+        and 8.0 <= float(age_low) <= 150.0
+        and p5 >= -0.08
+        and p15 >= -0.20
+        and p30 >= -0.42
+        and 0.08 <= rebound_from_low <= 3.8
+        and not falling_knife
+    )
+
     room_from_high = 50.0 if distance_high is None else 100.0 * _clamp((distance_high - 0.7) / 5.4)
     range_room = 50.0 if pos1440 is None else 100.0 * _clamp((0.92 - pos1440) / 0.70)
     room = 0.62 * room_from_high + 0.38 * range_room
@@ -711,6 +784,12 @@ def analyze_candles(
         demand_score=round(_clamp(demand / 100.0) * 100.0, 4),
         sell_pressure_score=round(_clamp(sell_pressure / 100.0) * 100.0, 4),
         base_quality_score=round(_clamp(base_quality / 100.0) * 100.0, 4),
+        cheap_price_score=round(_clamp(cheap_price / 100.0) * 100.0, 4),
+        stabilization_score=round(_clamp(stabilization / 100.0) * 100.0, 4),
+        recent_drawdown_pct=round(recent_drawdown, 6),
+        rebound_from_low_pct=round(rebound_from_low, 6),
+        discount_qualified=discount_qualified,
+        stabilized_after_drop=stabilized_after_drop,
         room_to_target_score=round(_clamp(room / 100.0) * 100.0, 4),
         overextension_penalty=round(_clamp(overextension / 100.0) * 100.0, 4),
         falling_knife=falling_knife,
@@ -744,6 +823,10 @@ def analyze_candles(
         reasons.append("1m-Nachfrage beschleunigt")
     if base_quality >= 70:
         reasons.append("stabile 3h-Basis")
+    if discount_qualified:
+        reasons.append("günstige Rücklaufzone")
+    if stabilized_after_drop:
+        reasons.append("Rückgang stabilisiert")
     if falling_knife:
         reasons.append("Falling-Knife-Sperre")
     if late_entry:
@@ -754,3 +837,4 @@ def analyze_candles(
         reasons.append("Spread erhöht")
     metrics.reasons = tuple(reasons)
     return metrics
+# Package revision: v3.5.0-dual-discount-r3
