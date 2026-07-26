@@ -166,6 +166,7 @@ class CoinAnalysis:
     discount_qualified: bool = False
     stabilized_after_drop: bool = False
     demand_confirmed: bool = False
+    confirmed_recovery: bool = False
     room_to_target_score: float = 0.0
     target_prior_score: float = 50.0
     qualified_entry: bool = False
@@ -2793,6 +2794,7 @@ def apply_opportunity_analysis(
     item.discount_qualified = bool(assessment.get("discount_qualified", False))
     item.stabilized_after_drop = bool(assessment.get("stabilized_after_drop", False))
     item.demand_confirmed = bool(assessment.get("demand_confirmed", False))
+    item.confirmed_recovery = bool(assessment.get("confirmed_recovery", False))
     item.room_to_target_score = float(assessment.get("room_to_target_score", 0.0))
     item.target_prior_score = float(assessment.get("target_prior_score", 50.0))
     item.qualified_entry = bool(assessment.get("qualified_entry", False))
@@ -2930,4 +2932,4 @@ def build_report(
 
 def analysis_to_dict(item: CoinAnalysis) -> dict[str, Any]:
     return asdict(item)
-# Package revision: v3.5.0-dual-discount-r3
+# Package revision: v3.5.0-balanced-entry-r4

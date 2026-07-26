@@ -135,6 +135,7 @@ def update_signal_states(
         discount_qualified = bool(assessment.get("discount_qualified", False))
         stabilized_after_drop = bool(assessment.get("stabilized_after_drop", False))
         demand_confirmed = bool(assessment.get("demand_confirmed", False))
+        confirmed_recovery = bool(assessment.get("confirmed_recovery", False))
         falling = bool(assessment.get("falling_knife", False))
         late = bool(assessment.get("late_entry", False))
         data_conf = float(assessment.get("data_confidence") or 0.0)
@@ -146,6 +147,8 @@ def update_signal_states(
             raw_entry_qualified = False
         if data_conf < 0.55:
             raw_entry_qualified = raw_exit_qualified = False
+        if raw_entry_qualified and not confirmed_recovery:
+            entry_adjusted = min(entry_adjusted, entry_green - 0.25)
 
         side = "BUY" if entry_adjusted >= exit_adjusted else "SELL"
         previous_side = str(previous.get("side") or "")
@@ -162,9 +165,9 @@ def update_signal_states(
 
         if qualified_entry:
             direction = "▲"
-            if entry_adjusted >= entry_purple and confirmation >= green_confirmations and execution_quality >= 55.0:
+            if confirmed_recovery and entry_adjusted >= entry_purple and confirmation >= green_confirmations and execution_quality >= 55.0:
                 color, state_name = "🟣", "CONFIRMED_BUY"
-            elif entry_adjusted >= entry_green and confirmation >= green_confirmations:
+            elif confirmed_recovery and entry_adjusted >= entry_green and confirmation >= green_confirmations:
                 color, state_name = "🟢", "BUY"
             else:
                 color, state_name = "🔵", "WATCH_BUY"
@@ -237,4 +240,4 @@ def update_signal_states(
         "qualified_exits": sum(item.qualified_exit for item in result.values()),
         "fallback_eligible": sum(item.fallback_eligible for item in result.values()),
     }
-# Package revision: v3.5.0-dual-discount-r3
+# Package revision: v3.5.0-balanced-entry-r4

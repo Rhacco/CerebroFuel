@@ -59,4 +59,4 @@ def send_discord(
             )
         if index + 1 < len(chunks):
             time.sleep(0.5)
-# Package revision: v3.5.0-dual-discount-r3
+# Package revision: v3.5.0-balanced-entry-r4

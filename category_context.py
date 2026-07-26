@@ -655,4 +655,4 @@ def select_category_entries(
         item.short.buy_count = 1 if direction == "▲" else 0
         item.short.sell_count = 1 if direction == "▼" else 0
     return chosen[:top_count]
-# Package revision: v3.5.0-dual-discount-r3
+# Package revision: v3.5.0-balanced-entry-r4

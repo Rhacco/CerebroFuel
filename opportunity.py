@@ -47,6 +47,7 @@ class OpportunityAssessment:
     discount_qualified: bool
     stabilized_after_drop: bool
     demand_confirmed: bool
+    confirmed_recovery: bool
     positive_gap_score: float
     negative_gap_score: float
     relative_strength_score: float
@@ -361,16 +362,16 @@ def assess_opportunity(
     rebound_from_low = float(getattr(metrics, "rebound_from_low_pct", 0.0))
     low_age = getattr(metrics, "new_3h_low_age_minutes", None)
     pos180 = float(metrics.range_position_180) if metrics.range_position_180 is not None else 1.0
-    minimum_cheap = float(entry_guard.get("minimum_cheap_price_score", 58.0))
-    minimum_stabilization = float(entry_guard.get("minimum_stabilization_score", 60.0))
-    minimum_drawdown = float(entry_guard.get("minimum_recent_drawdown_pct", 0.65))
-    maximum_rebound = float(entry_guard.get("maximum_rebound_from_low_pct", 3.8))
-    minimum_low_age = float(entry_guard.get("minimum_low_age_minutes", 8.0))
-    maximum_low_age = float(entry_guard.get("maximum_low_age_minutes", 150.0))
-    maximum_range_position = float(entry_guard.get("maximum_3h_range_position", 0.60))
-    minimum_demand = float(entry_guard.get("minimum_demand_score", 55.0))
-    minimum_v5 = float(entry_guard.get("minimum_5m_volume_ratio", 1.03))
-    minimum_v15 = float(entry_guard.get("minimum_15m_volume_ratio", 1.02))
+    minimum_cheap = float(entry_guard.get("minimum_cheap_price_score", 48.0))
+    minimum_stabilization = float(entry_guard.get("minimum_stabilization_score", 48.0))
+    minimum_drawdown = float(entry_guard.get("minimum_recent_drawdown_pct", 0.32))
+    maximum_rebound = float(entry_guard.get("maximum_rebound_from_low_pct", 4.2))
+    minimum_low_age = float(entry_guard.get("minimum_low_age_minutes", 4.0))
+    maximum_low_age = float(entry_guard.get("maximum_low_age_minutes", 180.0))
+    maximum_range_position = float(entry_guard.get("maximum_3h_range_position", 0.68))
+    minimum_demand = float(entry_guard.get("minimum_demand_score", 50.0))
+    minimum_v5 = float(entry_guard.get("minimum_5m_volume_ratio", 1.01))
+    minimum_v15 = float(entry_guard.get("minimum_15m_volume_ratio", 1.01))
     v5 = metrics.volume_ratios.get(5)
     v15 = metrics.volume_ratios.get(15)
     a5 = metrics.volume_acceleration.get(5)
@@ -378,25 +379,66 @@ def assess_opportunity(
     volume_confirmed = bool(
         (v5 is not None and float(v5) >= minimum_v5)
         or (v15 is not None and float(v15) >= minimum_v15)
-        or (a5 is not None and float(a5) >= 1.06)
-        or (a15 is not None and float(a15) >= 1.04)
+        or (a5 is not None and float(a5) >= 1.04)
+        or (a15 is not None and float(a15) >= 1.03)
     )
     demand_confirmed = bool(demand >= minimum_demand and volume_confirmed)
-    discount_qualified = bool(
+
+    base_discount = bool(
         exact
         and cheap_score >= minimum_cheap
         and recent_drawdown >= minimum_drawdown
         and pos180 <= maximum_range_position
     )
+    category_assisted_discount = bool(
+        exact
+        and category_score >= float(entry_guard.get("category_assist_minimum_score", 62.0))
+        and laggard_score >= float(entry_guard.get("category_assist_minimum_laggard", 18.0))
+        and cheap_score >= float(entry_guard.get("category_assist_minimum_cheap_score", 45.0))
+        and (
+            recent_drawdown >= float(entry_guard.get("category_assist_minimum_drawdown_pct", 0.25))
+            or pos180 <= 0.50
+        )
+        and pos180 <= float(entry_guard.get("category_assist_maximum_3h_range_position", 0.70))
+    )
+    discount_qualified = bool(base_discount or category_assisted_discount)
     stabilized_after_drop = bool(
         discount_qualified
         and stabilization_score >= minimum_stabilization
         and low_age is not None
         and minimum_low_age <= float(low_age) <= maximum_low_age
         and rebound_from_low <= maximum_rebound
-        and p5 >= float(entry_guard.get("minimum_5m_price_pct", -0.08))
-        and p15 >= float(entry_guard.get("minimum_15m_price_pct", -0.20))
-        and p30 >= float(entry_guard.get("minimum_30m_price_pct", -0.42))
+        and p5 >= float(entry_guard.get("minimum_5m_price_pct", -0.12))
+        and p15 >= float(entry_guard.get("minimum_15m_price_pct", -0.28))
+        and p30 >= float(entry_guard.get("minimum_30m_price_pct", -0.55))
+        and not metrics.falling_knife
+    )
+
+    confirmed_v5 = float(entry_guard.get("confirmed_minimum_5m_volume_ratio", 1.03))
+    confirmed_v15 = float(entry_guard.get("confirmed_minimum_15m_volume_ratio", 1.02))
+    confirmed_volume = bool(
+        (v5 is not None and float(v5) >= confirmed_v5)
+        or (v15 is not None and float(v15) >= confirmed_v15)
+        or (a5 is not None and float(a5) >= 1.06)
+        or (a15 is not None and float(a15) >= 1.04)
+    )
+    confirmed_demand = bool(
+        demand >= float(entry_guard.get("confirmed_minimum_demand_score", 55.0))
+        and confirmed_volume
+    )
+    confirmed_recovery = bool(
+        exact
+        and cheap_score >= float(entry_guard.get("confirmed_minimum_cheap_price_score", 58.0))
+        and recent_drawdown >= float(entry_guard.get("confirmed_minimum_recent_drawdown_pct", 0.65))
+        and pos180 <= float(entry_guard.get("confirmed_maximum_3h_range_position", 0.60))
+        and stabilization_score >= float(entry_guard.get("confirmed_minimum_stabilization_score", 60.0))
+        and low_age is not None
+        and float(entry_guard.get("confirmed_minimum_low_age_minutes", 8.0)) <= float(low_age) <= float(entry_guard.get("confirmed_maximum_low_age_minutes", 150.0))
+        and rebound_from_low <= float(entry_guard.get("confirmed_maximum_rebound_from_low_pct", 3.8))
+        and p5 >= float(entry_guard.get("confirmed_minimum_5m_price_pct", -0.08))
+        and p15 >= float(entry_guard.get("confirmed_minimum_15m_price_pct", -0.20))
+        and p30 >= float(entry_guard.get("confirmed_minimum_30m_price_pct", -0.42))
+        and confirmed_demand
         and not metrics.falling_knife
     )
     category_lead = 0.0
@@ -422,15 +464,17 @@ def assess_opportunity(
         + weight("recent_activity", 0.03) * activity_score
     )
     recovery_bonus_cap = float(entry_guard.get("recovery_setup_bonus_cap", 10.0))
+    early_bonus_cap = float(entry_guard.get("early_recovery_bonus_cap", 3.5))
     recovery_setup_bonus = 0.0
-    if discount_qualified and stabilized_after_drop and demand_confirmed:
-        recovery_setup_bonus = min(
-            recovery_bonus_cap,
-            recovery_bonus_cap
-            * (0.38 * _clamp(cheap_score / 100.0)
-               + 0.38 * _clamp(stabilization_score / 100.0)
-               + 0.24 * _clamp(demand / 100.0)),
-        )
+    recovery_quality = (
+        0.38 * _clamp(cheap_score / 100.0)
+        + 0.38 * _clamp(stabilization_score / 100.0)
+        + 0.24 * _clamp(demand / 100.0)
+    )
+    if confirmed_recovery:
+        recovery_setup_bonus = min(recovery_bonus_cap, recovery_bonus_cap * recovery_quality)
+    elif discount_qualified and stabilized_after_drop and demand_confirmed:
+        recovery_setup_bonus = min(early_bonus_cap, early_bonus_cap * recovery_quality)
     falling_penalty = 84.0 if metrics.falling_knife else 0.0
     late_penalty = 0.48 * float(metrics.overextension_penalty)
     spread_penalty = 0.0 if spread is None else max(0.0, (float(spread) - 0.20) * 24.0)
@@ -444,11 +488,15 @@ def assess_opportunity(
         entry = min(entry, 8.0)
     if metrics.late_entry:
         entry = min(entry, 50.0)
-    # Activity alone is never a buy recommendation.  Without an actual recent
-    # discount, a completed stabilization and renewed demand, the buy side stays
-    # below the visible blue threshold even when the category itself is strong.
+    # Activity alone remains insufficient.  A real discount, a beginning hold
+    # and renewed demand unlock blue.  Until the stricter recovery is complete,
+    # the score is capped below green so early setups cannot masquerade as fully
+    # confirmed entries.
+    entry_thresholds = config.get("opportunity_score") or {}
     if not (discount_qualified and stabilized_after_drop and demand_confirmed):
-        entry = min(entry, float((config.get("opportunity_score") or {}).get("entry_blue", 38.0)) - 0.25)
+        entry = min(entry, float(entry_thresholds.get("entry_blue", 38.0)) - 0.25)
+    elif not confirmed_recovery:
+        entry = min(entry, float(entry_thresholds.get("entry_green", 60.0)) - 0.25)
 
     p60 = float(metrics.price_changes.get(60) or 0.0)
     p180 = float(metrics.price_changes.get(180) or 0.0)
@@ -542,13 +590,15 @@ def assess_opportunity(
     if discount_qualified:
         reasons.append("Preis günstig nach Rücklauf")
     if stabilized_after_drop:
-        reasons.append("Rückgang belastbar stabilisiert")
+        reasons.append("Stabilisierung beginnt")
+    if confirmed_recovery:
+        reasons.append("Erholung vollständig bestätigt")
     if demand_confirmed:
         reasons.append("Nachfrage nach Stabilisierung bestätigt")
     if not discount_qualified:
         reasons.append("kein ausreichender Preisabschlag")
     elif not stabilized_after_drop:
-        reasons.append("Stabilisierung noch nicht abgeschlossen")
+        reasons.append("Stabilisierung noch nicht ausreichend")
     elif not demand_confirmed:
         reasons.append("Nachfragebestätigung fehlt")
     if target_confidence >= 0.35:
@@ -578,6 +628,7 @@ def assess_opportunity(
         discount_qualified=discount_qualified,
         stabilized_after_drop=stabilized_after_drop,
         demand_confirmed=demand_confirmed,
+        confirmed_recovery=confirmed_recovery,
         positive_gap_score=round(positive_gap, 4),
         negative_gap_score=round(negative_gap, 4),
         relative_strength_score=round(relative, 4),
@@ -615,4 +666,4 @@ def assess_opportunity(
         volume_colors=visible_colors,
         reasons=tuple(dict.fromkeys(reasons)),
     )
-# Package revision: v3.5.0-dual-discount-r3
+# Package revision: v3.5.0-balanced-entry-r4

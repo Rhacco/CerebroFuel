@@ -65,6 +65,7 @@ class IntradayMetrics:
     rebound_from_low_pct: float = 0.0
     discount_qualified: bool = False
     stabilized_after_drop: bool = False
+    confirmed_recovery: bool = False
     room_to_target_score: float = 0.0
     overextension_penalty: float = 0.0
     falling_knife: bool = False
@@ -701,7 +702,7 @@ def analyze_candles(
         + 0.14 * high_discount
     )
 
-    age_score = 0.0 if age_low is None else _clamp((float(age_low) - 6.0) / 30.0)
+    age_score = 0.0 if age_low is None else _clamp((float(age_low) - 4.0) / 32.0)
     if age_low is not None and age_low > 150.0:
         age_score *= _clamp((210.0 - float(age_low)) / 60.0)
     hold5 = _clamp((p5 + 0.08) / 0.30)
@@ -713,14 +714,37 @@ def analyze_candles(
         rebound_score *= _clamp((5.5 - rebound_from_low) / 2.0)
     low_zone_hold = 1.0 - _clamp((float(pos180 or 0.50) - 0.52) / 0.30)
     stabilization = 100.0 * (0.31 * age_score + 0.37 * short_hold + 0.20 * rebound_score + 0.12 * low_zone_hold)
-    if falling_knife or (age_low is not None and age_low < 6.0):
+    if falling_knife:
         stabilization *= 0.10
+    elif age_low is not None and age_low < 4.0:
+        stabilization *= 0.25
     if rebound_from_low > 4.5 or float(pos180 or 0.50) > 0.72:
         stabilization *= 0.62
 
-    discount_qualified = bool(cheap_price >= 58.0 and recent_drawdown >= 0.65 and float(pos180 or 1.0) <= 0.60)
+    # Balanced entry gate: a real modest discount plus a beginning hold is
+    # sufficient for an early blue signal.  The stricter legacy-quality gate
+    # remains separate and is required before green or purple is possible.
+    discount_qualified = bool(
+        cheap_price >= 48.0
+        and recent_drawdown >= 0.32
+        and float(pos180 or 1.0) <= 0.68
+    )
     stabilized_after_drop = bool(
-        stabilization >= 60.0
+        discount_qualified
+        and stabilization >= 48.0
+        and age_low is not None
+        and 4.0 <= float(age_low) <= 180.0
+        and p5 >= -0.12
+        and p15 >= -0.28
+        and p30 >= -0.55
+        and rebound_from_low <= 4.2
+        and not falling_knife
+    )
+    confirmed_recovery = bool(
+        cheap_price >= 58.0
+        and recent_drawdown >= 0.65
+        and float(pos180 or 1.0) <= 0.60
+        and stabilization >= 60.0
         and age_low is not None
         and 8.0 <= float(age_low) <= 150.0
         and p5 >= -0.08
@@ -790,6 +814,7 @@ def analyze_candles(
         rebound_from_low_pct=round(rebound_from_low, 6),
         discount_qualified=discount_qualified,
         stabilized_after_drop=stabilized_after_drop,
+        confirmed_recovery=confirmed_recovery,
         room_to_target_score=round(_clamp(room / 100.0) * 100.0, 4),
         overextension_penalty=round(_clamp(overextension / 100.0) * 100.0, 4),
         falling_knife=falling_knife,
@@ -826,7 +851,9 @@ def analyze_candles(
     if discount_qualified:
         reasons.append("günstige Rücklaufzone")
     if stabilized_after_drop:
-        reasons.append("Rückgang stabilisiert")
+        reasons.append("Stabilisierung beginnt")
+    if confirmed_recovery:
+        reasons.append("Erholung vollständig bestätigt")
     if falling_knife:
         reasons.append("Falling-Knife-Sperre")
     if late_entry:
@@ -837,4 +864,4 @@ def analyze_candles(
         reasons.append("Spread erhöht")
     metrics.reasons = tuple(reasons)
     return metrics
-# Package revision: v3.5.0-dual-discount-r3
+# Package revision: v3.5.0-balanced-entry-r4
