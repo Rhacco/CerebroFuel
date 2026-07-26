@@ -728,7 +728,7 @@
       "category_laggard": 0.07,
       "recent_activity": 0.03
     },
-    "description": "Two valid blue patterns: absolute stabilized pullback or stable demand-confirmed category laggard; green/purple require strict absolute recovery.",
+    "description": "Blue supports three safe patterns: stabilized pullback, clear category laggard, or balanced-value base with renewed demand and target room. Green/purple require strict recovery.",
     "exit_orange": 48.0,
     "exit_red": 70.0,
     "minimum_display_exit": 48.0,
@@ -1452,7 +1452,7 @@
     "acceleration_bonus_cap": 12.0,
     "fallback_minimum_score": 20.0,
     "spread_block_pct": 1.0,
-    "description": "Qualified-side precedence plus relative-bargain-aware fallback; valid buys cannot be overturned by unqualified exit scores.",
+    "description": "Qualified-side precedence plus balanced-value-aware fallback; valid buys cannot be overturned by unqualified exit scores.",
     "fallback_tie_ratio": 0.9,
     "fallback_tie_gap": 5.0
   },
@@ -1501,7 +1501,7 @@
     "warmup_exception_score": 70.0,
     "fallback_tie_ratio": 0.9,
     "fallback_tie_gap": 5.0,
-    "description": "Adaptive mixed output with independent buy/sell leaders; relative category bargains are eligible without being mislabelled as absolute pullbacks.",
+    "description": "Adaptive mixed output; safe balanced-value buys and real sells are selected independently, with weak rows excluded.",
     "close_tie_maximum_per_side": 2,
     "balanced_close_maximum": 4,
     "minimum_safe_buy_score": 31.0,
@@ -1516,7 +1516,7 @@
     "cost_adjusted": true
   },
   "discord_avatar_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Cryptocurrency_Logo.svg/330px-Cryptocurrency_Logo.svg.png",
-  "package_revision": "v3.5.0-relative-bargain-production-r7",
+  "package_revision": "v3.5.0-balanced-value-production-r8",
   "entry_guard": {
     "require_exact_interval_volume": true,
     "minimum_cheap_price_score": 48.0,
@@ -1570,5 +1570,23 @@
     "maximum_30m_price_pct": 1.25,
     "maximum_category_fading_score": 42.0,
     "description": "Blue may also represent a stable, demand-confirmed relative category bargain. Green/purple still require the strict absolute recovery gate."
+  },
+  "balanced_entry_guard": {
+    "minimum_category_score": 48.0,
+    "minimum_balanced_value_score": 15.0,
+    "minimum_stabilization_score": 52.0,
+    "minimum_demand_score": 58.0,
+    "minimum_room_to_target_score": 25.0,
+    "minimum_base_quality_score": 28.0,
+    "maximum_3h_range_position": 0.8,
+    "minimum_5m_price_pct": -0.18,
+    "minimum_15m_price_pct": -0.36,
+    "minimum_30m_price_pct": -0.72,
+    "maximum_30m_price_pct": 1.15,
+    "minimum_60m_price_pct": -1.25,
+    "maximum_rebound_from_low_pct": 5.4,
+    "minimum_low_age_minutes": 2.0,
+    "maximum_category_fading_score": 42.0,
+    "description": "Blue can also represent a balanced value setup: moderate discount/relative value, held base, strong renewed demand and enough target room. Green/purple still require strict recovery."
   }
 }

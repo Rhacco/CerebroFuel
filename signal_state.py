@@ -203,6 +203,8 @@ def update_signal_states(
         cheap_score = float(assessment.get("cheap_price_score") or 0.0)
         relative_bargain_score = float(assessment.get("relative_bargain_score") or 0.0)
         relative_discount = bool(assessment.get("relative_discount_qualified", False))
+        balanced_value = bool(assessment.get("balanced_value_qualified", False))
+        balanced_value_score = float(assessment.get("balanced_value_score") or 0.0)
         laggard_score = float(assessment.get("laggard_score") or 0.0)
         stabilization_score = float(assessment.get("stabilization_score") or 0.0)
         demand_score = float(assessment.get("demand_score") or 0.0)
@@ -217,6 +219,8 @@ def update_signal_states(
             and (
                 cheap_score >= 38.0
                 or relative_discount
+                or balanced_value
+                or (balanced_value_score >= 15.0 and stabilization_score >= 52.0 and demand_score >= 58.0 and room_score >= 25.0)
                 or (relative_bargain_score >= 34.0 and laggard_score >= 8.0)
             )
             and stabilization_score >= 32.0
@@ -281,4 +285,4 @@ def update_signal_states(
         "qualified_exits": sum(item.qualified_exit for item in result.values()),
         "fallback_eligible": sum(item.fallback_eligible for item in result.values()),
     }
-# Package revision: v3.5.0-relative-bargain-production-r7
+# Package revision: v3.5.0-balanced-value-production-r8

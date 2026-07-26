@@ -161,9 +161,11 @@ class CoinAnalysis:
     base_quality_score: float = 0.0
     cheap_price_score: float = 0.0
     relative_bargain_score: float = 0.0
+    balanced_value_score: float = 0.0
     absolute_discount_qualified: bool = False
     early_absolute_discount_qualified: bool = False
     relative_discount_qualified: bool = False
+    balanced_value_qualified: bool = False
     stabilization_score: float = 0.0
     recent_drawdown_pct: float = 0.0
     rebound_from_low_pct: float = 0.0
@@ -2795,9 +2797,11 @@ def apply_opportunity_analysis(
     item.base_quality_score = float(assessment.get("base_quality_score", 0.0))
     item.cheap_price_score = float(assessment.get("cheap_price_score", 0.0))
     item.relative_bargain_score = float(assessment.get("relative_bargain_score", 0.0))
+    item.balanced_value_score = float(assessment.get("balanced_value_score", 0.0))
     item.absolute_discount_qualified = bool(assessment.get("absolute_discount_qualified", False))
     item.early_absolute_discount_qualified = bool(assessment.get("early_absolute_discount_qualified", False))
     item.relative_discount_qualified = bool(assessment.get("relative_discount_qualified", False))
+    item.balanced_value_qualified = bool(assessment.get("balanced_value_qualified", False))
     item.stabilization_score = float(assessment.get("stabilization_score", 0.0))
     item.recent_drawdown_pct = float(assessment.get("recent_drawdown_pct", 0.0))
     item.rebound_from_low_pct = float(assessment.get("rebound_from_low_pct", 0.0))
@@ -2944,4 +2948,4 @@ def build_report(
 
 def analysis_to_dict(item: CoinAnalysis) -> dict[str, Any]:
     return asdict(item)
-# Package revision: v3.5.0-relative-bargain-production-r7
+# Package revision: v3.5.0-balanced-value-production-r8

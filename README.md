@@ -1,18 +1,21 @@
 # CF v3.5.0
 
-Krypto-Monitor im Drei-Minuten-Takt mit geschlossenen 1-Minuten-Börsenkerzen. LCW liefert Pool-, Market-Cap- und Langzeitkontext.
+Drei-Minuten-Monitor für kurzfristige Kaufchancen und Verkaufswarnungen. Kurzfristige Signale verwenden geschlossene 1-Minuten-Börsenkerzen; LCW liefert Vollpool- und Langzeitkontext.
 
 ## Discord
 
-`BTC PAY SCP UTL AI MEM` zeigt Bitcoin und die fünf Marktgruppen.
+`BTC · PAY · SCP · UTL · AI · MEM` zeigt die aktuelle Markt-/Kategorienqualität.
 
-- `🔵/🟢/🟣 ▲` – frühe / bestätigte / außergewöhnliche Kaufchance
-- `🟠/🔴 ▼` – Verkaufswarnung / bestätigter Verkaufsdruck
-- `7` – 7-Tage-Kontext
-- `B` – Vergleich zu BTC
-- `P` – Preis-/Nachfragedruck
-- `V` – Volumen 10/30/60 Minuten
-- `N` – Erholung/Stabilität
-- Wochenbereiche: `S` Wochenende, `M` Mo/Di, `W` Mi, `D` Do/Fr, `?` nicht belastbar
+- 🟣 außergewöhnlich stark
+- 🟢 klar positiv
+- 🔵 frühe positive Struktur
+- 🟡 neutral
+- 🟠 Verkaufswarnung
+- 🔴 bestätigter Verkaufsdruck
+- `▲` Kaufchance, `▼` Verkaufswarnung
 
-Blau kann entweder eine stabilisierte günstige Rücklaufzone oder einen stabilen, nachfragebestätigten Nachzügler einer starken Kategorie anzeigen. Grün und Lila benötigen die strengere bestätigte Erholung. Falling Knife, Überdehnung, schwache Nachfrage und schlechte Ausführbarkeit sperren Käufe. Kauf- und Verkaufssignale werden unabhängig ausgewählt.
+Blau kann eine stabilisierte Rücklaufzone, einen Kategorien-Nachzügler oder eine günstige stabile Basis mit erneuter Nachfrage und ausreichendem Zielraum markieren. Grün/Lila verlangen eine streng bestätigte Erholung. Falling Knife, Überdehnung und schlechte Ausführbarkeit sperren Käufe.
+
+`S/M/W/D/?` am Zeilenende: Wochenende, Mo/Di, Mittwoch, Do/Fr oder fehlender belastbarer Wochenbereich.
+
+Ungewöhnliche Kürzel: `ARK` Arkham (AI), `MND` Monad (SCP), `GAL` Gala (UTL), `ORD` Ordinals (UTL), `PND` Pendle (UTL), `VRT` Virtuals Protocol (AI), `1IN` 1inch (UTL), `CAK` PancakeSwap (UTL).

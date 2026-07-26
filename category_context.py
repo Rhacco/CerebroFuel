@@ -658,6 +658,7 @@ def select_category_entries(
                 and (
                     float(getattr(item, "cheap_price_score", 0.0)) >= 36.0
                     or bool(getattr(item, "relative_discount_qualified", False))
+                    or float(getattr(item, "balanced_value_score", 0.0)) >= 15.0
                     or (
                         float(getattr(item, "relative_bargain_score", 0.0)) >= 34.0
                         and float(getattr(item, "laggard_score", 0.0)) >= 8.0
@@ -754,4 +755,4 @@ def select_category_entries(
         item.short.sell_count = 1 if direction == "▼" else 0
         valid_chosen.append(item)
     return valid_chosen[:top_count]
-# Package revision: v3.5.0-relative-bargain-production-r7
+# Package revision: v3.5.0-balanced-value-production-r8

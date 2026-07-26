@@ -783,7 +783,9 @@ def run_monitor(
                 f"K={float(value.get('category_score', 0.0)):.1f} "
                 f"günstig={float(value.get('cheap_price_score', 0.0)):.1f} "
                 f"relativ={float(value.get('relative_bargain_score', 0.0)):.1f} "
+                f"Wert={float(value.get('balanced_value_score', 0.0)):.1f} "
                 f"Lag={float(value.get('laggard_score', 0.0)):.1f} "
+                f"WertOK={bool(value.get('balanced_value_qualified', False))} "
                 f"stabil={float(value.get('stabilization_score', 0.0)):.1f} "
                 f"Nachfrage={float(value.get('demand_score', 0.0)):.1f} "
                 f"Raum={float(value.get('room_to_target_score', 0.0)):.1f} "
@@ -889,4 +891,4 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"FEHLER: {exc}", file=sys.stderr, flush=True)
         sys.exit(1)
-# Package revision: v3.5.0-relative-bargain-production-r7
+# Package revision: v3.5.0-balanced-value-production-r8

@@ -42,9 +42,11 @@ class OpportunityAssessment:
     base_quality_score: float
     cheap_price_score: float
     relative_bargain_score: float
+    balanced_value_score: float
     absolute_discount_qualified: bool
     early_absolute_discount_qualified: bool
     relative_discount_qualified: bool
+    balanced_value_qualified: bool
     stabilization_score: float
     recent_drawdown_pct: float
     rebound_from_low_pct: float
@@ -418,6 +420,22 @@ def assess_opportunity(
         relative_bargain_score *= 0.55
     relative_bargain_score = max(0.0, min(100.0, relative_bargain_score))
 
+    # Production logs showed a recurring healthy setup that the former binary
+    # discount gate could not express: a coin with strong renewed demand, a
+    # clearly held base and ample target room, but only a modest absolute dip
+    # and modest category lag.  This blended value score keeps cheapness
+    # important while allowing those four moderate pieces to add up.  It does
+    # not weaken any hard safety blocker.
+    balanced_guard = config.get("balanced_entry_guard") if isinstance(config, Mapping) else {}
+    balanced_guard = balanced_guard if isinstance(balanced_guard, Mapping) else {}
+    balanced_value_score = (
+        0.30 * cheap_score
+        + 0.25 * relative_bargain_score
+        + 0.20 * laggard_score
+        + 0.25 * room
+    )
+    balanced_value_score = max(0.0, min(100.0, balanced_value_score))
+
     base_discount = bool(
         exact
         and cheap_score >= minimum_cheap
@@ -455,7 +473,30 @@ def assess_opportunity(
         and not metrics.falling_knife
         and not metrics.late_entry
     )
-    discount_qualified = bool(absolute_discount_qualified or relative_discount_qualified)
+    balanced_value_qualified = bool(
+        exact
+        and category_score >= float(balanced_guard.get("minimum_category_score", 48.0))
+        and balanced_value_score >= float(balanced_guard.get("minimum_balanced_value_score", 15.0))
+        and stabilization_score >= float(balanced_guard.get("minimum_stabilization_score", 52.0))
+        and demand >= float(balanced_guard.get("minimum_demand_score", 58.0))
+        and volume_confirmed
+        and room >= float(balanced_guard.get("minimum_room_to_target_score", 25.0))
+        and base >= float(balanced_guard.get("minimum_base_quality_score", 28.0))
+        and pos180 <= float(balanced_guard.get("maximum_3h_range_position", 0.80))
+        and p5 >= float(balanced_guard.get("minimum_5m_price_pct", -0.18))
+        and p15 >= float(balanced_guard.get("minimum_15m_price_pct", -0.36))
+        and p30 >= float(balanced_guard.get("minimum_30m_price_pct", -0.72))
+        and p30 <= float(balanced_guard.get("maximum_30m_price_pct", 1.15))
+        and p60 >= float(balanced_guard.get("minimum_60m_price_pct", -1.25))
+        and rebound_from_low <= float(balanced_guard.get("maximum_rebound_from_low_pct", 5.4))
+        and (low_age is None or float(low_age) >= float(balanced_guard.get("minimum_low_age_minutes", 2.0)))
+        and category_fading <= float(balanced_guard.get("maximum_category_fading_score", 42.0))
+        and not metrics.falling_knife
+        and not metrics.late_entry
+    )
+    discount_qualified = bool(
+        absolute_discount_qualified or relative_discount_qualified or balanced_value_qualified
+    )
     stabilized_after_drop = bool(
         absolute_discount_qualified
         and stabilization_score >= minimum_stabilization
@@ -476,9 +517,11 @@ def assess_opportunity(
         and not metrics.falling_knife
         and not metrics.late_entry
         and category_fading <= float(relative_guard.get("maximum_category_fading_score", 42.0))
-        and low_age is not None
-        and 3.0 <= float(low_age) <= 210.0
-        and rebound_from_low <= 4.8
+        and (
+            balanced_value_qualified
+            or (low_age is not None and 3.0 <= float(low_age) <= 210.0)
+        )
+        and rebound_from_low <= 5.4
         and p5 >= -0.18
         and p15 >= -0.38
         and p30 >= -0.72
@@ -500,6 +543,7 @@ def assess_opportunity(
                 and pos180 <= 0.74
             )
             or relative_discount_qualified
+            or balanced_value_qualified
         )
     )
 
@@ -529,6 +573,7 @@ def assess_opportunity(
         absolute_discount_qualified
         or early_absolute_discount_qualified
         or relative_discount_qualified
+        or balanced_value_qualified
     )
     candidate_stabilizing = bool(
         stabilization_score >= 32.0
@@ -627,6 +672,13 @@ def assess_opportunity(
             + 0.26 * _clamp(stabilization_score / 100.0)
         )
         recovery_setup_bonus = min(early_bonus_cap, early_bonus_cap * relative_quality)
+    elif balanced_value_qualified:
+        balanced_quality = (
+            0.34 * _clamp(balanced_value_score / 30.0)
+            + 0.34 * _clamp(demand / 100.0)
+            + 0.32 * _clamp(stabilization_score / 100.0)
+        )
+        recovery_setup_bonus = min(early_bonus_cap, early_bonus_cap * balanced_quality)
     falling_penalty = 84.0 if metrics.falling_knife else 0.0
     late_penalty = 0.48 * float(metrics.overextension_penalty)
     spread_penalty = 0.0 if spread is None else max(0.0, (float(spread) - 0.20) * 24.0)
@@ -762,6 +814,8 @@ def assess_opportunity(
         reasons.append("moderater günstiger Rücklauf")
     if relative_discount_qualified:
         reasons.append("relativ günstiger Kategorie-Nachzügler")
+    if balanced_value_qualified:
+        reasons.append("günstige stabile Basis mit Zielraum")
     if buy_candidate_ready and not early_entry_ready:
         reasons.append("sicherer früher Kaufkandidat")
     if early_entry_ready and not stabilized_after_drop and relative_discount_qualified:
@@ -804,9 +858,11 @@ def assess_opportunity(
         base_quality_score=round(base, 4),
         cheap_price_score=round(cheap_score, 4),
         relative_bargain_score=round(relative_bargain_score, 4),
+        balanced_value_score=round(balanced_value_score, 4),
         absolute_discount_qualified=absolute_discount_qualified,
         early_absolute_discount_qualified=early_absolute_discount_qualified,
         relative_discount_qualified=relative_discount_qualified,
+        balanced_value_qualified=balanced_value_qualified,
         stabilization_score=round(stabilization_score, 4),
         recent_drawdown_pct=round(recent_drawdown, 5),
         rebound_from_low_pct=round(rebound_from_low, 5),
@@ -853,4 +909,4 @@ def assess_opportunity(
         volume_colors=visible_colors,
         reasons=tuple(dict.fromkeys(reasons)),
     )
-# Package revision: v3.5.0-relative-bargain-production-r7
+# Package revision: v3.5.0-balanced-value-production-r8
