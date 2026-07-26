@@ -153,7 +153,17 @@ def update_signal_states(
         if raw_entry_qualified and not confirmed_recovery:
             entry_adjusted = min(entry_adjusted, entry_green - 0.25)
 
-        side = "BUY" if entry_adjusted >= exit_adjusted else "SELL"
+        # A formally qualified side wins over an unqualified numerical counter-score.
+        # Previously a valid buy could vanish merely because the raw exit score was
+        # one point higher, even though no sell conditions were actually qualified.
+        if raw_entry_qualified and not raw_exit_qualified:
+            side = "BUY"
+        elif raw_exit_qualified and not raw_entry_qualified:
+            side = "SELL"
+        elif raw_entry_qualified and raw_exit_qualified:
+            side = "SELL" if exit_adjusted >= entry_adjusted + 7.0 else "BUY"
+        else:
+            side = "BUY" if entry_adjusted >= exit_adjusted else "SELL"
         previous_side = str(previous.get("side") or "")
         previous_confirm = int(previous.get("confirmation_count") or 0)
         confirmation = previous_confirm + 1 if side == previous_side else 1
@@ -195,8 +205,9 @@ def update_signal_states(
         demand_score = float(assessment.get("demand_score") or 0.0)
         room_score = float(assessment.get("room_to_target_score") or 0.0)
         category_fading = float(assessment.get("category_fading_score") or 0.0)
+        buy_candidate_ready = bool(assessment.get("buy_candidate_ready", False))
         early_buy_fallback = bool(
-            side == "BUY"
+            (side == "BUY" or buy_candidate_ready)
             and not falling
             and not late
             and category_score >= 48.0
@@ -204,7 +215,7 @@ def update_signal_states(
             and stabilization_score >= 36.0
             and demand_score >= 44.0
             and room_score >= 20.0
-            and entry_adjusted >= exit_adjusted + 1.5
+            and (buy_candidate_ready or entry_adjusted >= exit_adjusted + 1.5)
         )
         real_sell_fallback = bool(
             side == "SELL"
@@ -263,4 +274,4 @@ def update_signal_states(
         "qualified_exits": sum(item.qualified_exit for item in result.values()),
         "fallback_eligible": sum(item.fallback_eligible for item in result.values()),
     }
-# Package revision: v3.5.0-buy-gate-fix-r5
+# Package revision: v3.5.0-buy-selection-consistency-r6

@@ -465,11 +465,21 @@ def select_category_entries(
         context = assessments_by_coin.get(display) or {}
         state = state_for(item)
         code = str(context.get("category_code") or "")
-        return (
-            bool(getattr(state, "qualified_entry", context.get("qualified_entry", False))),
-            bool(getattr(state, "qualified_exit", context.get("qualified_exit", False))),
-            code,
+        formal_entry = bool(getattr(state, "qualified_entry", context.get("qualified_entry", False)))
+        candidate_entry = bool(
+            context.get("buy_candidate_ready", getattr(item, "buy_candidate_ready", False))
+            and not bool(getattr(item, "falling_knife", False))
+            and not bool(getattr(item, "late_entry", False))
+            and bool(getattr(item, "exact_interval_volume", False))
+            and float(getattr(item, "opportunity_data_confidence", 0.0)) >= 0.55
         )
+        formal_exit = bool(getattr(state, "qualified_exit", context.get("qualified_exit", False)))
+        if formal_exit and not formal_entry:
+            candidate_entry = False
+        # Safe blue candidates participate on the buy side even when a formal sell
+        # exists elsewhere.  This prevents one orange row from suppressing all
+        # healthy buy candidates in a broadly positive category header.
+        return (formal_entry or candidate_entry, formal_exit, code)
 
     def direction_for(item: Any) -> str:
         is_entry, is_exit, _ = side_for(item)
@@ -482,6 +492,20 @@ def select_category_entries(
         if direction in {"▲", "▼"}:
             return direction
         return "▲" if float(getattr(item, "entry_score", 0.0)) >= float(getattr(item, "exit_score", 0.0)) else "▼"
+
+    def context_for(item: Any) -> Mapping[str, Any]:
+        return assessments_by_coin.get(str(getattr(item, "display_code", "")).upper()) or {}
+
+    def safe_buy_candidate(item: Any) -> bool:
+        context = context_for(item)
+        return bool(
+            context.get("buy_candidate_ready", getattr(item, "buy_candidate_ready", False))
+            and not bool(getattr(item, "falling_knife", False))
+            and not bool(getattr(item, "late_entry", False))
+            and bool(getattr(item, "exact_interval_volume", False))
+            and float(getattr(item, "opportunity_data_confidence", 0.0)) >= 0.55
+            and float(getattr(item, "room_to_target_score", 0.0)) >= 18.0
+        )
 
     def can_add(item: Any) -> bool:
         nonlocal exit_total
@@ -496,6 +520,24 @@ def select_category_entries(
     def add_item(selected: list[Any], item: Any) -> None:
         nonlocal exit_total
         is_entry, is_exit, code = side_for(item)
+        context = context_for(item)
+        state = state_for(item)
+        formal_entry = bool(getattr(state, "qualified_entry", context.get("qualified_entry", False)))
+        candidate_entry = bool(context.get("buy_candidate_ready", getattr(item, "buy_candidate_ready", False)))
+        # A selected safe candidate must be rendered as the buy side even when its
+        # unqualified raw exit score was numerically a little higher.
+        if is_entry and candidate_entry and not formal_entry and not is_exit:
+            item.opportunity_direction = "▲"
+            item.opportunity_color = BLUE
+            item.opportunity_count = max(1, min(8, int(round(float(getattr(item, "entry_score", 0.0)) / 12.5))))
+            item.opportunity_score = max(float(getattr(item, "entry_score", 0.0)), float(getattr(item, "buy_candidate_score", 0.0)))
+            item.qualified_entry = True
+            item.qualified_exit = False
+            item.short.signal_color = BLUE
+            item.short.direction = "▲"
+            item.short.pressure_color = BLUE
+            item.short.buy_count = item.opportunity_count
+            item.short.sell_count = 0
         selected.append(item)
         if is_entry:
             entry_counts[code] = entry_counts.get(code, 0) + 1
@@ -536,6 +578,18 @@ def select_category_entries(
                         continue
                     add_item(selected, item)
                     side_selected += 1
+
+            # If the header is broadly positive but the only formal signal is a
+            # sell, retain the strongest genuinely safe blue buy candidate too.
+            # The candidate still passed discount, stability, demand, execution
+            # and anti-falling-knife checks; it is not a neutral filler.
+            if not any(direction_for(item) == "▲" for item in selected):
+                safe_buys = [
+                    item for item in candidates
+                    if item not in selected and direction_for(item) == "▲" and safe_buy_candidate(item) and can_add(item)
+                ]
+                if safe_buys:
+                    add_item(selected, safe_buys[0])
 
             # Rows beyond the balanced close group must be materially strong.
             # A broad market move can still fill all eight rows, but ordinary
@@ -587,16 +641,20 @@ def select_category_entries(
     # a neutral or brown placeholder.  The fallback is balanced independently,
     # too, so close buy and sell leaders can coexist while the market is quiet.
     def safe_buy_fallback(item: Any) -> bool:
+        context = context_for(item)
         return bool(
-            not bool(getattr(item, "falling_knife", False))
-            and not bool(getattr(item, "late_entry", False))
-            and bool(getattr(item, "exact_interval_volume", False))
-            and float(getattr(item, "category_score", 0.0)) >= 48.0
-            and float(getattr(item, "cheap_price_score", 0.0)) >= 38.0
-            and float(getattr(item, "stabilization_score", 0.0)) >= 36.0
-            and float(getattr(item, "demand_score", 0.0)) >= 44.0
-            and float(getattr(item, "room_to_target_score", 0.0)) >= 20.0
-            and float(getattr(item, "entry_score", 0.0)) >= float(getattr(item, "exit_score", 0.0)) + 1.5
+            safe_buy_candidate(item)
+            or (
+                not bool(getattr(item, "falling_knife", False))
+                and not bool(getattr(item, "late_entry", False))
+                and bool(getattr(item, "exact_interval_volume", False))
+                and float(getattr(item, "category_score", 0.0)) >= 48.0
+                and float(getattr(item, "cheap_price_score", 0.0)) >= 36.0
+                and float(getattr(item, "stabilization_score", 0.0)) >= 32.0
+                and float(getattr(item, "demand_score", 0.0)) >= 42.0
+                and float(getattr(item, "room_to_target_score", 0.0)) >= 18.0
+                and bool(context.get("buy_candidate_ready", False))
+            )
         )
 
     def safe_sell_fallback(item: Any) -> bool:
@@ -683,4 +741,4 @@ def select_category_entries(
         item.short.sell_count = 1 if direction == "▼" else 0
         valid_chosen.append(item)
     return valid_chosen[:top_count]
-# Package revision: v3.5.0-buy-gate-fix-r5
+# Package revision: v3.5.0-buy-selection-consistency-r6

@@ -248,6 +248,4 @@ def record_entry_candidates(
     }
     save_state(path, new_state)
     return {"created": created, "events": len(new_state["events"])}
-# Package revision: v3.5.0-buy-gate-fix-r5
-
-# Package revision: v3.5.0-buy-gate-fix-r5
+# Package revision: v3.5.0-buy-selection-consistency-r6

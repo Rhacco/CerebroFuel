@@ -1,37 +1,18 @@
 # CF v3.5.0
 
-Alle 3 Minuten werden geschlossene 1‑Minuten‑Kerzen von Binance/Coinbase ausgewertet. LiveCoinWatch liefert Gesamt‑Map, Market Cap sowie Langzeit‑ und Wochenkontext.
+Kurzfristiger Krypto-Monitor für Kaufchancen und Verkaufswarnungen. Berechnung alle drei Minuten mit geschlossenen 1-Minuten-Börsenkerzen; LCW liefert Pool-, Market-Cap- und Langzeitkontext.
 
-```text
-BTC🟢PAY🔵SCP🟢UTL🟣AI🔵MEM🟡:03
-🔵5▲7🟢B🟢🔵P🟢V🔵🟢🟢N🟡UWSJUP
-```
+## Discord
 
-- `▲` Kauf · `▼` Verkauf · Zahl `1–8` Signalstärke
-- 🟣 außergewöhnlich bestätigt · 🟢 bestätigt · 🔵 früher günstiger/stabiler Nachzügler · 🟡 neutral · 🟠 Verkaufswarnung · 🔴 bestätigt negativ · ⚪ Daten fehlen
-- 🔵: echter Preisrückgang, beginnende Stabilisierung und erneut steigende Nachfrage
-- 🟢/🟣: strengere, über mehrere Läufe bestätigte Erholung
-- Falling Knife, Überdehnung, schlechter Spread sowie Unlock‑ und Ereignisrisiken sperren oder senken Signale
-- `7` 7‑Tage‑Volumen · `B` relativ zu BTC 24h/7d · `P` Druck · `V` 10/30/60 Min · `N` Erholung
-- Ende: Kategorie `P/S/U/A/M` + zwei Wochenbereiche: `S` Sa/So · `M` Mo/Di · `W` Mi · `D` Do/Fr · `?` nicht belastbar
-- Kauf und Verkauf werden unabhängig ausgewählt. Bis zu zwei ähnlich starke Signale je Richtung können gemeinsam erscheinen; weitere Plätze benötigen hohe oder bestätigte Qualität.
-- Versand bei relevanter Änderung oder spätestens nach 15 Minuten.
+`BTC PAY SCP UTL AI MEM` zeigt Bitcoin und die fünf Marktgruppen.
 
-## Ungewöhnliche Kürzel
+- `🔵/🟢/🟣 ▲` – frühe / bestätigte / außergewöhnliche Kaufchance
+- `🟠/🔴 ▼` – Verkaufswarnung / bestätigter Verkaufsdruck
+- `7` – 7-Tage-Kontext
+- `B` – Vergleich zu BTC
+- `P` – Preis-/Nachfragedruck
+- `V` – Volumen 10/30/60 Minuten
+- `N` – Erholung/Stabilität
+- Wochenbereiche: `S` Wochenende, `M` Mo/Di, `W` Mi, `D` Do/Fr, `?` nicht belastbar
 
-| Kürzel | Vollständiger Name | Kategorie |
-|---|---|---|
-| `ARK` | Arkham | AI |
-| `MND` | Monad | SCP |
-| `GAL` | Gala | UTL |
-| `ORD` | Ordinals | UTL |
-| `PND` | Pendle | UTL |
-| `VRT` | Virtuals Protocol | AI |
-| `1IN` | 1inch | UTL |
-| `POL` | Polygon Ecosystem Token | SCP |
-| `CAK` | PancakeSwap | UTL |
-| `JUP` | Jupiter | UTL |
-
-Secrets: `LCW_API_KEY`, `DISCORD_WEBHOOK_URL` · Cloudflare‑Cron: `*/3 * * * *`
-
-<!-- Package revision: v3.5.0-buy-gate-fix-r5 -->
+Ein blaues Kaufsignal darf der sicherste günstige und stabilisierende Nachzügler einer positiven Kategorie sein. Grün und Lila benötigen deutlich stärkere Bestätigung. Falling Knife, Überdehnung und schlechte Ausführbarkeit sperren Käufe. Kauf- und Verkaufssignale werden unabhängig ausgewählt; die Liste enthält ein bis acht tatsächlich auffällige Coins.

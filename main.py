@@ -759,6 +759,35 @@ def run_monitor(
         config=config,
     )
 
+    buy_funnel = {
+        "safe_candidates": sum(bool(value.get("buy_candidate_ready", False)) for value in assessments.values()),
+        "qualified_buys": sum(bool(value.get("qualified_entry", False)) for value in assessments.values()),
+        "qualified_sells": sum(bool(value.get("qualified_exit", False)) for value in assessments.values()),
+    }
+    print(
+        "Signal-Funnel: "
+        f"{buy_funnel['safe_candidates']} sichere Kaufkandidaten, "
+        f"{buy_funnel['qualified_buys']} qualifizierte Käufe, "
+        f"{buy_funnel['qualified_sells']} qualifizierte Verkäufe.",
+        flush=True,
+    )
+    if buy_funnel["safe_candidates"] == 0:
+        blocked = sorted(
+            assessments.items(),
+            key=lambda pair: float(pair[1].get("entry_score", 0.0)),
+            reverse=True,
+        )[:5]
+        for code, value in blocked:
+            print(
+                f"Kaufcheck {code}: E={float(value.get('entry_score', 0.0)):.1f} "
+                f"K={float(value.get('category_score', 0.0)):.1f} "
+                f"günstig={float(value.get('cheap_price_score', 0.0)):.1f} "
+                f"stabil={float(value.get('stabilization_score', 0.0)):.1f} "
+                f"Nachfrage={float(value.get('demand_score', 0.0)):.1f} "
+                f"Gründe={'; '.join(value.get('reasons', ())[-3:])}",
+                flush=True,
+            )
+
     top = select_category_entries(
         analyses,
         assessments,
@@ -790,6 +819,7 @@ def run_monitor(
         "categories": {code: item.to_dict() for code, item in categories.items()},
         "category_trends": {code: item.to_dict() for code, item in category_trends.items()},
         "market_quality": market_quality.to_dict(),
+        "signal_funnel": buy_funnel,
         "market_data": {"stats": market_stats, "execution": execution_stats, "coins": {k: v.to_dict() for k, v in intraday.items()}},
         "signal_state": {"version": SIGNAL_STATE_VERSION, "stats": signal_stats, "coins": {k: v.to_dict() for k, v in signal_states.items()}},
         "flash": {"version": FLASH_STATE_VERSION, "stats": flash_stats},
@@ -856,6 +886,4 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"FEHLER: {exc}", file=sys.stderr, flush=True)
         sys.exit(1)
-# Package revision: v3.5.0-buy-gate-fix-r5
-
-# Package revision: v3.5.0-buy-gate-fix-r5
+# Package revision: v3.5.0-buy-selection-consistency-r6

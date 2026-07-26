@@ -72,6 +72,8 @@ class OpportunityAssessment:
     late_entry: bool
     qualified_entry: bool
     qualified_exit: bool
+    buy_candidate_ready: bool
+    buy_candidate_score: float
     category_code: str
     category_score: float
     category_color: str
@@ -447,6 +449,58 @@ def assess_opportunity(
         )
     )
 
+    # Safe blue candidate tier.  This is deliberately less binary than the
+    # confirmed recovery gate: when a category is healthy, the best genuinely
+    # cheap/stable laggard may appear as an early blue buy candidate even before
+    # every strict recovery checkbox is complete.  Hard safety blockers remain.
+    category_slots = max(0, int(category_context.get("max_slots", 0)))
+    safe_price_structure = bool(
+        p5 >= -0.20
+        and p15 >= -0.42
+        and p30 >= -0.78
+        and p30 <= 1.35
+        and pos180 <= 0.74
+        and rebound_from_low <= 5.2
+    )
+    candidate_discount = bool(
+        (cheap_score >= 36.0 and recent_drawdown >= 0.12 and pos180 <= 0.72)
+        or (cheap_score >= 34.0 and pos180 <= 0.56)
+        or (
+            category_score >= 48.0
+            and laggard_score >= 10.0
+            and cheap_score >= 32.0
+            and pos180 <= 0.70
+            and (recent_drawdown >= 0.08 or pos180 <= 0.54)
+        )
+    )
+    candidate_stabilizing = bool(
+        stabilization_score >= 32.0
+        or (
+            low_age is not None
+            and float(low_age) >= 2.0
+            and p5 >= -0.10
+            and p15 >= -0.28
+            and pos180 <= 0.62
+        )
+    )
+    candidate_demand = bool(
+        (demand >= 42.0 and volume_confirmed)
+        or demand >= 50.0
+    )
+    buy_candidate_ready = bool(
+        exact
+        and category_slots > 0
+        and category_score >= 44.0
+        and not metrics.falling_knife
+        and not metrics.late_entry
+        and safe_price_structure
+        and candidate_discount
+        and candidate_stabilizing
+        and candidate_demand
+        and base >= 28.0
+        and room >= 18.0
+    )
+
     confirmed_v5 = float(entry_guard.get("confirmed_minimum_5m_volume_ratio", 1.03))
     confirmed_v15 = float(entry_guard.get("confirmed_minimum_15m_volume_ratio", 1.02))
     confirmed_volume = bool(
@@ -526,7 +580,7 @@ def assess_opportunity(
     # the score is capped below green so early setups cannot masquerade as fully
     # confirmed entries.
     entry_thresholds = config.get("opportunity_score") or {}
-    if not early_entry_ready:
+    if not buy_candidate_ready:
         entry = min(entry, float(entry_thresholds.get("entry_blue", 38.0)) - 0.25)
     elif not confirmed_recovery:
         entry = min(entry, float(entry_thresholds.get("entry_green", 60.0)) - 0.25)
@@ -570,21 +624,32 @@ def assess_opportunity(
     category_rules = category_rules if isinstance(category_rules, Mapping) else {}
     minimum_category = float(category_rules.get("minimum_category_score", 36.0))
     weak_exception = float(category_rules.get("weak_category_exception_entry", 58.0))
-    max_slots = int(category_context.get("max_slots", 0))
+    max_slots = category_slots
     spread_block = spread is not None and float(spread) >= float((config.get("execution") or {}).get("maximum_spread_pct", 1.0))
 
+    candidate_floor = float((config.get("selection") or {}).get("minimum_safe_buy_score", 31.0))
+    strict_entry = bool(
+        early_entry_ready
+        and entry >= entry_blue
+        and base >= 34.0
+        and room >= 24.0
+        and net_target_quality >= 35.0
+    )
+    candidate_entry = bool(
+        buy_candidate_ready
+        and entry >= candidate_floor
+        and base >= 28.0
+        and room >= 18.0
+        and net_target_quality >= 30.0
+    )
     qualified_entry = (
         max_slots > 0
         and (category_score >= minimum_category or entry >= weak_exception)
-        and entry >= entry_blue
         and exit_score <= max_exit
         and not metrics.falling_knife
         and not metrics.late_entry
         and not spread_block
-        and early_entry_ready
-        and base >= 34.0
-        and room >= 24.0
-        and net_target_quality >= 35.0
+        and (strict_entry or candidate_entry)
         and data_confidence >= 0.55
     )
     fading_confirmed = category_fading >= float(thresholds.get("minimum_category_fading_for_exit", 28.0))
@@ -620,6 +685,8 @@ def assess_opportunity(
         reasons.append("Kategorie führt, Coin zieht nach")
     if discount_qualified:
         reasons.append("Preis günstig nach Rücklauf")
+    if buy_candidate_ready and not early_entry_ready:
+        reasons.append("sicherer früher Kaufkandidat")
     if early_entry_ready and not stabilized_after_drop:
         reasons.append("früher stabiler Kategorie-Nachzügler")
     if stabilized_after_drop:
@@ -628,7 +695,9 @@ def assess_opportunity(
         reasons.append("Erholung vollständig bestätigt")
     if demand_confirmed:
         reasons.append("Nachfrage nach Stabilisierung bestätigt")
-    if not discount_qualified:
+    if not discount_qualified and buy_candidate_ready:
+        reasons.append("günstiger Kategorie-Nachzügler")
+    elif not discount_qualified:
         reasons.append("kein ausreichender Preisabschlag")
     elif not stabilized_after_drop:
         reasons.append("Stabilisierung noch nicht ausreichend")
@@ -686,6 +755,8 @@ def assess_opportunity(
         late_entry=metrics.late_entry,
         qualified_entry=qualified_entry,
         qualified_exit=qualified_exit,
+        buy_candidate_ready=buy_candidate_ready,
+        buy_candidate_score=round(entry, 4),
         category_code=category_code,
         category_score=round(category_score, 4),
         category_color=category_color,
@@ -699,4 +770,4 @@ def assess_opportunity(
         volume_colors=visible_colors,
         reasons=tuple(dict.fromkeys(reasons)),
     )
-# Package revision: v3.5.0-buy-gate-fix-r5
+# Package revision: v3.5.0-buy-selection-consistency-r6

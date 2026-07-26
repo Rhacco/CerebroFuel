@@ -728,7 +728,7 @@
       "category_laggard": 0.07,
       "recent_activity": 0.03
     },
-    "description": "balanced buy/sell ranking: blue permits an early discounted stabilization with renewed one-minute demand; green/purple require the stricter completed recovery",
+    "description": "three-tier buy logic: safe blue candidate, stricter early recovery, confirmed green/purple; qualified sells never suppress a safe buy side by score dominance alone",
     "exit_orange": 48.0,
     "exit_red": 70.0,
     "minimum_display_exit": 48.0,
@@ -1452,7 +1452,7 @@
     "acceleration_bonus_cap": 12.0,
     "fallback_minimum_score": 20.0,
     "spread_block_pct": 1.0,
-    "description": "3/6/12-minute velocity and confirmation; early discounted recovery can be blue, while green/purple require completed recovery; v350 runtime cache remains compatible",
+    "description": "3/6/12-minute velocity with qualified-side precedence; a valid buy cannot be overturned by an unqualified exit score; v350 cache schema remains compatible",
     "fallback_tie_ratio": 0.9,
     "fallback_tie_gap": 5.0
   },
@@ -1501,9 +1501,11 @@
     "warmup_exception_score": 70.0,
     "fallback_tie_ratio": 0.9,
     "fallback_tie_gap": 5.0,
-    "description": "adaptive output with independent buy/sell leaders; early blue buys must be genuinely discounted and stabilizing, while additional rows need strong evidence",
+    "description": "adaptive mixed output; formal buy/sell leaders remain independent and one genuinely safe blue buy candidate is retained when positive categories would otherwise show only sells",
     "close_tie_maximum_per_side": 2,
-    "balanced_close_maximum": 4
+    "balanced_close_maximum": 4,
+    "minimum_safe_buy_score": 31.0,
+    "ensure_safe_buy_in_positive_market": true
   },
   "target_definition": {
     "net_target_3_pct": 3.0,
@@ -1514,7 +1516,7 @@
     "cost_adjusted": true
   },
   "discord_avatar_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Cryptocurrency_Logo.svg/330px-Cryptocurrency_Logo.svg.png",
-  "package_revision": "v3.5.0-buy-gate-fix-r5",
+  "package_revision": "v3.5.0-buy-selection-consistency-r6",
   "entry_guard": {
     "require_exact_interval_volume": true,
     "minimum_cheap_price_score": 48.0,
@@ -1550,6 +1552,6 @@
     "confirmed_minimum_30m_price_pct": -0.42,
     "early_recovery_bonus_cap": 3.5,
     "recovery_setup_bonus_cap": 10.0,
-    "description": "Blue requires a real but modest discount, a beginning stabilization and renewed one-minute demand. Green/purple require the stricter fully confirmed recovery. Falling knives, late entries and poor execution remain blocked."
+    "description": "Blue may represent the safest discounted/stabilizing category laggard; green/purple still require the stricter completed recovery. Falling knives, late entries and poor execution remain blocked."
   }
 }

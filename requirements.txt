@@ -1,5 +1,3 @@
 # v3.5 runtime dependency set
 requests>=2.31,<3
-# Package revision: v3.5.0-buy-gate-fix-r5
-
-# Package revision: v3.5.0-buy-gate-fix-r5
+# Package revision: v3.5.0-buy-selection-consistency-r6

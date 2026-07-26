@@ -171,6 +171,8 @@ class CoinAnalysis:
     target_prior_score: float = 50.0
     qualified_entry: bool = False
     qualified_exit: bool = False
+    buy_candidate_ready: bool = False
+    buy_candidate_score: float = 0.0
     category_code: str = "?"
     category_score: float = 50.0
     category_color: str = YELLOW
@@ -2799,6 +2801,8 @@ def apply_opportunity_analysis(
     item.target_prior_score = float(assessment.get("target_prior_score", 50.0))
     item.qualified_entry = bool(assessment.get("qualified_entry", False))
     item.qualified_exit = bool(assessment.get("qualified_exit", False))
+    item.buy_candidate_ready = bool(assessment.get("buy_candidate_ready", False))
+    item.buy_candidate_score = float(assessment.get("buy_candidate_score", item.entry_score))
     item.category_code = str(assessment.get("category_code", "?"))
     item.category_score = float(assessment.get("category_score", 50.0))
     item.category_color = str(assessment.get("category_color", YELLOW))
@@ -2932,6 +2936,4 @@ def build_report(
 
 def analysis_to_dict(item: CoinAnalysis) -> dict[str, Any]:
     return asdict(item)
-# Package revision: v3.5.0-buy-gate-fix-r5
-
-# Package revision: v3.5.0-buy-gate-fix-r5
+# Package revision: v3.5.0-buy-selection-consistency-r6
