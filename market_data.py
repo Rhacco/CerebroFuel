@@ -864,4 +864,4 @@ def analyze_candles(
         reasons.append("Spread erhöht")
     metrics.reasons = tuple(reasons)
     return metrics
-# Package revision: v3.5.0-buy-selection-consistency-r6
+# Package revision: v3.5.0-relative-bargain-production-r7

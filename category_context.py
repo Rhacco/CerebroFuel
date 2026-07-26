@@ -324,22 +324,28 @@ def build_category_context(
         lag30 = category.median_price_30 - float(row["p30"])
         lag60 = category.median_price_60 - float(row["p60"])
         combined_lag = 0.68 * lag30 + 0.32 * lag60
+        # Category-relative value must remain measurable even when the coin has
+        # not suffered a large absolute drawdown.  The previous gate required a
+        # very high base score before laggard status was calculated at all; in
+        # production that collapsed virtually every laggard score to zero while
+        # the category header was green.  We now score modest, stable relative
+        # underperformance continuously, while still rejecting falling coins.
         eligible_laggard = (
             category.score >= 48.0
             and row["stable"]
-            and float(row["demand"]) >= 42.0
-            and float(row["base"]) >= 45.0
-            and float(row["p30"]) >= -0.35
-            and float(row["p60"]) >= -0.75
+            and float(row["demand"]) >= 38.0
+            and float(row["base"]) >= 32.0
+            and float(row["p30"]) >= -0.55
+            and float(row["p60"]) >= -1.10
         )
         if eligible_laggard:
-            gap_score = _clamp((combined_lag - 0.10) / 1.70)
-            demand_confirm = _clamp((float(row["demand"]) - 42.0) / 38.0)
-            base_confirm = _clamp((float(row["base"]) - 45.0) / 35.0)
+            gap_score = _clamp((combined_lag - 0.03) / 1.25)
+            demand_confirm = _clamp((float(row["demand"]) - 38.0) / 42.0)
+            base_confirm = _clamp((float(row["base"]) - 32.0) / 48.0)
             activity_confirm = _clamp(float(row["activity"]) / 100.0)
             category_confirm = _clamp((category.score - 45.0) / 35.0)
             laggard = 100.0 * gap_score * (
-                0.30 + 0.24 * demand_confirm + 0.20 * base_confirm + 0.14 * activity_confirm + 0.12 * category_confirm
+                0.36 + 0.22 * demand_confirm + 0.18 * base_confirm + 0.12 * activity_confirm + 0.12 * category_confirm
             )
         else:
             laggard = 0.0
@@ -649,7 +655,14 @@ def select_category_entries(
                 and not bool(getattr(item, "late_entry", False))
                 and bool(getattr(item, "exact_interval_volume", False))
                 and float(getattr(item, "category_score", 0.0)) >= 48.0
-                and float(getattr(item, "cheap_price_score", 0.0)) >= 36.0
+                and (
+                    float(getattr(item, "cheap_price_score", 0.0)) >= 36.0
+                    or bool(getattr(item, "relative_discount_qualified", False))
+                    or (
+                        float(getattr(item, "relative_bargain_score", 0.0)) >= 34.0
+                        and float(getattr(item, "laggard_score", 0.0)) >= 8.0
+                    )
+                )
                 and float(getattr(item, "stabilization_score", 0.0)) >= 32.0
                 and float(getattr(item, "demand_score", 0.0)) >= 42.0
                 and float(getattr(item, "room_to_target_score", 0.0)) >= 18.0
@@ -741,4 +754,4 @@ def select_category_entries(
         item.short.sell_count = 1 if direction == "▼" else 0
         valid_chosen.append(item)
     return valid_chosen[:top_count]
-# Package revision: v3.5.0-buy-selection-consistency-r6
+# Package revision: v3.5.0-relative-bargain-production-r7

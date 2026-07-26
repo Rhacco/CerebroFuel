@@ -201,6 +201,9 @@ def update_signal_states(
         strength = min(8, max(1, int(round(score / 12.5))))
         category_score = float(assessment.get("category_score") or 0.0)
         cheap_score = float(assessment.get("cheap_price_score") or 0.0)
+        relative_bargain_score = float(assessment.get("relative_bargain_score") or 0.0)
+        relative_discount = bool(assessment.get("relative_discount_qualified", False))
+        laggard_score = float(assessment.get("laggard_score") or 0.0)
         stabilization_score = float(assessment.get("stabilization_score") or 0.0)
         demand_score = float(assessment.get("demand_score") or 0.0)
         room_score = float(assessment.get("room_to_target_score") or 0.0)
@@ -211,8 +214,12 @@ def update_signal_states(
             and not falling
             and not late
             and category_score >= 48.0
-            and cheap_score >= 38.0
-            and stabilization_score >= 36.0
+            and (
+                cheap_score >= 38.0
+                or relative_discount
+                or (relative_bargain_score >= 34.0 and laggard_score >= 8.0)
+            )
+            and stabilization_score >= 32.0
             and demand_score >= 44.0
             and room_score >= 20.0
             and (buy_candidate_ready or entry_adjusted >= exit_adjusted + 1.5)
@@ -274,4 +281,4 @@ def update_signal_states(
         "qualified_exits": sum(item.qualified_exit for item in result.values()),
         "fallback_eligible": sum(item.fallback_eligible for item in result.values()),
     }
-# Package revision: v3.5.0-buy-selection-consistency-r6
+# Package revision: v3.5.0-relative-bargain-production-r7

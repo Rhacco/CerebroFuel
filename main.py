@@ -782,9 +782,12 @@ def run_monitor(
                 f"Kaufcheck {code}: E={float(value.get('entry_score', 0.0)):.1f} "
                 f"K={float(value.get('category_score', 0.0)):.1f} "
                 f"günstig={float(value.get('cheap_price_score', 0.0)):.1f} "
+                f"relativ={float(value.get('relative_bargain_score', 0.0)):.1f} "
+                f"Lag={float(value.get('laggard_score', 0.0)):.1f} "
                 f"stabil={float(value.get('stabilization_score', 0.0)):.1f} "
                 f"Nachfrage={float(value.get('demand_score', 0.0)):.1f} "
-                f"Gründe={'; '.join(value.get('reasons', ())[-3:])}",
+                f"Raum={float(value.get('room_to_target_score', 0.0)):.1f} "
+                f"Gründe={'; '.join(value.get('reasons', ())[-4:])}",
                 flush=True,
             )
 
@@ -886,4 +889,4 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"FEHLER: {exc}", file=sys.stderr, flush=True)
         sys.exit(1)
-# Package revision: v3.5.0-buy-selection-consistency-r6
+# Package revision: v3.5.0-relative-bargain-production-r7

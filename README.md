@@ -1,6 +1,6 @@
 # CF v3.5.0
 
-Kurzfristiger Krypto-Monitor für Kaufchancen und Verkaufswarnungen. Berechnung alle drei Minuten mit geschlossenen 1-Minuten-Börsenkerzen; LCW liefert Pool-, Market-Cap- und Langzeitkontext.
+Krypto-Monitor im Drei-Minuten-Takt mit geschlossenen 1-Minuten-Börsenkerzen. LCW liefert Pool-, Market-Cap- und Langzeitkontext.
 
 ## Discord
 
@@ -15,4 +15,4 @@ Kurzfristiger Krypto-Monitor für Kaufchancen und Verkaufswarnungen. Berechnung 
 - `N` – Erholung/Stabilität
 - Wochenbereiche: `S` Wochenende, `M` Mo/Di, `W` Mi, `D` Do/Fr, `?` nicht belastbar
 
-Ein blaues Kaufsignal darf der sicherste günstige und stabilisierende Nachzügler einer positiven Kategorie sein. Grün und Lila benötigen deutlich stärkere Bestätigung. Falling Knife, Überdehnung und schlechte Ausführbarkeit sperren Käufe. Kauf- und Verkaufssignale werden unabhängig ausgewählt; die Liste enthält ein bis acht tatsächlich auffällige Coins.
+Blau kann entweder eine stabilisierte günstige Rücklaufzone oder einen stabilen, nachfragebestätigten Nachzügler einer starken Kategorie anzeigen. Grün und Lila benötigen die strengere bestätigte Erholung. Falling Knife, Überdehnung, schwache Nachfrage und schlechte Ausführbarkeit sperren Käufe. Kauf- und Verkaufssignale werden unabhängig ausgewählt.

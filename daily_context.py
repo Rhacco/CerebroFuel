@@ -635,4 +635,4 @@ def target_profile_for_coin(state: Mapping[str, Any], display: str) -> dict[str,
     if not isinstance(profile, Mapping):
         return {"score": 50.0, "confidence": 0.0, "samples": 0, "method": "missing"}
     return dict(profile)
-# Package revision: v3.5.0-buy-selection-consistency-r6
+# Package revision: v3.5.0-relative-bargain-production-r7
