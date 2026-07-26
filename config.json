@@ -71,6 +71,7 @@
           ]
         },
         "LINK",
+        "VIRTUAL",
         "KAITO",
         "ARKM",
         {
@@ -124,6 +125,9 @@
         "FIL",
         "GALA",
         "PENDLE",
+        "ORDI",
+        "1INCH",
+        "CAKE",
         "W",
         {
           "display": "BIO",
@@ -133,7 +137,13 @@
         },
         "APE",
         "ENA",
-        "KMNO"
+        "KMNO",
+        {
+          "display": "JUP",
+          "codes": [
+            "_JUP"
+          ]
+        }
       ]
     },
     {
@@ -150,6 +160,7 @@
           ]
         },
         "APT",
+        "POL",
         "AVAX",
         "NEAR",
         "DOT",
@@ -194,7 +205,7 @@
   "currency": "USD",
   "timezone": "Europe/Berlin",
   "top_coin_count": 8,
-  "preselect_coin_count": 26,
+  "preselect_coin_count": 28,
   "short_history_minutes": 1440,
   "history_days": 126,
   "history_parallel_requests": 1,
@@ -267,7 +278,7 @@
     "30": -0.2
   },
   "request_timeout_seconds": 25,
-  "discord_username": "Krypto-Monitor v3.4",
+  "discord_username": "Krypto-Monitor v3.4 · 69",
   "now_signal": {
     "light": 0.35,
     "clear": 1.05,
@@ -327,7 +338,7 @@
     "24h",
     "7d"
   ],
-  "coin_universe_revision": "v340-63-altcoins-category-rotation-penalty-expanded-r3",
+  "coin_universe_revision": "v340-69-altcoins-category-rotation-penalty-rebuild-r4",
   "coin_selection": {
     "required_active": [
       "DOGE",
@@ -336,12 +347,20 @@
       "WIF",
       "FLOKI",
       "PENGU",
+      "TRUMP",
+      "MOODENG",
+      "PNUT",
+      "FARTCOIN",
       "TAO",
       "FET",
       "RENDER",
       "IO",
       "WLD",
       "LINK",
+      "VIRTUAL",
+      "KAITO",
+      "ARKM",
+      "ATH",
       "XRP",
       "XLM",
       "LTC",
@@ -362,12 +381,22 @@
       "FIL",
       "GALA",
       "PENDLE",
+      "ORDI",
+      "1INCH",
+      "CAKE",
+      "W",
+      "BIO",
+      "APE",
+      "ENA",
+      "KMNO",
+      "JUP",
       "ETH",
       "SOL",
       "BNB",
       "ADA",
       "SUI",
       "APT",
+      "POL",
       "AVAX",
       "NEAR",
       "DOT",
@@ -379,26 +408,13 @@
       "TIA",
       "ZKSYNC",
       "MEGA",
-      "W",
       "XPL",
-      "TRUMP",
-      "KAITO",
-      "MOODENG",
-      "BIO",
-      "PNUT",
-      "APE",
-      "FARTCOIN",
-      "ARKM",
-      "MON",
-      "ATH",
-      "ENA",
-      "KMNO"
+      "MON"
     ],
-    "unique_altcoin_count": 63,
-    "reason": "category-rotation-expanded-with-bounded-event-and-unlock-penalties-r3",
+    "unique_altcoin_count": 69,
+    "reason": "category-rotation-expanded-69-with-bounded-event-and-unlock-penalties-r4",
     "removed_high_event_or_launch_dependency": [
       "BOME",
-      "ORDI",
       "TRB",
       "ZETA"
     ],
@@ -427,6 +443,14 @@
       "ENA",
       "KMNO",
       "APT"
+    ],
+    "added_3x_category_candidates": [
+      "VIRTUAL",
+      "ORDI",
+      "1INCH",
+      "POL",
+      "CAKE",
+      "JUP"
     ]
   },
   "falling_knife_pct": {
@@ -661,6 +685,24 @@
         "recipient": "Community",
         "source": "https://tokenomist.ai/aptos/unlock-events",
         "note": "About 40.24% of total supply was unlocked on 2026-07-24; recurring releases and the long schedule to 2050 justify a persistent dilution penalty."
+      },
+      "POL": {
+        "date": null,
+        "base_penalty": 0.0,
+        "structural_penalty": 3.0,
+        "risk": "medium",
+        "recipient": "validator incentives and community treasury emissions",
+        "source": "https://tokenomist.ai/polygon-ecosystem-token/unlock-events",
+        "note": "Classic vesting is complete, but POL has an open-ended supply and continuing validator/community emissions."
+      },
+      "JUP": {
+        "date": null,
+        "base_penalty": 0.0,
+        "structural_penalty": 2.0,
+        "risk": "medium",
+        "recipient": "unlocked strategic, team and community reserves",
+        "source": "https://tokenomist.ai/jupiter-exchange-solana/unlock-events",
+        "note": "Scheduled vesting is reported complete; a bounded residual penalty covers the large unlocked but not yet circulating reserve base."
       }
     },
     "as_of": "2026-07-26",
@@ -702,7 +744,7 @@
     "binance_base_url": "https://data-api.binance.vision",
     "coinbase_base_url": "https://api.exchange.coinbase.com",
     "timeout_seconds": 12,
-    "maximum_requests_per_run": 90,
+    "maximum_requests_per_run": 96,
     "parallel_requests": 6,
     "request_spacing_seconds": 0.03,
     "candle_limit": 300,
@@ -710,59 +752,6 @@
     "asset_aliases": {
       "BTC": [
         "BTC"
-      ],
-      "ETH": [
-        "ETH"
-      ],
-      "SOL": [
-        "SOL"
-      ],
-      "XLM": [
-        "XLM"
-      ],
-      "ZKSYNC": [
-        "ZK"
-      ],
-      "RENDER": [
-        "RENDER",
-        "RNDR"
-      ],
-      "FET": [
-        "FET",
-        "ASI"
-      ],
-      "S": [
-        "S"
-      ],
-      "IO": [
-        "IO"
-      ],
-      "PENGU": [
-        "PENGU"
-      ],
-      "ETHFI": [
-        "ETHFI"
-      ],
-      "HYPE": [
-        "HYPE"
-      ],
-      "BNB": [
-        "BNB"
-      ],
-      "XRP": [
-        "XRP"
-      ],
-      "BCH": [
-        "BCH"
-      ],
-      "LINK": [
-        "LINK"
-      ],
-      "HBAR": [
-        "HBAR"
-      ],
-      "PENDLE": [
-        "PENDLE"
       ],
       "DOGE": [
         "DOGE"
@@ -779,44 +768,130 @@
       "FLOKI": [
         "FLOKI"
       ],
-      "MEGA": [
-        "MEGA"
-      ],
-      "W": [
-        "W"
-      ],
-      "XPL": [
-        "XPL"
+      "PENGU": [
+        "PENGU"
       ],
       "TRUMP": [
         "TRUMP"
       ],
-      "KAITO": [
-        "KAITO"
-      ],
       "MOODENG": [
         "MOODENG"
-      ],
-      "BIO": [
-        "BIO"
       ],
       "PNUT": [
         "PNUT"
       ],
-      "APE": [
-        "APE"
-      ],
       "FARTCOIN": [
         "FARTCOIN"
+      ],
+      "TAO": [
+        "TAO"
+      ],
+      "FET": [
+        "FET",
+        "ASI"
+      ],
+      "RENDER": [
+        "RENDER",
+        "RNDR"
+      ],
+      "IO": [
+        "IO"
+      ],
+      "WLD": [
+        "WLD"
+      ],
+      "LINK": [
+        "LINK"
+      ],
+      "VIRTUAL": [
+        "VIRTUAL"
+      ],
+      "KAITO": [
+        "KAITO"
       ],
       "ARKM": [
         "ARKM"
       ],
-      "MON": [
-        "MON"
-      ],
       "ATH": [
         "ATH"
+      ],
+      "XRP": [
+        "XRP"
+      ],
+      "XLM": [
+        "XLM"
+      ],
+      "LTC": [
+        "LTC"
+      ],
+      "BCH": [
+        "BCH"
+      ],
+      "HYPE": [
+        "HYPE"
+      ],
+      "UNI": [
+        "UNI"
+      ],
+      "AAVE": [
+        "AAVE"
+      ],
+      "CRV": [
+        "CRV"
+      ],
+      "RAY": [
+        "RAY"
+      ],
+      "SUSHI": [
+        "SUSHI"
+      ],
+      "INJ": [
+        "INJ"
+      ],
+      "ONDO": [
+        "ONDO"
+      ],
+      "MORPHO": [
+        "MORPHO"
+      ],
+      "LDO": [
+        "LDO"
+      ],
+      "ETHFI": [
+        "ETHFI"
+      ],
+      "JTO": [
+        "JTO"
+      ],
+      "PYTH": [
+        "PYTH"
+      ],
+      "FIL": [
+        "FIL"
+      ],
+      "GALA": [
+        "GALA"
+      ],
+      "PENDLE": [
+        "PENDLE"
+      ],
+      "ORDI": [
+        "ORDI"
+      ],
+      "1INCH": [
+        "1INCH"
+      ],
+      "CAKE": [
+        "CAKE"
+      ],
+      "W": [
+        "W"
+      ],
+      "BIO": [
+        "BIO"
+      ],
+      "APE": [
+        "APE"
       ],
       "ENA": [
         "ENA"
@@ -824,12 +899,73 @@
       "KMNO": [
         "KMNO"
       ],
+      "JUP": [
+        "JUP"
+      ],
+      "ETH": [
+        "ETH"
+      ],
+      "SOL": [
+        "SOL"
+      ],
+      "BNB": [
+        "BNB"
+      ],
+      "ADA": [
+        "ADA"
+      ],
+      "SUI": [
+        "SUI"
+      ],
       "APT": [
         "APT"
+      ],
+      "POL": [
+        "POL",
+        "MATIC"
+      ],
+      "AVAX": [
+        "AVAX"
+      ],
+      "NEAR": [
+        "NEAR"
+      ],
+      "DOT": [
+        "DOT"
+      ],
+      "HBAR": [
+        "HBAR"
+      ],
+      "SEI": [
+        "SEI"
+      ],
+      "S": [
+        "S"
+      ],
+      "OP": [
+        "OP"
+      ],
+      "ARB": [
+        "ARB"
+      ],
+      "TIA": [
+        "TIA"
+      ],
+      "ZKSYNC": [
+        "ZK"
+      ],
+      "MEGA": [
+        "MEGA"
+      ],
+      "XPL": [
+        "XPL"
+      ],
+      "MON": [
+        "MON"
       ]
     },
     "fallback": "LCW rolling-volume divergence remains active when no public pair or provider is available",
-    "scope": "complete expanded 63-altcoin category pool before LCW detail preselection"
+    "scope": "complete expanded 69-altcoin category pool before LCW detail preselection"
   },
   "lcw_nominal_max_requests_per_monitor_run": 31,
   "lcw_nominal_daily_budget_note": "1 map + BTC/detail histories; category scoring uses existing map/flash and public candle data without extra LCW credits",
@@ -860,6 +996,7 @@
         "IO",
         "WLD",
         "LINK",
+        "VIRTUAL",
         "KAITO",
         "ARKM",
         "ATH"
@@ -896,6 +1033,10 @@
         "FIL",
         "GALA",
         "PENDLE",
+        "ORDI",
+        "1INCH",
+        "CAKE",
+        "JUP",
         "W",
         "BIO",
         "APE",
@@ -913,6 +1054,7 @@
         "ADA",
         "SUI",
         "APT",
+        "POL",
         "AVAX",
         "NEAR",
         "DOT",
@@ -982,6 +1124,22 @@
         "penalty": 8.0,
         "reason": "NFT/meme and release sensitivity"
       },
+      "TRUMP": {
+        "penalty": 12.0,
+        "reason": "political meme/news dependence and concentrated insider supply"
+      },
+      "MOODENG": {
+        "penalty": 10.0,
+        "reason": "pure meme sentiment and thin-liquidity event sensitivity"
+      },
+      "PNUT": {
+        "penalty": 10.0,
+        "reason": "pure meme sentiment and social-media dependence"
+      },
+      "FARTCOIN": {
+        "penalty": 11.0,
+        "reason": "pure meme sentiment and abrupt liquidity shifts"
+      },
       "TAO": {
         "penalty": 4.0,
         "reason": "AI narrative and subnet events"
@@ -1005,6 +1163,22 @@
       "LINK": {
         "penalty": 2.0,
         "reason": "oracle/integration events"
+      },
+      "VIRTUAL": {
+        "penalty": 4.0,
+        "reason": "AI-agent narrative and ecosystem launch sensitivity"
+      },
+      "KAITO": {
+        "penalty": 10.0,
+        "reason": "young InfoFi/AI token with narrative and low-float sensitivity"
+      },
+      "ARKM": {
+        "penalty": 7.0,
+        "reason": "blockchain-intelligence/AI narrative and supply sensitivity"
+      },
+      "ATH": {
+        "penalty": 7.0,
+        "reason": "young decentralized-compute token with AI narrative and emissions"
       },
       "XRP": {
         "penalty": 2.0,
@@ -1086,6 +1260,42 @@
         "penalty": 3.0,
         "reason": "yield-market events"
       },
+      "ORDI": {
+        "penalty": 8.0,
+        "reason": "BRC-20/inscription narrative and concentrated event sensitivity"
+      },
+      "1INCH": {
+        "penalty": 2.0,
+        "reason": "mature DeFi governance and integration events"
+      },
+      "CAKE": {
+        "penalty": 3.0,
+        "reason": "DEX, yield, launchpad and BNB-ecosystem events"
+      },
+      "W": {
+        "penalty": 7.0,
+        "reason": "bridge/security headlines and ongoing supply releases"
+      },
+      "BIO": {
+        "penalty": 8.0,
+        "reason": "young DeSci token with narrative and release sensitivity"
+      },
+      "APE": {
+        "penalty": 7.0,
+        "reason": "NFT/metaverse/Yuga ecosystem event sensitivity"
+      },
+      "ENA": {
+        "penalty": 8.0,
+        "reason": "synthetic-dollar/DeFi event, protocol and supply sensitivity"
+      },
+      "KMNO": {
+        "penalty": 7.0,
+        "reason": "Solana DeFi, protocol and supply-event sensitivity"
+      },
+      "JUP": {
+        "penalty": 4.0,
+        "reason": "Solana DEX, governance, treasury and airdrop sensitivity"
+      },
       "ETH": {
         "penalty": 1.0,
         "reason": "mature market"
@@ -1105,6 +1315,14 @@
       "SUI": {
         "penalty": 7.0,
         "reason": "young L1 and supply events"
+      },
+      "APT": {
+        "penalty": 4.0,
+        "reason": "established L1, but ecosystem, partnership and network-upgrade headline sensitivity"
+      },
+      "POL": {
+        "penalty": 3.0,
+        "reason": "migration, validator-incentive and governance sensitivity"
       },
       "AVAX": {
         "penalty": 3.0,
@@ -1150,65 +1368,13 @@
         "penalty": 10.0,
         "reason": "very young L2; KPI emissions, launch history and low-float sensitivity"
       },
-      "W": {
-        "penalty": 7.0,
-        "reason": "bridge/security headlines and ongoing supply releases"
-      },
       "XPL": {
         "penalty": 10.0,
         "reason": "very young L1; ecosystem incentives, launch and supply sensitivity"
       },
-      "TRUMP": {
-        "penalty": 12.0,
-        "reason": "political meme/news dependence and concentrated insider supply"
-      },
-      "KAITO": {
-        "penalty": 10.0,
-        "reason": "young InfoFi/AI token with narrative and low-float sensitivity"
-      },
-      "MOODENG": {
-        "penalty": 10.0,
-        "reason": "pure meme sentiment and thin-liquidity event sensitivity"
-      },
-      "BIO": {
-        "penalty": 8.0,
-        "reason": "young DeSci token with narrative and release sensitivity"
-      },
-      "PNUT": {
-        "penalty": 10.0,
-        "reason": "pure meme sentiment and social-media dependence"
-      },
-      "APE": {
-        "penalty": 7.0,
-        "reason": "NFT/metaverse/Yuga ecosystem event sensitivity"
-      },
-      "FARTCOIN": {
-        "penalty": 11.0,
-        "reason": "pure meme sentiment and abrupt liquidity shifts"
-      },
-      "ARKM": {
-        "penalty": 7.0,
-        "reason": "blockchain-intelligence/AI narrative and supply sensitivity"
-      },
       "MON": {
         "penalty": 9.0,
         "reason": "young L1 with launch, ecosystem and very-low-float sensitivity"
-      },
-      "ATH": {
-        "penalty": 7.0,
-        "reason": "young decentralized-compute token with AI narrative and emissions"
-      },
-      "ENA": {
-        "penalty": 8.0,
-        "reason": "synthetic-dollar/DeFi event, protocol and supply sensitivity"
-      },
-      "KMNO": {
-        "penalty": 7.0,
-        "reason": "Solana DeFi, protocol and supply-event sensitivity"
-      },
-      "APT": {
-        "penalty": 4.0,
-        "reason": "established L1, but ecosystem, partnership and network-upgrade headline sensitivity"
       }
     }
   }

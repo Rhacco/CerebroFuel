@@ -1,24 +1,22 @@
 # Krypto-Monitor v3.4 – Kurzlegende
 
-**Pool:** BTC als interne Referenz + 63 Altcoins. Ausgabe: **1 Kategorienzeile + bis zu 8 Kaufchancen**; keine Verkaufszeilen.
+**Pool:** BTC intern + **69 Altcoins**. Discord: **1 Kategorienzeile + bis zu 8 Kaufchancen**, keine Verkaufszeilen.
 
 ```text
 MEM🟢AI🔵PAY🟡UTL🟣SCP🟢:01
 [Chance][0–8]▲7[7D]B[24H][7D]P[Druck]V[10][30][60]N[Erholung][Tage][Coin]
 ```
 
-## Kategorien und Farben
+## Kategorien/Farben
 
-`MEM` Meme · `AI` AI/Daten/Compute · `PAY` Zahlung/Investment (mit BTC) · `UTL` Utility/DeFi/Börsen/Oracles · `SCP` Smart-Contract-Plattformen/L1/L2; **APT gehört zu SCP**.
+`MEM` Meme · `AI` AI/Daten/Compute · `PAY` Zahlung/Investment · `UTL` Utility/DeFi/Börsen/Oracles · `SCP` Smart-Contract-Plattformen/L1/L2.
 
-🟣 sehr stark · 🟢 stark · 🔵 positiv · 🟡 neutral · 🟠 schwach · 🔴 sehr schwach · 🟤 Daten unsicher. Schwache Kategorien erhalten wenige oder keine Plätze.
+🟣 sehr stark · 🟢 stark · 🔵 positiv · 🟡 neutral · 🟠 schwach · 🔴 sehr schwach · 🟤 unsichere Daten. Schwache Kategorien erhalten wenige oder keine Top-8-Plätze.
 
 ## Coin-Zeile
 
-🟣/🟢/🔵 = außergewöhnliche/klare/frühe Kaufchance · `0–8` Signalstärke · `▲` Kaufchance · `7` 7-Tage-Volumentrend · `B••` Kurs relativ zu BTC über 24 h/7 d · `P•` kurzfristiger Druck · `V•••` Volumen 10/30/60 min · `N•` Stabilisierung · `MO–SO` beste historische Wochentage.
+🟣/🟢/🔵 Kaufchance · `0–8` Stärke · `▲` Einstieg · `7` 7-Tage-Volumen · `B••` relativ zu BTC 24 h/7 d · `P•` Druck · `V•••` Volumen 10/30/60 min · `N•` Stabilisierung · `MO–SO` beste Wochentage. Falling Knife, Late Entry sowie Event-/Unlock-Abzüge verhindern schwache Einstiege.
 
-Orange/Rot in `P`, `V` oder `N`, Falling Knife, Late Entry sowie **Event- und Unlock-Abzüge** können einen Coin aus der Top 8 halten. APT hat einen dynamischen Unlock-Abzug bis zur Community-Freigabe am 12.08.2026 plus einen strukturellen Restabzug.
+## Weniger offensichtliche Kürzel
 
-## Weniger offensichtliche Discord-Kürzel
-
-`ARK` Arkham · `ATH` Aethir · `AVX` Avalanche · `BNK` Bonk · `DGE` Dogecoin · `EFI` ether.fi · `FLK` FLOKI · `FRT` Fartcoin · `GAL` Gala · `HBR` Hedera · `HYP` Hyperliquid · `ION` IO.NET · `KAI` Kaito · `KMN` Kamino · `LNK` Chainlink · `MEG` MegaETH · `MND` Monad · `MOO` Moo Deng · `MRP` Morpho · `NER` NEAR · `OND` Ondo · `OPT` Optimism · `PEP` Pepe · `PGU` Pudgy Penguins · `PND` Pendle · `PNT` Peanut · `PYT` Pyth · `RND` Render · `SNC` Sonic · `SSH` SushiSwap · `TRP` TRUMP · `WRM` Wormhole · `ZKS` zkSync. `APT` bleibt `APT`.
+`1IN` 1inch · `ARK` Arkham · `ATH` Aethir · `AVX` Avalanche · `BNK` Bonk · `CAK` PancakeSwap · `DGE` Dogecoin · `EFI` ether.fi · `FLK` FLOKI · `FRT` Fartcoin · `HBR` Hedera · `HYP` Hyperliquid · `ION` IO.NET · `JUP` Jupiter · `KAI` Kaito · `KMN` Kamino · `LNK` Chainlink · `MEG` MegaETH · `MND` Monad · `MOO` Moo Deng · `MRP` Morpho · `NER` NEAR · `OND` Ondo · `OPT` Optimism · `ORD` Ordinals · `PEP` Pepe · `PGU` Pudgy Penguins · `PND` Pendle · `PNT` Peanut · `POL` Polygon · `PYT` Pyth · `RND` Render · `SNC` Sonic · `SSH` SushiSwap · `TRP` TRUMP · `VRT` Virtuals Protocol · `WRM` Wormhole · `ZKS` zkSync.

@@ -1,5 +1,6 @@
 """Entry point for crypto-signal-monitor v3.4 category-rotation opportunity ranking."""
 
+# v3.4 r4 expanded-69 rebuild; source revalidated 2026-07-26.
 from __future__ import annotations
 
 import argparse

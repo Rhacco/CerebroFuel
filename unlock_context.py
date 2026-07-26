@@ -1,5 +1,6 @@
 """Dynamic, bounded unlock-risk deductions for v3.4 opportunity ranking."""
 
+# v3.4 r4 expanded-69 rebuild; source revalidated 2026-07-26.
 from __future__ import annotations
 
 from datetime import date, datetime, timezone

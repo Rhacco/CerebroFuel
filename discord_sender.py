@@ -1,6 +1,7 @@
 # v3.4 compact Discord sender; report format now includes B24/B7
 """Discord webhook sender with line-safe splitting."""
 
+# v3.4 r4 expanded-69 rebuild; source revalidated 2026-07-26.
 from __future__ import annotations
 
 import time

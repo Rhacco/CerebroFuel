@@ -1,6 +1,7 @@
 # v3.4.0 adaptive Live Coin Watch client with the same conservative limiter
 """Rate-aware Live Coin Watch client for monitor and daily context."""
 
+# v3.4 r4 expanded-69 rebuild; source revalidated 2026-07-26.
 from __future__ import annotations
 
 import json

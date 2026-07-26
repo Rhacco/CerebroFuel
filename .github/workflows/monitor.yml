@@ -1,7 +1,7 @@
 name: Crypto Signal Monitor
 
-# v3.4: category rotation, entry-only top list, stable active laggards,
-# exact interval-volume confirmation, 3h guards and +3/+5% target memory.
+# v3.4 r4: 69-altcoin category pool; cache restore chains stay within GitHub's
+# maximum of ten total keys (primary key plus restore prefixes).
 on:
   workflow_dispatch:
     inputs:
@@ -43,25 +43,25 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: .cache/seasonality
-          key: seasonality-v340-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
+          key: seasonality-v340r4-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
           restore-keys: |
+            seasonality-v340r4-${{ steps.context-key.outputs.day }}-
+            seasonality-v340r4-
             seasonality-v340-${{ steps.context-key.outputs.day }}-
             seasonality-v340-
             seasonality-v333-${{ steps.context-key.outputs.day }}-
             seasonality-v333-
-            seasonality-v332-${{ steps.context-key.outputs.day }}-
             seasonality-v332-
-            seasonality-v331-${{ steps.context-key.outputs.day }}-
             seasonality-v331-
             seasonality-v330-
-            seasonality-v327-complete-weeks-r2-
 
       - name: Letzte Vollpool-Snapshots laden
         uses: actions/cache/restore@v5
         with:
           path: .cache/flash
-          key: flash-v340-${{ github.run_id }}-${{ github.run_attempt }}
+          key: flash-v340r4-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            flash-v340r4-
             flash-v340-
             flash-v333-
             flash-v332-
@@ -73,8 +73,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: .cache/opportunity
-          key: opportunity-v340-${{ github.run_id }}-${{ github.run_attempt }}
+          key: opportunity-v340r4-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            opportunity-v340r4-
             opportunity-v340-
             opportunity-v333-
 
@@ -94,7 +95,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: .cache/seasonality
-          key: seasonality-v340-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
+          key: seasonality-v340r4-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
 
       - name: Frische Analyse ausführen
         env:
@@ -109,11 +110,11 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: .cache/flash
-          key: flash-v340-${{ github.run_id }}-${{ github.run_attempt }}
+          key: flash-v340r4-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Gelernten Zielausgang speichern
         if: always() && hashFiles('.cache/opportunity/state.json') != ''
         uses: actions/cache/save@v5
         with:
           path: .cache/opportunity
-          key: opportunity-v340-${{ github.run_id }}-${{ github.run_attempt }}
+          key: opportunity-v340r4-${{ github.run_id }}-${{ github.run_attempt }}

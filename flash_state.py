@@ -5,6 +5,7 @@ for every configured coin. Persisted five-minute observations turn that one
 request into 5/15/30/60-minute volume and price trends for the complete pool.
 """
 
+# v3.4 r4 expanded-69 rebuild; source revalidated 2026-07-26.
 from __future__ import annotations
 
 import json

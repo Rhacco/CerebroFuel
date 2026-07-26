@@ -1,4 +1,4 @@
-// v3.4.0 short-term opportunity scheduler; dispatch behavior intentionally unchanged
+// v3.4 r4 expanded-69 rebuild; scheduler dispatch behavior intentionally unchanged
 function schedulerEnabled(env) {
   // ENABLED 1 = aktiv, 2 = pausiert.
   return String(env.ENABLED ?? "1").trim() === "1";

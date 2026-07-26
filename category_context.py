@@ -6,6 +6,7 @@ pump cannot turn a weak category green.  Every active coin has exactly one
 primary category for quota and ranking purposes.
 """
 
+# v3.4 r4 expanded-69 rebuild; source revalidated 2026-07-26.
 from __future__ import annotations
 
 import math

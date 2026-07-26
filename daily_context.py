@@ -1,5 +1,6 @@
 """Stable v3.4 daily cache with histories, weekday context and target priors."""
 
+# v3.4 r4 expanded-69 rebuild; source revalidated 2026-07-26.
 from __future__ import annotations
 
 import json
