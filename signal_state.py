@@ -42,7 +42,11 @@ def _load(path: Path) -> dict[str, Any]:
     if not isinstance(raw, dict) or raw.get("version") != STATE_VERSION:
         return {"version": STATE_VERSION, "coins": {}}
     coins = raw.get("coins") if isinstance(raw.get("coins"), dict) else {}
-    return {"version": STATE_VERSION, "coins": coins}
+    try:
+        run_count = max(0, int(raw.get("run_count") or 0))
+    except (TypeError, ValueError):
+        run_count = 0
+    return {"version": STATE_VERSION, "coins": coins, "run_count": run_count}
 
 
 def _save(path: Path, state: Mapping[str, Any]) -> None:
@@ -74,6 +78,13 @@ def update_signal_states(
     retention_minutes = max(90, int(section.get("retention_minutes", 360)))
     state = _load(path)
     raw_coins = state.setdefault("coins", {})
+    # Older v3.5 caches did not yet store a global counter. Derive maturity from
+    # their existing histories so the already-generated cache remains useful.
+    derived_runs = 0
+    for raw_coin in raw_coins.values():
+        if isinstance(raw_coin, Mapping) and isinstance(raw_coin.get("history"), list):
+            derived_runs = max(derived_runs, len(raw_coin["history"]))
+    run_count = max(int(state.get("run_count") or 0), derived_runs) + 1
     cutoff = now_ms - retention_minutes * 60_000
     result: dict[str, SignalState] = {}
 
@@ -206,9 +217,15 @@ def update_signal_states(
             "history": history[-max(30, retention_minutes // 3):],
         }
 
-    _save(path, {"version": STATE_VERSION, "updated_at_ms": int(now_ms), "coins": raw_coins})
+    _save(path, {
+        "version": STATE_VERSION,
+        "updated_at_ms": int(now_ms),
+        "run_count": int(run_count),
+        "coins": raw_coins,
+    })
     return result, {
         "version": STATE_VERSION,
+        "run_count": int(run_count),
         "coins": len(result),
         "qualified_entries": sum(item.qualified_entry for item in result.values()),
         "qualified_exits": sum(item.qualified_exit for item in result.values()),

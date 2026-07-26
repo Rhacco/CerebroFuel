@@ -1452,7 +1452,7 @@
     "acceleration_bonus_cap": 12.0,
     "fallback_minimum_score": 20.0,
     "spread_block_pct": 1.0,
-    "description": "3/6/12-minute score velocity and confirmation state; strong first-run signals can be blue/orange immediately",
+    "description": "3/6/12-minute velocity and confirmation; runtime history is preserved and adaptive selection avoids routine full lists",
     "fallback_tie_ratio": 0.9,
     "fallback_tie_gap": 5.0
   },
@@ -1469,7 +1469,8 @@
     "fallback_tie_fraction": 0.1,
     "longterm_refresh_hours": 20,
     "fresh_cache_namespace": "v350",
-    "ignore_previous_versions": true
+    "ignore_previous_versions": true,
+    "description": "three-minute runtime; existing v350 long-term and runtime caches remain compatible"
   },
   "longterm": {
     "build_when_missing": true,
@@ -1486,7 +1487,21 @@
     "fallback_tie_fraction": 0.1,
     "maximum_exit_rows": 4,
     "maximum_exit_rows_per_category": 2,
-    "no_neutral_candidates": true
+    "no_neutral_candidates": true,
+    "close_tie_maximum": 3,
+    "close_tie_ratio": 0.9,
+    "close_tie_gap": 5.0,
+    "strong_minimum_score": 55.0,
+    "maximum_leader_gap": 12.0,
+    "strong_velocity": 4.0,
+    "exceptional_demand_score": 65.0,
+    "exceptional_execution_quality": 60.0,
+    "warmup_runs": 2,
+    "warmup_maximum": 3,
+    "warmup_exception_score": 70.0,
+    "fallback_tie_ratio": 0.9,
+    "fallback_tie_gap": 5.0,
+    "description": "adaptive output: leader always; up to three close peers; rows 4-8 only when strong, confirmed or accelerating"
   },
   "target_definition": {
     "net_target_3_pct": 3.0,

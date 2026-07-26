@@ -764,6 +764,7 @@ def run_monitor(
         assessments,
         categories,
         signal_states=signal_states,
+        state_stats=signal_stats,
         top_count=int(config.get("top_coin_count", 8)),
         config=config,
     )

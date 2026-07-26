@@ -6,7 +6,7 @@ pump cannot turn a weak category green.  Every active coin has exactly one
 primary category for quota and ranking purposes.
 """
 
-# v3.5: one-minute category rotation, BTC anchor and guaranteed 1–3 fallback signals.
+# v3.5: one-minute category rotation, BTC anchor and adaptive 1–8 signal density.
 from __future__ import annotations
 
 import math
@@ -400,59 +400,156 @@ def select_category_entries(
     categories: Mapping[str, CategoryAssessment],
     *,
     signal_states: Mapping[str, Any] | None = None,
+    state_stats: Mapping[str, Any] | None = None,
     top_count: int,
     config: Mapping[str, Any],
 ) -> list[Any]:
-    """Select confirmed signals; if none exist, show the clearest 1–3 sides."""
+    """Return an adaptive 1–8 list instead of filling every available slot.
+
+    The leader is always shown. Two close peers may follow. Remaining rows need
+    genuinely strong, confirmed or accelerating evidence and must stay close to
+    the leader. This keeps a full list meaningful without ever returning an
+    empty header-only report.
+    """
     thresholds = config.get("opportunity_score") if isinstance(config, Mapping) else {}
     thresholds = thresholds if isinstance(thresholds, Mapping) else {}
-    max_exits = max(0, int(thresholds.get("maximum_exit_rows", 4)))
-    max_exit_per_category = max(1, int(thresholds.get("maximum_exit_rows_per_category", 2)))
+    selection = config.get("selection") if isinstance(config, Mapping) else {}
+    selection = selection if isinstance(selection, Mapping) else {}
+    max_exits = max(0, int(selection.get("maximum_exit_rows", thresholds.get("maximum_exit_rows", 4))))
+    max_exit_per_category = max(1, int(selection.get(
+        "maximum_exit_rows_per_category", thresholds.get("maximum_exit_rows_per_category", 2)
+    )))
+    close_maximum = max(1, min(3, int(selection.get("close_tie_maximum", 3))))
+    close_ratio = max(0.0, min(1.0, float(selection.get("close_tie_ratio", 0.90))))
+    close_gap = max(0.0, float(selection.get("close_tie_gap", 5.0)))
+    strong_minimum = max(0.0, float(selection.get("strong_minimum_score", 55.0)))
+    leader_gap = max(close_gap, float(selection.get("maximum_leader_gap", 12.0)))
+    strong_velocity = max(0.0, float(selection.get("strong_velocity", 4.0)))
+    exceptional_demand = max(0.0, float(selection.get("exceptional_demand_score", 65.0)))
+    exceptional_execution = max(0.0, float(selection.get("exceptional_execution_quality", 60.0)))
+    warmup_runs = max(0, int(selection.get("warmup_runs", 2)))
+    warmup_maximum = max(1, min(top_count, int(selection.get("warmup_maximum", 3))))
+    warmup_score = max(strong_minimum, float(selection.get("warmup_exception_score", 70.0)))
+    run_count = max(0, int((state_stats or {}).get("run_count") or 0))
     signal_states = signal_states or {}
 
     def state_for(item: Any) -> Any | None:
         return signal_states.get(str(getattr(item, "display_code", "")).upper())
 
+    def score_for(item: Any) -> float:
+        return float(getattr(state_for(item), "ranking_score", getattr(item, "opportunity_score", 0.0)))
+
     candidates = sorted(
         analyses,
         key=lambda item: (
-            float(getattr(state_for(item), "ranking_score", getattr(item, "opportunity_score", 0.0))),
+            score_for(item),
             float(max(getattr(item, "entry_score", 0.0), getattr(item, "exit_score", 0.0))),
             float(getattr(item, "opportunity_data_confidence", 0.0)),
             str(getattr(item, "display_code", "")),
         ),
         reverse=True,
     )
-    selected: list[Any] = []
+
     entry_counts: dict[str, int] = {}
     exit_counts: dict[str, int] = {}
     exit_total = 0
-    for item in candidates:
+
+    def side_for(item: Any) -> tuple[bool, bool, str]:
         display = str(getattr(item, "display_code", "")).upper()
         context = assessments_by_coin.get(display) or {}
         state = state_for(item)
         code = str(context.get("category_code") or "")
-        is_entry = bool(getattr(state, "qualified_entry", context.get("qualified_entry", False)))
-        is_exit = bool(getattr(state, "qualified_exit", context.get("qualified_exit", False)))
+        return (
+            bool(getattr(state, "qualified_entry", context.get("qualified_entry", False))),
+            bool(getattr(state, "qualified_exit", context.get("qualified_exit", False))),
+            code,
+        )
+
+    def can_add(item: Any) -> bool:
+        nonlocal exit_total
+        is_entry, is_exit, code = side_for(item)
         if is_entry:
             category = categories.get(code)
-            if category is None or category.max_slots <= 0 or entry_counts.get(code, 0) >= category.max_slots:
-                continue
-            selected.append(item)
+            return bool(category and category.max_slots > 0 and entry_counts.get(code, 0) < category.max_slots)
+        if is_exit:
+            return exit_total < max_exits and exit_counts.get(code, 0) < max_exit_per_category
+        return False
+
+    def add_item(selected: list[Any], item: Any) -> None:
+        nonlocal exit_total
+        is_entry, is_exit, code = side_for(item)
+        selected.append(item)
+        if is_entry:
             entry_counts[code] = entry_counts.get(code, 0) + 1
         elif is_exit:
-            if exit_total >= max_exits or exit_counts.get(code, 0) >= max_exit_per_category:
-                continue
-            selected.append(item)
             exit_total += 1
             exit_counts[code] = exit_counts.get(code, 0) + 1
-        if len(selected) >= top_count:
-            break
-    if selected:
-        return selected
 
-    # No fully confirmed signal: show the clearest real buy/sell side, never a
-    # neutral or brown placeholder. Places two and three appear only near a tie.
+    qualified = [item for item in candidates if any(side_for(item)[:2])]
+    selected: list[Any] = []
+    if qualified:
+        leader = next((item for item in qualified if can_add(item)), None)
+        if leader is not None:
+            add_item(selected, leader)
+            leader_score = score_for(leader)
+
+            # Up to two genuinely close peers may accompany the leader even when
+            # they are only early blue/orange signals.
+            for item in qualified:
+                if item is leader or len(selected) >= close_maximum or not can_add(item):
+                    continue
+                score = score_for(item)
+                if score >= leader_score * close_ratio or leader_score - score <= close_gap:
+                    add_item(selected, item)
+
+            # Rows beyond the close group must be materially strong. A wide
+            # market move can still fill all eight rows, but ordinary threshold
+            # crossings no longer do so automatically.
+            for item in qualified:
+                if item in selected or len(selected) >= top_count or not can_add(item):
+                    continue
+                score = score_for(item)
+                if leader_score - score > leader_gap:
+                    continue
+                state = state_for(item)
+                confirmation = int(getattr(state, "confirmation_count", 0))
+                velocity = float(getattr(state, "score_velocity", 0.0))
+                color = str(getattr(state, "color", ""))
+                direction = str(getattr(state, "direction", "▲"))
+                exact = bool(getattr(item, "exact_interval_volume", False))
+                execution = float(getattr(item, "execution_quality_score", 0.0))
+                demand = float(getattr(item, "demand_score", 0.0))
+                exit_score = float(getattr(item, "exit_score", 0.0))
+                exceptional_exact = bool(
+                    exact
+                    and execution >= exceptional_execution
+                    and ((direction == "▲" and demand >= exceptional_demand) or (direction == "▼" and exit_score >= exceptional_demand))
+                )
+                strong = bool(
+                    score >= strong_minimum
+                    or confirmation >= 2
+                    or velocity >= strong_velocity
+                    or color in {GREEN, PURPLE, RED}
+                    or exceptional_exact
+                )
+                if not strong:
+                    continue
+                if run_count <= warmup_runs and len(selected) >= warmup_maximum:
+                    warmup_exception = bool(
+                        score >= warmup_score
+                        and exceptional_exact
+                        and not bool(getattr(item, "falling_knife", False))
+                        and not bool(getattr(item, "late_entry", False))
+                    )
+                    if not warmup_exception:
+                        continue
+                add_item(selected, item)
+
+            if selected:
+                return selected[:top_count]
+
+    # No qualified signal survived: show the clearest real buy/sell side, never
+    # a neutral or brown placeholder. Places two and three require a close tie.
     fallback = [item for item in candidates if bool(getattr(state_for(item), "fallback_eligible", False))]
     if not fallback:
         fallback = [item for item in candidates if float(getattr(item, "opportunity_data_confidence", 0.0)) >= 0.45]
@@ -460,14 +557,12 @@ def select_category_entries(
         fallback = candidates[:1]
     if not fallback:
         return []
-    first_state = state_for(fallback[0])
-    top_score = float(getattr(first_state, "ranking_score", getattr(fallback[0], "opportunity_score", 0.0)))
+    top_score = score_for(fallback[0])
     chosen = [fallback[0]]
-    ratio = float((config.get("signal_state") or {}).get("fallback_tie_ratio", 0.88))
-    gap = float((config.get("signal_state") or {}).get("fallback_tie_gap", 6.0))
+    ratio = float(selection.get("fallback_tie_ratio", (config.get("signal_state") or {}).get("fallback_tie_ratio", 0.90)))
+    gap = float(selection.get("fallback_tie_gap", (config.get("signal_state") or {}).get("fallback_tie_gap", 5.0)))
     for item in fallback[1:3]:
-        state = state_for(item)
-        score = float(getattr(state, "ranking_score", getattr(item, "opportunity_score", 0.0)))
+        score = score_for(item)
         if score >= top_score * ratio or top_score - score <= gap:
             chosen.append(item)
     for item in chosen:
@@ -476,7 +571,7 @@ def select_category_entries(
         item.opportunity_direction = direction
         item.opportunity_color = "🔵" if direction == "▲" else "🟠"
         item.opportunity_count = 1
-        item.opportunity_score = float(getattr(state, "ranking_score", max(item.entry_score, item.exit_score)))
+        item.opportunity_score = score_for(item)
         item.qualified_entry = direction == "▲"
         item.qualified_exit = direction == "▼"
         item.short.signal_color = item.opportunity_color
@@ -485,3 +580,4 @@ def select_category_entries(
         item.short.buy_count = 1 if direction == "▲" else 0
         item.short.sell_count = 1 if direction == "▼" else 0
     return chosen
+

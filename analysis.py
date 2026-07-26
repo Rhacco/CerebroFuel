@@ -180,6 +180,8 @@ class CoinAnalysis:
     execution_quality_score: float = 50.0
     spread_pct: float | None = None
     estimated_round_trip_cost_pct: float = 0.0
+    falling_knife: bool = False
+    late_entry: bool = False
 
 
 @dataclass(frozen=True)
@@ -2793,6 +2795,8 @@ def apply_opportunity_analysis(
     item.execution_quality_score = float(assessment.get("execution_quality_score", 50.0))
     item.spread_pct = assessment.get("spread_pct")
     item.estimated_round_trip_cost_pct = float(assessment.get("estimated_round_trip_cost_pct", 0.0))
+    item.falling_knife = bool(assessment.get("falling_knife", False))
+    item.late_entry = bool(assessment.get("late_entry", False))
     item.visible_volume_colors = {
         int(key): str(value) for key, value in (assessment.get("volume_colors") or {}).items()
     }
