@@ -1,6 +1,4 @@
-# v3.5 runtime dependency set
+# v3.6.0 active Lighter runtime uses only the Python standard library.
+# Keep requests available for the retained v3.5 compatibility modules.
+# Package revision: v3.6.0-lighter-structure-r2
 requests>=2.31,<3
-# Package revision: v3.5.0-buy-selection-consistency-r6
-# Package revision: v3.5.0-relative-bargain-production-r7
-
-# Package revision: v3.5.0-balanced-value-production-r8

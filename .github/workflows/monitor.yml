@@ -1,6 +1,6 @@
-name: Crypto Signal Monitor v3.5.0
+name: Crypto Signal Monitor v3.6.0
+# Package revision: v3.6.0-lighter-structure-r2
 
-# Fresh v3.5: one runtime cache, one LCW long-term cache, no restore from older versions.
 on:
   workflow_dispatch:
     inputs:
@@ -9,86 +9,30 @@ on:
         required: true
         default: true
         type: boolean
-      force_discord:
-        description: "Unveränderten Bericht trotzdem senden"
-        required: true
-        default: false
-        type: boolean
-      force_longterm:
-        description: "LCW-Langzeitcache neu aktualisieren"
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: crypto-signal-monitor-v350
+  group: crypto-signal-monitor-v360
   cancel-in-progress: false
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 18
-
+    timeout-minutes: 8
     steps:
       - name: Repository laden
         uses: actions/checkout@v5
-
       - name: Python einrichten
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: "pip"
-
-      - name: Lokalen Tag bestimmen
-        id: context-key
-        shell: bash
-        run: echo "day=$(TZ=Europe/Berlin date +%F)" >> "$GITHUB_OUTPUT"
-
-      - name: Frischen v3.5-Langzeitcache laden
-        uses: actions/cache/restore@v5
-        with:
-          path: .cache/v350/longterm
-          key: v350-longterm-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
-          restore-keys: |
-            v350-longterm-${{ steps.context-key.outputs.day }}-
-            v350-longterm-
-
-      - name: Frischen v3.5-Laufzeitcache laden
-        uses: actions/cache/restore@v5
-        with:
-          path: .cache/v350/runtime
-          key: v350-runtime-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            v350-runtime-
-
       - name: Abhängigkeiten installieren
         run: python -m pip install --disable-pip-version-check -r requirements.txt
-
-      - name: Analyse ausführen
+      - name: Lighter-Analyse ausführen
         env:
-          LCW_API_KEY: ${{ secrets.LCW_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           SEND_DISCORD: ${{ inputs.send_discord }}
-          FORCE_DISCORD: ${{ inputs.force_discord }}
-          FORCE_LONGTERM: ${{ inputs.force_longterm }}
-          LCW_RATE_STATE_PATH: .cache/v350/runtime/lcw-rate.json
         run: python main.py
-
-      - name: Aktualisierten Langzeitcache speichern
-        if: always() && hashFiles('.cache/v350/longterm/state.json') != '' && hashFiles('.cache/v350/longterm/changed.flag') != ''
-        uses: actions/cache/save@v5
-        with:
-          path: .cache/v350/longterm
-          key: v350-longterm-${{ steps.context-key.outputs.day }}-${{ github.run_id }}
-
-      - name: Laufzeitstatus speichern
-        if: always() && hashFiles('.cache/v350/runtime/*.json') != ''
-        uses: actions/cache/save@v5
-        with:
-          path: .cache/v350/runtime
-          key: v350-runtime-${{ github.run_id }}-${{ github.run_attempt }}
-# Package revision: v3.5.0-balanced-value-production-r8
-# Package revision: v3.5.0-balanced-value-production-r8

@@ -1,12 +1,10 @@
-# v3.5 compact Discord sender; report format now includes B24/B7
 """Discord webhook sender with line-safe splitting."""
-
-# v3.5 mixed-signal output; source revalidated 2026-07-26.
 from __future__ import annotations
 
+import json
 import time
-
-import requests
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 
 class DiscordSendError(RuntimeError):
@@ -48,15 +46,20 @@ def send_discord(
         payload = {"content": chunk, "username": username}
         if avatar_url:
             payload["avatar_url"] = avatar_url
-        response = requests.post(
+        request = Request(
             webhook_url,
-            json=payload,
-            timeout=timeout,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "User-Agent": "cf/3.6.0"},
+            method="POST",
         )
-        if response.status_code not in (200, 204):
-            raise DiscordSendError(
-                f"Discord antwortete mit HTTP {response.status_code}: {response.text[:300]}"
-            )
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                if response.status not in (200, 204):
+                    raise DiscordSendError(f"Discord antwortete mit HTTP {response.status}")
+        except HTTPError as exc:
+            body = exc.read(300).decode("utf-8", "replace")
+            raise DiscordSendError(f"Discord antwortete mit HTTP {exc.code}: {body}") from exc
         if index + 1 < len(chunks):
             time.sleep(0.5)
-# Package revision: v3.5.0-balanced-value-production-r8
+
+# Package revision: v3.6.0-lighter-structure-r2

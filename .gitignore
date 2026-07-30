@@ -1,4 +1,5 @@
 # v3.5 generated runtime and output state
+# Package revision: v3.6.0-lighter-structure-r2
 .cache/
 output/latest_report.txt
 output/latest_analysis.json
@@ -9,3 +10,7 @@ __pycache__/
 # Package revision: v3.5.0-relative-bargain-production-r7
 
 # Package revision: v3.5.0-balanced-value-production-r8
+.cache/
+output/
+__pycache__/
+*.pyc

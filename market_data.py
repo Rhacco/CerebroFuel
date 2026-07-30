@@ -864,4 +864,4 @@ def analyze_candles(
         reasons.append("Spread erhöht")
     metrics.reasons = tuple(reasons)
     return metrics
-# Package revision: v3.5.0-balanced-value-production-r8
+# Package revision: v3.6.0-lighter-structure-r2

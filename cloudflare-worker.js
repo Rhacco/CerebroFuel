@@ -1,4 +1,4 @@
-// v3.5: dispatch every three minutes; do not queue another run while one is active.
+// v3.6: dispatch every three minutes; do not queue another run while one is active.
 function schedulerEnabled(env) {
   // ENABLED 1 = aktiv, 2 = pausiert.
   return String(env.ENABLED ?? "1").trim() === "1";
@@ -18,7 +18,7 @@ export default {
       ok: true,
       scheduler: schedulerEnabled(env) ? "enabled" : "paused",
       interval: "3m",
-      version: "3.5",
+      version: "3.6",
     });
   },
 };
@@ -28,7 +28,7 @@ function githubHeaders(env) {
     Accept: "application/vnd.github+json",
     Authorization: `Bearer ${env.GH_PAT}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "cloudflare-crypto-scheduler-v3.5.0",
+    "User-Agent": "cloudflare-crypto-scheduler-v3.6.0",
   };
 }
 
@@ -68,7 +68,7 @@ async function triggerGitHubWithRetry(env, source) {
       headers: { ...githubHeaders(env), "Content-Type": "application/json" },
       body: JSON.stringify({
         ref,
-        inputs: { send_discord: "true", force_discord: "false", force_longterm: "false" },
+        inputs: { send_discord: "true" },
       }),
     });
     if (response.ok) {
@@ -81,5 +81,5 @@ async function triggerGitHubWithRetry(env, source) {
   }
   throw new Error(`GitHub konnte nicht gestartet werden: ${lastError}`);
 }
-// Package revision: v3.5.0-balanced-value-production-r8
-// Package revision: v3.5.0-balanced-value-production-r8
+
+// Package revision: v3.6.0-lighter-structure-r2

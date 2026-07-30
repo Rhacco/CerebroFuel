@@ -1,21 +1,43 @@
-# CF v3.5.0
+# CF v3.6.0
 
-Drei-Minuten-Monitor für kurzfristige Kaufchancen und Verkaufswarnungen. Kurzfristige Signale verwenden geschlossene 1-Minuten-Börsenkerzen; LCW liefert Vollpool- und Langzeitkontext.
+Package revision: `v3.6.0-lighter-structure-r2`
 
-## Discord
+Read-only Lighter signal monitor for small, manually executed perpetual trades.
 
-`BTC · PAY · SCP · UTL · AI · MEM` zeigt die aktuelle Markt-/Kategorienqualität.
+- Candidate universe: only the final Lighter shortlist from the July 2026 plan.
+- Lighter supplies active perp metadata, closed 1-minute quote-volume candles,
+  funding and the executable order book.
+- Opportunity (market quality) and direction (Long/Short) are separate.
+- Direction combines price and quote volume over 10/20/60 minutes. Stable or
+  slightly rising price with rising volume is accumulation; falling price with
+  rising volume is selling pressure.
+- Spread/slippage, 24h volume, OI, Volume/OI, funding and window quality can
+  deliberately produce `NO_TRADE` or `INVALID_DATA`.
+- Discord is exactly nine lines: BTC market header plus Top-8. Every line is at
+  most 34 Unicode code points, with no blank lines.
 
-- 🟣 außergewöhnlich stark
-- 🟢 klar positiv
-- 🔵 frühe positive Struktur
-- 🟡 neutral
-- 🟠 Verkaufswarnung
-- 🔴 bestätigter Verkaufsdruck
-- `▲` Kaufchance, `▼` Verkaufswarnung
+Legend: `🟣 BUY`, `🟢 WATCH_LONG`, `🟡 NO_TRADE`, `🟠 WATCH_SHORT`,
+`🔴 SELL`, `🟤 INVALID_DATA`; `O` opportunity, `D` direction strength,
+`C` roundtrip cost in basis points, `F` funding, `V` 10/20/60 windows.
 
-Blau kann eine stabilisierte Rücklaufzone, einen Kategorien-Nachzügler oder eine günstige stabile Basis mit erneuter Nachfrage und ausreichendem Zielraum markieren. Grün/Lila verlangen eine streng bestätigte Erholung. Falling Knife, Überdehnung und schlechte Ausführbarkeit sperren Käufe.
+Run:
 
-`S/M/W/D/?` am Zeilenende: Wochenende, Mo/Di, Mittwoch, Do/Fr oder fehlender belastbarer Wochenbereich.
+```bash
+python main.py --no-send
+```
 
-Ungewöhnliche Kürzel: `ARK` Arkham (AI), `MND` Monad (SCP), `GAL` Gala (UTL), `ORD` Ordinals (UTL), `PND` Pendle (UTL), `VRT` Virtuals Protocol (AI), `1IN` 1inch (UTL), `CAK` PancakeSwap (UTL).
+The monitor never submits orders. Output details are written to
+`output/latest.json`; the compact Discord text is written to `output/latest.txt`.
+
+## Paketstruktur
+
+- `.github/workflows/monitor.yml` — GitHub-Actions-Lauf
+- `output/.gitkeep` — erhält den Ausgabeordner im Repository
+- `main.py` — Programmeinstieg
+- `lighter_monitor.py` — Lighter-Daten, Bewertung und Bericht
+- `discord_sender.py` — Discord-Versand
+- `config.json` — Kandidaten und Schwellenwerte
+- `cloudflare-worker.js` — Drei-Minuten-Auslöser
+
+Tests werden vor der Freigabe ausgeführt, sind aber nicht Bestandteil des
+Release-Pakets und keine Voraussetzung für den GitHub-Actions-Lauf.

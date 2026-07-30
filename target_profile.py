@@ -195,4 +195,4 @@ def compute_target_profile(
         "round_trip_cost_pct": round(max(0.0, float(round_trip_cost_pct)), 4),
         "method": "past-only-24h-net-target-before-stop-r2",
     }
-# Package revision: v3.5.0-balanced-value-production-r8
+# Package revision: v3.6.0-lighter-structure-r2
