@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 APP_VERSION = "3.6.3"
-PACKAGE_REVISION = "v3.6.3-ptw-precision-r3"
+PACKAGE_REVISION = "v3.6.3-ptw-precision-r4"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 PRESSURE_WINDOWS = (10, 20, 60)
@@ -107,7 +107,9 @@ class Setup:
     event_timestamp_ms: int | None = None
     move_pct: float = 0.0
     rejection_fraction: float = 0.0
+    recovery_fraction: float = 0.0
     peak_score: float = 0.0
+    expected_edge_pct: float = 0.0
     reason: str = ""
 
 
@@ -554,7 +556,7 @@ def _baseline_volume(candles: list[Mapping[str, Any]], exclude: int = 12) -> flo
     return statistics.median(values) if values else 0.0
 
 
-def _assess_trend(
+def _assess_trend_once(
     candles: list[Mapping[str, Any]],
     windows: Mapping[int, Window],
     noise: float,
@@ -568,15 +570,18 @@ def _assess_trend(
     slope_60, r_squared = _linear_trend(closes[-60:])
     z_60 = ret_60 / max(noise * math.sqrt(60), 1e-9)
     z_15 = ret_15 / max(noise * math.sqrt(15), 1e-9)
-    context = z_60 * 0.67 + z_15 * 0.33
-    direction = _direction(context)
-    aligned = _direction(z_60) == _direction(z_15) and abs(z_15) >= 0.25
+    direction = _direction(z_60)
+    directional_z_15 = _directional(z_15, direction)
+    directional_slope = _directional(slope_60, direction) / max(noise, 1e-9)
+    aligned = directional_z_15 >= 0.25
     context_strength = _clamp(
         abs(z_60) * 23.0
-        + abs(z_15) * 16.0
+        + max(0.0, directional_z_15) * 16.0
+        - max(0.0, -directional_z_15) * 26.0
         + r_squared * 32.0
-        + (12.0 if aligned else -14.0)
-        + min(12.0, abs(slope_60) / max(noise, 1e-9) * 8.0)
+        + (12.0 if aligned else -18.0)
+        + min(12.0, max(0.0, directional_slope) * 8.0)
+        - min(12.0, max(0.0, -directional_slope) * 10.0)
     )
     if abs(z_60) < 0.72 or context_strength < 42:
         return Setup(
@@ -606,6 +611,19 @@ def _assess_trend(
         if move > 0 and (event is None or move > event[0]):
             event = (move, index, anchor_index, extreme)
 
+    middle_scores = [
+        _directional(windows[minute].score, direction)
+        for minute in (10, 15, 20)
+        if minute in windows and windows[minute].quality == "ok"
+    ]
+    middle_supporting = sum(value >= 5.0 for value in middle_scores)
+    middle_opposing = sum(value <= -18.0 for value in middle_scores)
+    middle_confirmed = (
+        len(middle_scores) == 3
+        and middle_supporting >= 2
+        and middle_opposing == 0
+        and _mean(middle_scores) >= 6.0
+    )
     window_bias = _mean(
         _directional(windows[minute].score, direction)
         for minute in TREND_WINDOWS
@@ -639,6 +657,10 @@ def _assess_trend(
     else:
         rebound = _pct(extreme, last_close) * -1.0
     rebound_fraction = rebound / max(pullback, 1e-9)
+    expected_edge = max(
+        max(0.0, pullback - max(0.0, rebound)),
+        noise * math.sqrt(5.0) * 1.8,
+    )
     recent_returns = _last_returns(lookback, 3)
     directional_returns = [_directional(value, direction) for value in recent_returns]
     confirmation_count = sum(value > 0 for value in directional_returns)
@@ -678,11 +700,12 @@ def _assess_trend(
     ready = (
         valid_pullback
         and 1 <= age <= 5
-        and 0.10 <= rebound_fraction <= 0.72
+        and 0.18 <= rebound_fraction <= 0.72
         and last_confirms
         and confirmation_count >= 2
         and volume_score >= 42
         and context_strength >= 56
+        and middle_confirmed
     )
     if too_deep:
         phase, exit_hint, score = "invalidated", True, min(score, 38.0)
@@ -701,11 +724,56 @@ def _assess_trend(
         confirmations=confirmation_count,
         event_strength=context_strength,
         event_timestamp_ms=_timestamp_ms(lookback[event_index]),
+        expected_edge_pct=expected_edge,
         reason=(
             f"pullback={pullback:.3f}% retrace={retracement:.2f} "
-            f"rebound={rebound_fraction:.2f}"
+            f"rebound={rebound_fraction:.2f} "
+            f"mid={middle_supporting}/3 edge={expected_edge:.3f}%"
         ),
     )
+
+
+def _assess_trend(
+    candles: list[Mapping[str, Any]],
+    windows: Mapping[int, Window],
+    noise: float,
+) -> Setup:
+    current = _assess_trend_once(candles, windows, noise)
+    if current.phase != "ready":
+        return current
+
+    history = [current]
+    for offset in range(1, 5):
+        if len(candles) < 200 + offset:
+            break
+        previous_candles = candles[:-offset]
+        previous_windows = {
+            minutes: _window(previous_candles, minutes)
+            for minutes in ANALYSIS_WINDOWS
+        }
+        history.append(
+            _assess_trend_once(
+                previous_candles,
+                previous_windows,
+                _robust_noise(previous_candles),
+            )
+        )
+
+    ready_streak = 0
+    for item in history:
+        if item.phase == "ready" and item.direction == current.direction:
+            ready_streak += 1
+        else:
+            break
+    older_ready_after_gap = any(
+        item.phase == "ready"
+        for item in history[ready_streak + 1:]
+    )
+    if ready_streak < 2 or (older_ready_after_gap and ready_streak < 3):
+        current.phase = "forming"
+        current.score = min(current.score, 73.0)
+        current.reason += " resume=unstable"
+    return current
 
 
 def _reversal_candidate(
@@ -844,6 +912,7 @@ def _reversal_candidate(
         event_timestamp_ms=_timestamp_ms(rows[event_index]),
         move_pct=shock,
         rejection_fraction=event_rejection,
+        recovery_fraction=rebound_fraction,
         reason=(
             f"shock={shock:.3f}%/{shock_z:.2f}z "
             f"rebound={rebound_fraction:.2f} reject={event_rejection:.2f} "
@@ -930,6 +999,30 @@ def _setup_code(signal: Signal) -> str:
     }.get(signal.selected_setup, "–")
 
 
+def _selected_setup(signal: Signal) -> Setup:
+    return {
+        "PRESSURE": signal.pressure,
+        "TREND": signal.trend,
+        "REVERSAL": signal.reversal,
+    }.get(signal.selected_setup, Setup("NONE"))
+
+
+def _market_bias(signal: Signal) -> float | None:
+    weights = {5: 0.45, 20: 0.35, 60: 0.20}
+    valid = [
+        signal.windows[minute]
+        for minute in DISPLAY_WINDOWS
+        if minute in signal.windows and signal.windows[minute].quality == "ok"
+    ]
+    usable_weight = sum(weights[item.minutes] for item in valid)
+    if len(valid) < 2 or usable_weight <= 0:
+        return None
+    return sum(
+        item.score * weights[item.minutes]
+        for item in valid
+    ) / usable_weight
+
+
 def _window_color(window: Window) -> str:
     if window.quality != "ok":
         return "🟤"
@@ -973,7 +1066,7 @@ class LighterMonitor:
         ]
         if invalid_aliases:
             raise ValueError(f"Coin-Kürzel müssen drei Zeichen haben: {invalid_aliases}")
-        summary_count = int(self.config.get("summary_coin_count", 5))
+        summary_count = int(self.config.get("summary_coin_count", 6))
         minimum_details = int(self.config.get("minimum_detail_count", 2))
         maximum_details = int(self.config.get("maximum_detail_count", 4))
         if not 1 <= summary_count <= len(symbols):
@@ -1003,6 +1096,9 @@ class LighterMonitor:
             "trend_minimum_context_strength",
             "trend_minimum_volume_score",
             "reversal_minimum_setup_score",
+            "btc_pressure_immediate_breadth_score",
+            "btc_trend_immediate_breadth_score",
+            "btc_reversal_immediate_breadth_score",
         )
         if any(
             not 0 <= float(self.config.get(key, 100)) <= 100
@@ -1018,7 +1114,17 @@ class LighterMonitor:
         rejection = float(
             self.config.get("reversal_min_rejection_fraction", 0.30)
         )
-        if not 0 < minimum_reversal <= immediate_reversal or not 0 <= rejection <= 1:
+        max_recovery = float(
+            self.config.get("reversal_max_entry_recovery_fraction", 0.68)
+        )
+        late_override = float(
+            self.config.get("reversal_late_recovery_override_move_pct", 1.0)
+        )
+        if (
+            not 0 < minimum_reversal <= immediate_reversal <= late_override
+            or not 0 <= rejection <= 1
+            or not 0 < max_recovery < 1
+        ):
             raise ValueError("Wende-Schwellen sind nicht logisch geordnet")
         positive_keys = (
             "execution_quote_usdc",
@@ -1035,6 +1141,16 @@ class LighterMonitor:
             raise ValueError("candle_count muss mindestens 200 betragen")
         if int(self.config.get("pressure_entry_max_age_minutes", 2)) < 0:
             raise ValueError("pressure_entry_max_age_minutes darf nicht negativ sein")
+        if float(self.config.get("trend_minimum_expected_edge_pct", 0.10)) <= 0:
+            raise ValueError("trend_minimum_expected_edge_pct muss positiv sein")
+        if float(self.config.get("trend_cost_edge_multiple", 3.0)) < 1:
+            raise ValueError("trend_cost_edge_multiple muss mindestens eins sein")
+        breadth_symbols = [
+            str(value).upper()
+            for value in self.config.get("btc_breadth_symbols", [])
+        ]
+        if len(set(breadth_symbols)) < 3 or "BTC" in breadth_symbols:
+            raise ValueError("btc_breadth_symbols braucht mindestens drei Nicht-BTC-Märkte")
 
     def _analyse(
         self,
@@ -1300,6 +1416,21 @@ class LighterMonitor:
                     and selected.score >= setup_minimum - hold_margin
                 )
         elif selected.kind == "TREND":
+            effective_cost = (
+                signal.cost_pct
+                if signal.cost_pct is not None
+                else cost_limit
+            )
+            expected_edge_required = max(
+                float(
+                    self.config.get(
+                        "trend_minimum_expected_edge_pct",
+                        0.10,
+                    )
+                ),
+                effective_cost
+                * float(self.config.get("trend_cost_edge_multiple", 3.0)),
+            )
             setup_is_precise = (
                 setup_is_precise
                 and selected.event_strength >= float(
@@ -1308,8 +1439,25 @@ class LighterMonitor:
                 and selected.volume_score >= float(
                     self.config.get("trend_minimum_volume_score", 50)
                 )
+                and selected.expected_edge_pct >= expected_edge_required
             )
         elif selected.kind == "REVERSAL":
+            recovery_limit = float(
+                self.config.get(
+                    "reversal_max_entry_recovery_fraction",
+                    0.68,
+                )
+            )
+            late_recovery_override = (
+                selected.move_pct >= float(
+                    self.config.get(
+                        "reversal_late_recovery_override_move_pct",
+                        1.0,
+                    )
+                )
+                and selected.age_minutes is not None
+                and selected.age_minutes <= 2
+            )
             setup_is_precise = (
                 setup_is_precise
                 and selected.move_pct >= float(
@@ -1317,6 +1465,10 @@ class LighterMonitor:
                 )
                 and selected.rejection_fraction >= float(
                     self.config.get("reversal_min_rejection_fraction", 0.30)
+                )
+                and (
+                    selected.recovery_fraction <= recovery_limit
+                    or late_recovery_override
                 )
             )
         hard_block = (
@@ -1385,11 +1537,67 @@ class LighterMonitor:
         if btc is None:
             return
         btc_bias = btc.direction
+        btc_direction = _direction(btc_bias)
+        breadth_symbols = {
+            str(value).upper()
+            for value in self.config.get("btc_breadth_symbols", [])
+        }
+        breadth_rows: list[tuple[float, float]] = []
+        supporting = 0
+        opposing = 0
+        for item in signals:
+            if (
+                item.symbol == "BTC"
+                or item.symbol not in breadth_symbols
+                or item.state == "INVALID_DATA"
+                or item.data_quality < 66.0
+                or item.liquidity_score < 40.0
+            ):
+                continue
+            bias = _market_bias(item)
+            if bias is None:
+                continue
+            aligned = _directional(bias, btc_direction)
+            weight = 0.65 + _clamp(item.liquidity_score, 0.0, 100.0) / 100.0 * 0.35
+            breadth_rows.append((aligned, weight))
+            supporting += aligned >= 8.0
+            opposing += aligned <= -8.0
+
+        btc_breadth: float | None = None
+        if len(breadth_rows) >= 3:
+            weighted_alignment = sum(
+                _clamp(value, -60.0, 60.0) * weight
+                for value, weight in breadth_rows
+            ) / sum(weight for _, weight in breadth_rows)
+            balance = (supporting - opposing) / len(breadth_rows)
+            btc_breadth = _clamp(
+                50.0 + weighted_alignment * 0.55 + balance * 22.0
+            )
+        btc.btc_context = btc_breadth
+
+        if btc.state in {"BUY", "SELL"}:
+            breadth_threshold = float(
+                self.config.get(
+                    {
+                        "PRESSURE": "btc_pressure_immediate_breadth_score",
+                        "TREND": "btc_trend_immediate_breadth_score",
+                        "REVERSAL": "btc_reversal_immediate_breadth_score",
+                    }.get(btc.selected_setup, ""),
+                    100.0,
+                )
+            )
+            if btc_breadth is None or btc_breadth < breadth_threshold:
+                btc.state = (
+                    "STRONG_LONG"
+                    if btc.direction >= 0
+                    else "STRONG_SHORT"
+                )
+                btc.reasons.append("Marktbreite verhindert BTC-Sofortfreigabe")
+
         for item in signals:
             if item.state == "INVALID_DATA":
                 continue
             if item.symbol == "BTC":
-                item.btc_context = 100.0
                 continue
             if abs(btc_bias) < 15.0:
                 item.btc_context = 60.0
@@ -1435,9 +1643,66 @@ class LighterMonitor:
             ),
         )
 
+    def _include_extra_detail(self, signal: Signal, position: int) -> bool:
+        if position not in {3, 4} or STATE_TIER.get(signal.state, 0) < 2:
+            return False
+        setup = _selected_setup(signal)
+        if (
+            setup.phase not in {"ready", "strong", "forming"}
+            or setup.exit_hint
+            or signal.data_quality < 100.0
+        ):
+            return False
+
+        immediate = float(self.config.get("immediate_trade_readiness", 78))
+        if signal.selected_setup == "PRESSURE":
+            immediate = float(
+                self.config.get("pressure_immediate_trade_readiness", immediate)
+            )
+        setup_minimum = float(
+            self.config.get(
+                {
+                    "PRESSURE": "pressure_minimum_setup_score",
+                    "TREND": "trend_minimum_setup_score",
+                    "REVERSAL": "reversal_minimum_setup_score",
+                }.get(signal.selected_setup, ""),
+                100.0,
+            )
+        )
+        readiness_gap = max(0.0, immediate - signal.trade_readiness)
+        setup_gap = max(0.0, setup_minimum - setup.score)
+        economical = (
+            signal.execution_score >= (58.0 if position == 4 else 48.0)
+            and signal.liquidity_score >= (58.0 if position == 4 else 50.0)
+            and signal.volume_confirmation >= (55.0 if position == 4 else 44.0)
+        )
+        if signal.state in {"BUY", "SELL"}:
+            return economical
+        if position == 3:
+            if signal.state in {"STRONG_LONG", "STRONG_SHORT"}:
+                return (
+                    economical
+                    and signal.trade_readiness
+                    >= float(self.config.get("strong_trade_readiness", 66)) + 2.0
+                    and setup_gap <= 10.0
+                )
+            return (
+                economical
+                and readiness_gap <= 7.0
+                and setup_gap <= 8.0
+                and setup.confirmations >= 1
+            )
+        return (
+            economical
+            and setup.phase == "ready"
+            and readiness_gap <= 3.0
+            and setup_gap <= 4.0
+            and setup.confirmations >= 1
+        )
+
     def _format(self, signals: list[Signal], now: datetime) -> str:
         ranked = self._rank(signals)
-        summary_count = int(self.config.get("summary_coin_count", 5))
+        summary_count = int(self.config.get("summary_coin_count", 6))
         summary = ranked[:summary_count]
         timestamp = now.astimezone(
             ZoneInfo(str(self.config.get("timezone", "Europe/Berlin")))
@@ -1453,8 +1718,11 @@ class LighterMonitor:
         minimum_details = int(self.config.get("minimum_detail_count", 2))
         maximum_details = int(self.config.get("maximum_detail_count", 4))
         details = list(ranked[:minimum_details])
-        for item in ranked[minimum_details:maximum_details]:
-            if STATE_TIER.get(item.state, 0) >= 2:
+        for position, item in enumerate(
+            ranked[minimum_details:maximum_details],
+            start=minimum_details + 1,
+        ):
+            if self._include_extra_detail(item, position):
                 details.append(item)
             else:
                 break
@@ -1497,9 +1765,10 @@ class LighterMonitor:
                     ("🟡" if against > funding_watch else "🟢")
                 )
             line = (
-                f"{_detail_head(item)}{_setup_code(item)} {windows} "
+                f"{_detail_head(item)} {windows} "
                 f"V{volume_color}L{liquidity_color}B{btc_color}"
-                f"K{cost_color}F{funding_color} {item.alias}"
+                f"K{cost_color}F{funding_color} "
+                f"{item.alias}{_setup_code(item)}"
             )
             lines.append(line)
 
@@ -1592,4 +1861,4 @@ class LighterMonitor:
         return self.client.candles(market_id, count=candle_count), self.client.book(market_id)
 
 
-# Package revision: v3.6.3-ptw-precision-r3
+# Package revision: v3.6.3-ptw-precision-r4

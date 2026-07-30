@@ -1,6 +1,6 @@
 {
   "schema_version": "3.6.3",
-  "package_revision": "v3.6.3-ptw-precision-r3",
+  "package_revision": "v3.6.3-ptw-precision-r4",
   "lighter_base_url": "https://mainnet.zklighter.elliot.ai/api/v1",
   "timezone": "Europe/Berlin",
   "candidate_symbols": [
@@ -13,7 +13,7 @@
     "LIT": "LIT", "ZEC": "ZEC", "PUMP": "PMP", "ENA": "ENA", "AAVE": "AAV",
     "NEAR": "NER", "UNI": "UNI", "GRAM": "GRM", "XPL": "XPL"
   },
-  "summary_coin_count": 5,
+  "summary_coin_count": 6,
   "minimum_detail_count": 2,
   "maximum_detail_count": 4,
   "execution_quote_usdc": 50,
@@ -25,6 +25,8 @@
   "hard_reversal_min_move_pct": 0.20,
   "reversal_immediate_min_move_pct": 0.75,
   "reversal_min_rejection_fraction": 0.30,
+  "reversal_max_entry_recovery_fraction": 0.68,
+  "reversal_late_recovery_override_move_pct": 1.00,
   "reversal_btc_override_move_pct": 1.00,
   "immediate_trade_readiness": 78,
   "pressure_immediate_trade_readiness": 74,
@@ -34,7 +36,15 @@
   "trend_minimum_setup_score": 82,
   "trend_minimum_context_strength": 84,
   "trend_minimum_volume_score": 50,
+  "trend_minimum_expected_edge_pct": 0.10,
+  "trend_cost_edge_multiple": 3.0,
   "reversal_minimum_setup_score": 82,
+  "btc_breadth_symbols": [
+    "ETH", "SOL", "XRP", "HYPE", "AAVE", "ENA", "UNI", "PUMP"
+  ],
+  "btc_pressure_immediate_breadth_score": 60,
+  "btc_trend_immediate_breadth_score": 66,
+  "btc_reversal_immediate_breadth_score": 52,
   "strong_trade_readiness": 66,
   "watch_trade_readiness": 60,
   "candle_count": 360,

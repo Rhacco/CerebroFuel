@@ -864,4 +864,4 @@ def analyze_candles(
         reasons.append("Spread erhöht")
     metrics.reasons = tuple(reasons)
     return metrics
-# Package revision: v3.6.3-ptw-precision-r3
+# Package revision: v3.6.3-ptw-precision-r4

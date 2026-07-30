@@ -1,4 +1,4 @@
 # v3.6.3 active Lighter runtime uses only the Python standard library.
 # Keep requests available for the retained v3.5 compatibility modules.
-# Package revision: v3.6.3-ptw-precision-r3
+# Package revision: v3.6.3-ptw-precision-r4
 requests>=2.31,<3

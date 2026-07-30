@@ -82,4 +82,4 @@ async function triggerGitHubWithRetry(env, source) {
   throw new Error(`GitHub konnte nicht gestartet werden: ${lastError}`);
 }
 
-// Package revision: v3.6.3-ptw-precision-r3
+// Package revision: v3.6.3-ptw-precision-r4
