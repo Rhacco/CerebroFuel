@@ -1,4 +1,4 @@
-# v3.6.0 active Lighter runtime uses only the Python standard library.
+# v3.6.1 active Lighter runtime uses only the Python standard library.
 # Keep requests available for the retained v3.5 compatibility modules.
-# Package revision: v3.6.0-lighter-structure-r2
+# Package revision: v3.6.1-simple-signals-r1
 requests>=2.31,<3

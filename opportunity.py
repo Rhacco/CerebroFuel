@@ -909,4 +909,4 @@ def assess_opportunity(
         volume_colors=visible_colors,
         reasons=tuple(dict.fromkeys(reasons)),
     )
-# Package revision: v3.6.0-lighter-structure-r2
+# Package revision: v3.6.1-simple-signals-r1

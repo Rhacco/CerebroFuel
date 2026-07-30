@@ -13,11 +13,15 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-APP_VERSION = "3.6.0"
+APP_VERSION = "3.6.1"
 WINDOWS = (10, 20, 60)
-COLORS = {
-    "BUY": "🟣", "WATCH_LONG": "🟢", "NO_TRADE": "🟡",
-    "WATCH_SHORT": "🟠", "SELL": "🔴", "INVALID_DATA": "🟤",
+SUMMARY_COLORS = {
+    "BUY": "🟢", "WATCH_LONG": "🔵", "NO_TRADE": "🟡",
+    "WATCH_SHORT": "🟠", "SELL": "🔴", "INVALID_DATA": "🟡",
+}
+DETAIL_COLORS = {
+    "BUY": "🟣", "WATCH_LONG": "🔵", "NO_TRADE": "🟡",
+    "WATCH_SHORT": "🟠", "SELL": "🟣", "INVALID_DATA": "🟤",
 }
 
 
@@ -31,6 +35,10 @@ def _f(value: Any, default: float = 0.0) -> float:
 
 def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
     return max(low, min(high, value))
+
+
+def _arrow(direction: float) -> str:
+    return "▲" if direction > 8 else ("▼" if direction < -8 else "·")
 
 
 @dataclass
@@ -69,7 +77,7 @@ class LighterClient:
         url = self.base + path
         if params:
             url += "?" + urlencode(params)
-        request = Request(url, headers={"Accept": "application/json", "User-Agent": "cf/3.6.0"})
+        request = Request(url, headers={"Accept": "application/json", "User-Agent": "cf/3.6.1"})
         with urlopen(request, timeout=self.timeout) as response:
             payload = json.load(response)
         if not isinstance(payload, Mapping) or int(payload.get("code", 200)) != 200:
@@ -235,46 +243,49 @@ class LighterMonitor:
         return signal
 
     def _format(self, signals: list[Signal], now: datetime) -> str:
-        btc = next((item for item in signals if item.symbol == "BTC"), None)
-        valid = [item for item in signals if item.state != "INVALID_DATA"]
-        market_color = "🟢" if btc and btc.direction >= 8 else ("🔴" if btc and btc.direction <= -8 else "🟡")
-        quality_color = "🟢" if len(valid) >= 10 else ("🟡" if len(valid) >= 7 else "🟤")
-        header = (
-            f"BTC{market_color}MKT{quality_color}LQ{quality_color}"
-            f"FND{quality_color}QLT{quality_color}"
-            f"{now.astimezone(ZoneInfo(str(self.config.get('timezone', 'Europe/Berlin')))).strftime(':%M')}"
-        )
         ranked = sorted(
             signals,
             key=lambda item: (
-                item.symbol != "BTC",
-                item.state in {"BUY", "SELL", "WATCH_LONG", "WATCH_SHORT"},
                 item.confidence,
+                abs(item.direction),
                 item.opportunity,
+                item.alias,
             ),
             reverse=True,
         )
-        top = ranked[: int(self.config.get("top_coin_count", 8))]
-        lines = [header]
-        for item in top:
-            color = COLORS[item.state]
-            arrow = "▲" if item.direction > 8 else ("▼" if item.direction < -8 else "·")
-            funding = "?" if item.funding_hourly_pct is None else (
-                "+" if item.funding_hourly_pct > .00005 else ("-" if item.funding_hourly_pct < -.00005 else "0")
+        summary_count = int(self.config.get("summary_coin_count", 6))
+        summary = ranked[:summary_count]
+        timestamp = now.astimezone(
+            ZoneInfo(str(self.config.get("timezone", "Europe/Berlin")))
+        ).strftime(":%M")
+        lines = [
+            "".join(
+                f"{SUMMARY_COLORS[item.state]}{_arrow(item.direction)}{item.alias}"
+                for item in summary
             )
+            + timestamp
+        ]
+
+        noteworthy = [
+            item for item in ranked
+            if item.confidence >= float(self.config.get("detail_confidence_threshold", 55))
+            or item.state in {"BUY", "SELL", "WATCH_LONG", "WATCH_SHORT"}
+        ]
+        detail_count = min(
+            int(self.config.get("maximum_detail_count", 3)),
+            max(int(self.config.get("minimum_detail_count", 1)), len(noteworthy)),
+        )
+        details = ranked[:detail_count]
+        for item in details:
+            color = DETAIL_COLORS[item.state]
+            arrow = _arrow(item.direction)
             window_colors = "".join(
                 "🟤" if window.quality != "ok" else (
                     "🟢" if window.score >= 12 else ("🔴" if window.score <= -12 else "🟡")
                 )
                 for window in item.windows.values()
             )
-            line = (
-                f"{color}{int(round(item.confidence)):02d}{arrow}"
-                f"O{int(round(item.opportunity)):02d}"
-                f"D{int(round(abs(item.direction))):02d}"
-                f"C{int(round(item.cost_pct * 100)) if item.cost_pct is not None else 99:02d}"
-                f"F{funding}V{window_colors}{item.alias}"
-            )
+            line = f"{color}{arrow}{window_colors}{item.alias}"
             lines.append(line[: int(self.config.get("discord_max_codepoints_per_line", 34))])
         return "\n".join(lines)
 
@@ -320,8 +331,10 @@ class LighterMonitor:
                                   reasons=["kein aktiver Lighter-Krypto-Perp"]))
         report = self._format(signals, now)
         max_len = int(self.config.get("discord_max_codepoints_per_line", 34))
-        if len(report.splitlines()) != int(self.config.get("top_coin_count", 8)) + 1:
-            raise RuntimeError("Discord-Ausgabe hat nicht neun Zeilen")
+        minimum_lines = int(self.config.get("minimum_detail_count", 1)) + 1
+        maximum_lines = int(self.config.get("maximum_detail_count", 3)) + 1
+        if not minimum_lines <= len(report.splitlines()) <= maximum_lines:
+            raise RuntimeError("Discord-Ausgabe hat nicht zwei bis vier Zeilen")
         if any(len(line) > max_len for line in report.splitlines()):
             raise RuntimeError("Discord-Zeilenlimit überschritten")
         payload = {
@@ -334,4 +347,4 @@ class LighterMonitor:
         market_id = int(market["market_id"])
         return self.client.candles(market_id), self.client.book(market_id)
 
-# Package revision: v3.6.0-lighter-structure-r2
+# Package revision: v3.6.1-simple-signals-r1

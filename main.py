@@ -1,4 +1,4 @@
-"""Crypto Signal Monitor v3.6.0 — Lighter-native, read-only signal engine."""
+"""Crypto Signal Monitor v3.6.1 — Lighter-native, read-only signal engine."""
 from __future__ import annotations
 
 import argparse
@@ -43,7 +43,7 @@ def main() -> int:
         send_discord(
             webhook,
             report,
-            username=str(config.get("discord_username", "CF v3.6.0")),
+            username=str(config.get("discord_username", "CF v3.6.1")),
             avatar_url=str(config.get("discord_avatar_url", "")).strip(),
         )
         print("Discord gesendet.")
@@ -53,4 +53,4 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 
-# Package revision: v3.6.0-lighter-structure-r2
+# Package revision: v3.6.1-simple-signals-r1

@@ -1,5 +1,5 @@
-name: Crypto Signal Monitor v3.6.0
-# Package revision: v3.6.0-lighter-structure-r2
+name: Crypto Signal Monitor v3.6.1
+# Package revision: v3.6.1-simple-signals-r1
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: crypto-signal-monitor-v360
+  group: crypto-signal-monitor-v361
   cancel-in-progress: false
 
 jobs:
