@@ -66,4 +66,4 @@ def mark_report_sent(*, path: Path, digest: str, now_ms: int, reason: str) -> No
         "last_sent_ms": int(now_ms),
         "last_reason": str(reason),
     })
-# Package revision: v3.6.3-ptw-precision-r4
+# Package revision: v3.7-paper-multi-r1

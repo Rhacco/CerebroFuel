@@ -909,4 +909,4 @@ def assess_opportunity(
         volume_colors=visible_colors,
         reasons=tuple(dict.fromkeys(reasons)),
     )
-# Package revision: v3.6.3-ptw-precision-r4
+# Package revision: v3.7-paper-multi-r1

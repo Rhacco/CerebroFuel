@@ -46,7 +46,7 @@ class LiveCoinWatchClient:
             "cache-control": "no-cache",
             "pragma": "no-cache",
             "x-api-key": api_key,
-            "user-agent": "crypto-signal-monitor/v3.5.0",
+            "user-agent": "crypto-signal-monitor/v3.7",
         }
         self._session = requests.Session()
         self._lock = threading.Lock()
@@ -295,4 +295,4 @@ class LiveCoinWatchClient:
             cursor_end = cursor_start
 
         return [merged[key] for key in sorted(merged)], requests_used, partial_note
-# Package revision: v3.6.3-ptw-precision-r4
+# Package revision: v3.7-paper-multi-r1

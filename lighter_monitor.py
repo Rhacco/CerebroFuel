@@ -1,4 +1,4 @@
-"""Lighter-native P/T/W monitor for early, confirmed manual entries."""
+"""Lighter-native P/T/W signal engine for CF v3.7."""
 from __future__ import annotations
 
 import json
@@ -14,8 +14,8 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-APP_VERSION = "3.6.3"
-PACKAGE_REVISION = "v3.6.3-ptw-precision-r4"
+APP_VERSION = "3.7"
+PACKAGE_REVISION = "v3.7-paper-multi-r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 PRESSURE_WINDOWS = (10, 20, 60)
@@ -134,6 +134,13 @@ class Signal:
     volume_24h: float = 0.0
     open_interest_usd: float = 0.0
     volume_oi: float | None = None
+    price: float = 0.0
+    candle_timestamp_ms: int = 0
+    noise_pct: float = 0.0
+    min_quote_amount: float = 0.0
+    platform_max_leverage: float = 0.0
+    maintenance_margin_pct: float = 0.0
+    taker_fee_pct: float = 0.0
     windows: dict[int, Window] = field(default_factory=dict)
     pressure: Setup = field(default_factory=lambda: Setup("PRESSURE"))
     trend: Setup = field(default_factory=lambda: Setup("TREND"))
@@ -1053,6 +1060,9 @@ class LighterMonitor:
             int(config.get("api_retry_count", 3)),
             int(config.get("closed_candle_delay_seconds", 8)),
         )
+        self.last_signals: list[Signal] = []
+        self.last_snapshots: dict[str, dict[str, Any]] = {}
+        self.generated_at = datetime.now(timezone.utc)
 
     def _validate_config(self) -> None:
         symbols = [str(value).upper() for value in self.config.get("candidate_symbols", [])]
@@ -1174,6 +1184,28 @@ class LighterMonitor:
             else None
         )
         signal.funding_hourly_pct = None if funding is None else funding * 100.0
+        signal.price = (
+            _f(candles[-1].get("c"), reference_price)
+            if candles
+            else reference_price
+        )
+        signal.candle_timestamp_ms = _timestamp_ms(candles[-1]) if candles else 0
+        signal.min_quote_amount = max(0.0, _f(market.get("min_quote_amount")))
+        minimum_margin_fraction = _f(market.get("min_initial_margin_fraction"))
+        signal.platform_max_leverage = (
+            10_000.0 / minimum_margin_fraction
+            if minimum_margin_fraction > 0
+            else 0.0
+        )
+        signal.maintenance_margin_pct = max(
+            0.0,
+            _f(market.get("maintenance_margin_fraction")) / 100.0,
+        )
+        signal.taker_fee_pct = (
+            max(0.0, _f(market.get("taker_fee")))
+            if market.get("is_taker_fee_enabled", True) is not False
+            else 0.0
+        )
         execution_quote = float(self.config.get("execution_quote_usdc", 50))
         signal.cost_pct = _roundtrip_cost(book, execution_quote)
         signal.windows = {
@@ -1208,6 +1240,7 @@ class LighterMonitor:
         )
 
         noise = _robust_noise(candles)
+        signal.noise_pct = noise
         signal.pressure = _assess_pressure(candles)
         signal.trend = _assess_trend(candles, signal.windows, noise)
         signal.reversal = _assess_reversal(
@@ -1779,6 +1812,7 @@ class LighterMonitor:
 
     def run(self) -> tuple[str, dict[str, Any]]:
         now = datetime.now(timezone.utc)
+        self.generated_at = now
         allowed = {str(value).upper() for value in self.config.get("candidate_symbols", [])}
         markets = {
             str(row.get("symbol")).upper(): row
@@ -1801,6 +1835,7 @@ class LighterMonitor:
                 funding[symbol] = rate
 
         signals: list[Signal] = []
+        snapshots: dict[str, dict[str, Any]] = {}
         workers = min(8, max(1, int(self.config.get("parallel_requests", 6))))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {
@@ -1811,6 +1846,11 @@ class LighterMonitor:
                 symbol = futures[future]
                 try:
                     candles, book = future.result()
+                    snapshots[symbol] = {
+                        "market": markets[symbol],
+                        "candles": candles,
+                        "book": book,
+                    }
                     signals.append(
                         self._analyse(
                             markets[symbol],
@@ -1838,6 +1878,8 @@ class LighterMonitor:
             )
 
         self._apply_btc_context(signals)
+        self.last_signals = self._rank(signals)
+        self.last_snapshots = snapshots
         report = self._format(signals, now)
         minimum_lines = int(self.config.get("minimum_detail_count", 2)) + 1
         maximum_lines = int(self.config.get("maximum_detail_count", 4)) + 1
@@ -1848,7 +1890,7 @@ class LighterMonitor:
             "package_revision": PACKAGE_REVISION,
             "generated_at": now.isoformat(),
             "report": report,
-            "signals": [asdict(item) for item in self._rank(signals)],
+            "signals": [asdict(item) for item in self.last_signals],
         }
         return report, payload
 
@@ -1861,4 +1903,4 @@ class LighterMonitor:
         return self.client.candles(market_id, count=candle_count), self.client.book(market_id)
 
 
-# Package revision: v3.6.3-ptw-precision-r4
+# Package revision: v3.7-paper-multi-r1

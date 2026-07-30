@@ -196,4 +196,4 @@ def combined_priority(
     quality_factor = 0.72 + 0.28 * _clamp(quality)
     deduction = max(0.0, min(20.0, float(unlock_penalty)))
     return round(max(0.0, primary * quality_factor + secondary - deduction), 4)
-# Package revision: v3.6.3-ptw-precision-r4
+# Package revision: v3.7-paper-multi-r1
