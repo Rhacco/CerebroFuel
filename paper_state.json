@@ -1,11 +1,13 @@
 {
   "app_version": "3.7",
-  "balance_usd": 100.0293892938,
+  "balance_usd": 100.0588796149,
   "checkpoint_requested": false,
-  "cooldowns": {},
-  "last_checkpoint_at": "2026-07-30T20:00:59.824534+00:00",
-  "last_decision_key": "1785441600000",
-  "last_run_at": "2026-07-30T20:00:58.255371+00:00",
+  "cooldowns": {
+    "ZEC": 1785442078
+  },
+  "last_checkpoint_at": "2026-07-30T20:03:00.517992+00:00",
+  "last_decision_key": "1785441720000",
+  "last_run_at": "2026-07-30T20:02:58.155200+00:00",
   "ledger": [
     {
       "action": {
@@ -502,126 +504,126 @@
         "target_two_price": 476.80568947972097
       },
       "timestamp": "2026-07-30T20:00:58.255371+00:00"
+    },
+    {
+      "action": {
+        "alias": "ZEC",
+        "direction": 1,
+        "discord_visible": false,
+        "full_close": true,
+        "is_add": false,
+        "kind": "CLOSE",
+        "leverage": 0,
+        "margin_usd": 1.0,
+        "priority": 95.0,
+        "realized_pnl_usd": 0.029490321063135067,
+        "reason": "Ziel 1 erreicht",
+        "symbol": "ZEC"
+      },
+      "balance_usd": 100.05887961,
+      "details": {
+        "base_size": 0.02108596960668,
+        "entry_fee_usd": 0.0,
+        "entry_price": 474.249,
+        "exit_fee_usd": 0.0,
+        "exit_price": 475.6490918579425,
+        "full_close": true,
+        "funding_usd": 3.19733e-05,
+        "gross_pnl_usd": 0.029522294363135068,
+        "isolated_loss_capped": false,
+        "raw_net_pnl_usd": 0.029490321063135067
+      },
+      "timestamp": "2026-07-30T20:02:58.155200+00:00"
     }
   ],
   "observations": {
     "AAVE": {
-      "candle_ms": 1785441600000,
+      "candle_ms": 1785441720000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "BTC": {
-      "candle_ms": 1785441600000,
+      "candle_ms": 1785441720000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "WATCH_LONG"
+      "state": "STRONG_LONG"
     },
     "ENA": {
-      "candle_ms": 1785441600000,
+      "candle_ms": 1785441720000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "ETH": {
-      "candle_ms": 1785441600000,
+      "candle_ms": 1785441720000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "NO_TRADE"
+      "state": "WATCH_LONG"
     },
     "GRAM": {
-      "candle_ms": 1785441600000,
+      "candle_ms": 1785441720000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "NO_TRADE"
+      "state": "WATCH_LONG"
     },
     "HYPE": {
-      "candle_ms": 1785441600000,
+      "candle_ms": 1785441720000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "NO_TRADE"
+      "state": "WATCH_LONG"
     },
     "LIT": {
-      "candle_ms": 1785441600000,
-      "entry_direction": 0,
-      "entry_streak": 0,
-      "state": "WATCH_LONG"
-    },
-    "NEAR": {
-      "candle_ms": 1785441600000,
-      "entry_direction": 0,
-      "entry_streak": 0,
-      "state": "WATCH_LONG"
-    },
-    "PUMP": {
-      "candle_ms": 1785441600000,
+      "candle_ms": 1785441720000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "STRONG_LONG"
     },
+    "NEAR": {
+      "candle_ms": 1785441720000,
+      "entry_direction": 0,
+      "entry_streak": 0,
+      "state": "STRONG_LONG"
+    },
+    "PUMP": {
+      "candle_ms": 1785441720000,
+      "entry_direction": 0,
+      "entry_streak": 0,
+      "state": "WATCH_LONG"
+    },
     "SOL": {
-      "candle_ms": 1785441600000,
+      "candle_ms": 1785441720000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "WATCH_LONG"
     },
     "UNI": {
-      "candle_ms": 1785441600000,
+      "candle_ms": 1785441720000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "NO_TRADE"
+      "state": "WATCH_LONG"
     },
     "XPL": {
-      "candle_ms": 1785441600000,
+      "candle_ms": 1785441720000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "XRP": {
-      "candle_ms": 1785441600000,
+      "candle_ms": 1785441720000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "WATCH_LONG"
     },
     "ZEC": {
-      "candle_ms": 1785441600000,
-      "entry_direction": 1,
-      "entry_streak": 1,
-      "state": "BUY"
+      "candle_ms": 1785441720000,
+      "entry_direction": 0,
+      "entry_streak": 0,
+      "state": "STRONG_LONG"
     }
   },
-  "positions": {
-    "ZEC": {
-      "alias": "ZEC",
-      "base_size": 0.02108596960668,
-      "degrade_streak": 0,
-      "direction": 1,
-      "entry_confidence": 81.91869263427613,
-      "entry_fee_remaining_usd": 0.0,
-      "entry_price": 474.249,
-      "entry_rank": 1,
-      "entry_readiness": 86.13705686064311,
-      "entry_roundtrip_cost_pct": 0.03647872741956268,
-      "funding_accrued_usd": 0.0,
-      "funding_updated_at": "2026-07-30T20:00:58.255371+00:00",
-      "last_candle_ms": 1785441600000,
-      "leverage": 10,
-      "margin_usd": 1.0,
-      "notional_usd": 10.0,
-      "opened_at": "2026-07-30T20:00:58.255371+00:00",
-      "risk_usd": 0.029319433057729515,
-      "scale_count": 0,
-      "setup": "P",
-      "stop_pct": 0.2567156031577325,
-      "stop_price": 473.0315288191805,
-      "symbol": "ZEC",
-      "taker_fee_pct": 0.0,
-      "target_one_price": 475.6490918579425,
-      "target_one_taken": false,
-      "target_two_price": 476.80568947972097
-    }
-  },
-  "run_count": 214,
+  "positions": {},
+  "run_count": 216,
   "schema": 1,
   "starting_balance_usd": 100.0
 }
