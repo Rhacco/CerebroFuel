@@ -1,5 +1,5 @@
-name: Crypto Signal Monitor v3.6.1
-# Package revision: v3.6.1-simple-signals-r1
+name: Crypto Signal Monitor v3.6.2
+# Package revision: v3.6.2-top5-context-r1
 
 on:
   workflow_dispatch:

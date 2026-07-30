@@ -13,18 +13,12 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-APP_VERSION = "3.6.1"
+APP_VERSION = "3.6.2"
 WINDOWS = (10, 20, 60)
 SUMMARY_COLORS = {
     "BUY": "🟢", "WATCH_LONG": "🔵", "NO_TRADE": "🟡",
     "WATCH_SHORT": "🟠", "SELL": "🔴", "INVALID_DATA": "🟡",
 }
-DETAIL_COLORS = {
-    "BUY": "🟣", "WATCH_LONG": "🔵", "NO_TRADE": "🟡",
-    "WATCH_SHORT": "🟠", "SELL": "🟣", "INVALID_DATA": "🟤",
-}
-
-
 def _f(value: Any, default: float = 0.0) -> float:
     try:
         number = float(value)
@@ -37,8 +31,12 @@ def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
     return max(low, min(high, value))
 
 
-def _arrow(direction: float) -> str:
-    return "▲" if direction > 8 else ("▼" if direction < -8 else "·")
+def _detail_head(state: str) -> str:
+    return {
+        "BUY": "🟣L", "SELL": "🟣S",
+        "WATCH_LONG": "🔵L", "WATCH_SHORT": "🟠S",
+        "NO_TRADE": "🟡?", "INVALID_DATA": "🟤?",
+    }.get(state, "🟤?")
 
 
 @dataclass
@@ -77,7 +75,7 @@ class LighterClient:
         url = self.base + path
         if params:
             url += "?" + urlencode(params)
-        request = Request(url, headers={"Accept": "application/json", "User-Agent": "cf/3.6.1"})
+        request = Request(url, headers={"Accept": "application/json", "User-Agent": "cf/3.6.2"})
         with urlopen(request, timeout=self.timeout) as response:
             payload = json.load(response)
         if not isinstance(payload, Mapping) or int(payload.get("code", 200)) != 200:
@@ -253,14 +251,14 @@ class LighterMonitor:
             ),
             reverse=True,
         )
-        summary_count = int(self.config.get("summary_coin_count", 6))
+        summary_count = int(self.config.get("summary_coin_count", 5))
         summary = ranked[:summary_count]
         timestamp = now.astimezone(
             ZoneInfo(str(self.config.get("timezone", "Europe/Berlin")))
         ).strftime(":%M")
         lines = [
             "".join(
-                f"{SUMMARY_COLORS[item.state]}{_arrow(item.direction)}{item.alias}"
+                f"{SUMMARY_COLORS[item.state]}{item.alias}"
                 for item in summary
             )
             + timestamp
@@ -277,15 +275,41 @@ class LighterMonitor:
         )
         details = ranked[:detail_count]
         for item in details:
-            color = DETAIL_COLORS[item.state]
-            arrow = _arrow(item.direction)
-            window_colors = "".join(
-                "🟤" if window.quality != "ok" else (
-                    "🟢" if window.score >= 12 else ("🔴" if window.score <= -12 else "🟡")
-                )
-                for window in item.windows.values()
+            window_parts = "".join(
+                f"{minutes}{'🟤' if window.quality != 'ok' else ('🟢' if window.score >= 12 else ('🔴' if window.score <= -12 else '🟡'))}"
+                for minutes, window in item.windows.items()
             )
-            line = f"{color}{arrow}{window_colors}{item.alias}"
+            valid_ratios = [
+                window.volume_ratio for window in item.windows.values()
+                if window.quality == "ok" and window.volume_ratio is not None
+            ]
+            volume_color = (
+                "🟤" if not valid_ratios else
+                ("🟢" if statistics.mean(valid_ratios) >= 1.15 else "🟡")
+            )
+            cost_limit = float(self.config.get("max_roundtrip_cost_pct", 0.15))
+            cost_color = (
+                "🟤" if item.cost_pct is None else
+                ("🟢" if item.cost_pct <= cost_limit * .55 else
+                 ("🟡" if item.cost_pct <= cost_limit else "🔴"))
+            )
+            funding_limit = float(self.config.get("max_abs_funding_hourly_pct", 0.005))
+            if item.funding_hourly_pct is None:
+                funding_color = "🟤"
+            else:
+                against_trade = (
+                    item.direction > 8 and item.funding_hourly_pct > 0
+                ) or (
+                    item.direction < -8 and item.funding_hourly_pct < 0
+                )
+                pressure = abs(item.funding_hourly_pct) / max(funding_limit, 1e-9)
+                funding_color = "🔴" if against_trade and pressure > 1 else (
+                    "🟡" if against_trade and pressure > .5 else "🟢"
+                )
+            line = (
+                f"{_detail_head(item.state)} {item.alias} "
+                f"{window_parts} V{volume_color} K{cost_color} F{funding_color}"
+            )
             lines.append(line[: int(self.config.get("discord_max_codepoints_per_line", 34))])
         return "\n".join(lines)
 
@@ -347,4 +371,4 @@ class LighterMonitor:
         market_id = int(market["market_id"])
         return self.client.candles(market_id), self.client.book(market_id)
 
-# Package revision: v3.6.1-simple-signals-r1
+# Package revision: v3.6.2-top5-context-r1

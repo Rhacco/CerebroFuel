@@ -1,6 +1,6 @@
-# CF v3.6.1
+# CF v3.6.2
 
-Package revision: `v3.6.1-simple-signals-r1`
+Package revision: `v3.6.2-top5-context-r1`
 
 Read-only Lighter signal monitor for small, manually executed perpetual trades.
 
@@ -13,13 +13,13 @@ Read-only Lighter signal monitor for small, manually executed perpetual trades.
   rising volume is selling pressure.
 - Spread/slippage, 24h volume, OI, Volume/OI, funding and window quality can
   deliberately produce `NO_TRADE` or `INVALID_DATA`.
-- Discord uses one Top-6 overview plus one to three detail lines. Every line is
+- Discord uses one Top-5 overview plus one to three detail lines. Every line is
   at most 34 Unicode code points, with no blank lines.
 
 ## Discord-Legende
 
-Erste Zeile: Die sechs auffälligsten Chancen stehen von links nach rechts.
-`▲` bedeutet Long, `▼` Short und `·` noch keine klare Richtung.
+Erste Zeile: Die fünf auffälligsten Chancen stehen nach Gesamtauffälligkeit
+absteigend von links nach rechts. Pfeile entfallen; die Farbe zeigt den Status.
 
 - `🟢` stark Long
 - `🔴` stark Short
@@ -27,14 +27,15 @@ Erste Zeile: Die sechs auffälligsten Chancen stehen von links nach rechts.
 - `🟠` Short wird auffällig
 - `🟡` noch ungewiss, nur beobachten
 
-Detailzeilen erklären die ein bis drei auffälligsten Signale:
+Detailzeilen erklären dieselben ein bis drei führenden Kandidaten:
 
-- `🟣` jetzt sofort traden; `▲` Long oder `▼` Short
-- `🔵▲` Long entwickelt sich, noch warten
-- `🟠▼` Short entwickelt sich, noch warten
-- `🟡·` ungewiss, nur beobachten
-- Drei Folgepunkte zeigen `10/20/60` Minuten: `🟢` Long, `🔴` Short,
-  `🟡` neutral, `🟤` Daten unsicher
+- `🟣L` jetzt Long bzw. `🟣S` jetzt Short; `🔵L`/`🟠S` erst im Aufbau
+- `🟡?` beobachten, `🟤?` Daten reichen nicht
+- `10`/`20`/`60`: Preis-Volumen-Richtung je Zeitfenster
+- `V`: Volumenbestätigung, `K`: Orderbuchkosten, `F`: Funding
+- Bei `10/20/60`: `🟢` Long, `🔴` Short, `🟡` neutral, `🟤` unsicher
+- Bei `V/K/F`: `🟢` günstig/bestätigt, `🟡` grenzwertig/schwach,
+  `🔴` blockierend, `🟤` nicht zuverlässig verfügbar
 - Coin-Kürzel: `BTC` Bitcoin, `ETH` Ethereum, `HYP` HYPE, `SOL` Solana,
   `XRP` XRP, `LIT` LIT, `ZEC` Zcash, `PMP` PUMP, `ENA` Ethena,
   `AAV` Aave, `NER` NEAR, `UNI` Uniswap, `GRM` GRAM und `XPL` XPL.
