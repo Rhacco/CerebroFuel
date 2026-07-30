@@ -1,5 +1,5 @@
-name: Crypto Signal Monitor v3.6.2
-# Package revision: v3.6.2-top5-context-r1
+name: Crypto Signal Monitor v3.6.3
+# Package revision: v3.6.3-ptw-precision-r3
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: crypto-signal-monitor-v361
+  group: crypto-signal-monitor-v363
   cancel-in-progress: false
 
 jobs:

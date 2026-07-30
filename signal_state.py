@@ -285,4 +285,4 @@ def update_signal_states(
         "qualified_exits": sum(item.qualified_exit for item in result.values()),
         "fallback_eligible": sum(item.fallback_eligible for item in result.values()),
     }
-# Package revision: v3.6.2-top5-context-r1
+# Package revision: v3.6.3-ptw-precision-r3

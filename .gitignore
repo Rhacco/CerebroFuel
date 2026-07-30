@@ -1,16 +1,7 @@
-# v3.5 generated runtime and output state
-# Package revision: v3.6.2-top5-context-r1
+# Generated runtime state — package revision v3.6.3-ptw-precision-r3
 .cache/
-output/latest_report.txt
-output/latest_analysis.json
 __pycache__/
 *.pyc
 .ruff_cache/
-# Package revision: v3.5.0-buy-selection-consistency-r6
-# Package revision: v3.5.0-relative-bargain-production-r7
-
-# Package revision: v3.5.0-balanced-value-production-r8
-.cache/
-output/
-__pycache__/
-*.pyc
+output/*
+!output/.gitkeep

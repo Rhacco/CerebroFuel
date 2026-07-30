@@ -1,63 +1,63 @@
-# CF v3.6.2
+# CF v3.6.3
 
-Package revision: `v3.6.2-top5-context-r1`
+Kompakter Lighter-Monitor für kleine, manuell ausgeführte Perpetual-Trades.
+Er führt keine Orders aus.
 
-Read-only Lighter signal monitor for small, manually executed perpetual trades.
+## Discord
 
-- Candidate universe: only the final Lighter shortlist from the July 2026 plan.
-- Lighter supplies active perp metadata, closed 1-minute quote-volume candles,
-  funding and the executable order book.
-- Opportunity (market quality) and direction (Long/Short) are separate.
-- Direction combines price and quote volume over 10/20/60 minutes. Stable or
-  slightly rising price with rising volume is accumulation; falling price with
-  rising volume is selling pressure.
-- Spread/slippage, 24h volume, OI, Volume/OI, funding and window quality can
-  deliberately produce `NO_TRADE` or `INVALID_DATA`.
-- Discord uses one Top-5 overview plus one to three detail lines. Every line is
-  at most 34 Unicode code points, with no blank lines.
+Beispiel:
 
-## Discord-Legende
+```text
+PMP🔵UNI🔵HYP🔴AAV🟢GRM🟢:43
+🟣▲P 5🟢20🟢60🟢 V🟢L🟢B🟢K🟢F🟢 GRM
+🟢▲T 5🟡20🟢60🟢 V🟢L🟢B🟢K🟢F🟢 AAV
+```
 
-Erste Zeile: Die fünf auffälligsten Chancen stehen nach Gesamtauffälligkeit
-absteigend von links nach rechts. Pfeile entfallen; die Farbe zeigt den Status.
+Oben stehen die Top‑5. Innerhalb dieser fünf steigt die Sicherheit von links
+nach rechts; die beste aktuelle Chance steht direkt vor der Berliner Uhrzeit.
+Das Coin-Kürzel steht immer vor seiner Farbe.
 
-- `🟢` stark Long
-- `🔴` stark Short
-- `🔵` Long wird auffällig
-- `🟠` Short wird auffällig
-- `🟡` noch ungewiss, nur beobachten
+- `🟢` stark Long · `🔴` stark Short
+- `🔵` Long baut sich auf · `🟠` Short baut sich auf
+- `🟡` nur leichte Tendenz · `⚫` Daten nicht verlässlich
 
-Detailzeilen erklären dieselben ein bis drei führenden Kandidaten:
+Darunter stehen immer die Top‑2 mit Pfeil, auch bei Gelb. Eine dritte
+beziehungsweise vierte Detailzeile erscheint nur für ein echtes Aufbau‑ oder
+stärkeres Signal. Das Coin-Kürzel steht am Zeilenende.
 
-- `🟣L` jetzt Long bzw. `🟣S` jetzt Short; `🔵L`/`🟠S` erst im Aufbau
-- `🟡?` beobachten, `🟤?` Daten reichen nicht
-- `10`/`20`/`60`: Preis-Volumen-Richtung je Zeitfenster
-- `V`: Volumenbestätigung, `K`: Orderbuchkosten, `F`: Funding
-- Bei `10/20/60`: `🟢` Long, `🔴` Short, `🟡` neutral, `🟤` unsicher
-- Bei `V/K/F`: `🟢` günstig/bestätigt, `🟡` grenzwertig/schwach,
-  `🔴` blockierend, `🟤` nicht zuverlässig verfügbar
-- Coin-Kürzel: `BTC` Bitcoin, `ETH` Ethereum, `HYP` HYPE, `SOL` Solana,
-  `XRP` XRP, `LIT` LIT, `ZEC` Zcash, `PMP` PUMP, `ENA` Ethena,
-  `AAV` Aave, `NER` NEAR, `UNI` Uniswap, `GRM` GRAM und `XPL` XPL.
+- `🟣▲/▼` frisches, sofort handelbares Long-/Short-Fenster
+- `🟢▲` / `🔴▼` starke Richtung, aber kein frischer Soforteinstieg
+- `🔵▲` / `🟠▼` Aufbau · `🟡▲/▼` schwach
+- `⚫?` ausschließlich für unzuverlässige Daten
+- `P` anhaltender Preis-/Volumendruck
+- `T` kleiner Rücksetzer mit Wiederaufnahme im klaren Trend
+- `W` schnelle Wende nach einem ungewöhnlich harten Ausschlag
 
-Run:
+`5/20/60` zeigt unmittelbare Tendenz, Bestätigung und Stundenkontext. Die
+Freigabe arbeitet genauer: `P` mit 10/20/60‑Minuten-Druck, `T` mit
+5/15/60‑Minuten-Trend und Rücksetzer, `W` mit Schock und Gegenbestätigung über
+wenige Minuten.
+
+- `V` setupgerechte Volumenbestätigung
+- `L` Liquidität aus 24h-Volumen, Open Interest und Umsatz/OI
+- `B` BTC-Kontext als Risikofilter
+- `K` ausführbare Hin-und-zurück-Orderbuchkosten für 50 USDC
+- `F` Funding relativ zur Pfeilrichtung
+
+Bei `V/L/B/K/F` bedeutet `🟢` günstig, `🟡` grenzwertig, `🔴` dagegen bzw.
+blockierend und `🟤` nicht zuverlässig verfügbar. Funding unterstützt oder
+bremst ein Setup, erzeugt aber nie allein ein Signal.
+
+Abweichende Kürzel: `HYP` HYPE · `PMP` PUMP · `AAV` AAVE · `NER` NEAR ·
+`GRM` GRAM.
+
+Start:
 
 ```bash
 python main.py --no-send
 ```
 
-The monitor never submits orders. Output details are written to
-`output/latest.json`; the compact Discord text is written to `output/latest.txt`.
+Für die kurzen `W`-Fenster den Worker-Cron auf `* * * * *` setzen; ein bereits
+laufender GitHub-Run wird nicht doppelt gestartet.
 
-## Paketstruktur
-
-- `.github/workflows/monitor.yml` — GitHub-Actions-Lauf
-- `output/.gitkeep` — erhält den Ausgabeordner im Repository
-- `main.py` — Programmeinstieg
-- `lighter_monitor.py` — Lighter-Daten, Bewertung und Bericht
-- `discord_sender.py` — Discord-Versand
-- `config.json` — Kandidaten und Schwellenwerte
-- `cloudflare-worker.js` — Drei-Minuten-Auslöser
-
-Tests werden vor der Freigabe ausgeführt, sind aber nicht Bestandteil des
-Release-Pakets und keine Voraussetzung für den GitHub-Actions-Lauf.
+Lila ist eine streng gefilterte Momentaufnahme, keine Gewinngarantie.

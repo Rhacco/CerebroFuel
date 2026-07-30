@@ -1,4 +1,4 @@
-// v3.6.2: dispatch every three minutes; do not queue another run while one is active.
+// v3.6.3: request a run every minute; never queue over an active run.
 function schedulerEnabled(env) {
   // ENABLED 1 = aktiv, 2 = pausiert.
   return String(env.ENABLED ?? "1").trim() === "1";
@@ -17,8 +17,8 @@ export default {
     return Response.json({
       ok: true,
       scheduler: schedulerEnabled(env) ? "enabled" : "paused",
-      interval: "3m",
-      version: "3.6.2",
+      interval: "1m",
+      version: "3.6.3",
     });
   },
 };
@@ -28,7 +28,7 @@ function githubHeaders(env) {
     Accept: "application/vnd.github+json",
     Authorization: `Bearer ${env.GH_PAT}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "cloudflare-crypto-scheduler-v3.6.2",
+    "User-Agent": "cloudflare-crypto-scheduler-v3.6.3",
   };
 }
 
@@ -82,4 +82,4 @@ async function triggerGitHubWithRetry(env, source) {
   throw new Error(`GitHub konnte nicht gestartet werden: ${lastError}`);
 }
 
-// Package revision: v3.6.2-top5-context-r1
+// Package revision: v3.6.3-ptw-precision-r3
