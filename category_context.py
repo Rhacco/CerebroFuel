@@ -755,4 +755,4 @@ def select_category_entries(
         item.short.sell_count = 1 if direction == "▼" else 0
         valid_chosen.append(item)
     return valid_chosen[:top_count]
-# Package revision: v3.7-paper-multi-r1
+# Package revision: v3.8.0-early-swing-r1

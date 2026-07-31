@@ -1,5 +1,5 @@
-name: Crypto Signal Monitor v3.7.1
-# Package revision: v3.7.1-tw-only-r2
+name: Crypto Signal Monitor v3.8.0
+# Package revision: v3.8.0-early-swing-r1
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: crypto-signal-monitor-v371
+  group: crypto-signal-monitor-v380
   cancel-in-progress: false
 
 jobs:
@@ -29,14 +29,16 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
-      - name: Paper-State-Cache laden
+      - name: Laufzeit-State-Cache laden
         uses: actions/cache/restore@v4
         with:
-          path: output/paper_state.json
-          key: paper-state-v371-${{ github.run_id }}
+          path: |
+            output/paper_state.json
+            output/notification_state.json
+          key: runtime-state-v380-${{ github.run_id }}
           restore-keys: |
+            runtime-state-v380-
             paper-state-v371-
-            paper-state-v37-
       - name: Paper-State wiederherstellen
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -53,9 +55,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python paper_state_store.py checkpoint output/paper_state.json --interval-hours 6
-      - name: Paper-State-Cache speichern
+      - name: Laufzeit-State-Cache speichern
         if: always() && hashFiles('output/paper_state.json') != ''
         uses: actions/cache/save@v4
         with:
-          path: output/paper_state.json
-          key: paper-state-v371-${{ github.run_id }}
+          path: |
+            output/paper_state.json
+            output/notification_state.json
+          key: runtime-state-v380-${{ github.run_id }}

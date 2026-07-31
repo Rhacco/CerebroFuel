@@ -2948,4 +2948,4 @@ def build_report(
 
 def analysis_to_dict(item: CoinAnalysis) -> dict[str, Any]:
     return asdict(item)
-# Package revision: v3.7-paper-multi-r1
+# Package revision: v3.8.0-early-swing-r1

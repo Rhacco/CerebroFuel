@@ -1,4 +1,4 @@
-"""Lighter-native T/W signal engine for CF v3.7.1."""
+"""Lighter-native early-swing/T/W signal engine for CF v3.8.0."""
 from __future__ import annotations
 
 import json
@@ -14,8 +14,8 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-APP_VERSION = "3.7.1"
-PACKAGE_REVISION = "v3.7.1-tw-only-r2"
+APP_VERSION = "3.8.0"
+PACKAGE_REVISION = "v3.8.0-early-swing-r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 TREND_WINDOWS = (5, 15, 60)
@@ -127,6 +127,10 @@ class Signal:
     execution_score: float = 0.0
     liquidity_score: float = 0.0
     volume_confirmation: float = 0.0
+    tape_quality: float = 0.0
+    volume_coverage: float = 0.0
+    volume_spike_share: float = 1.0
+    attention_score: float = 0.0
     btc_context: float | None = None
     cost_pct: float | None = None
     funding_hourly_pct: float | None = None
@@ -143,6 +147,7 @@ class Signal:
     candidate_tier: str = "core"
     candidate_penalty: float = 0.0
     windows: dict[int, Window] = field(default_factory=dict)
+    early: Setup = field(default_factory=lambda: Setup("EARLY"))
     trend: Setup = field(default_factory=lambda: Setup("TREND"))
     reversal: Setup = field(default_factory=lambda: Setup("REVERSAL"))
     reasons: list[str] = field(default_factory=list)
@@ -375,6 +380,203 @@ def _baseline_volume(candles: list[Mapping[str, Any]], exclude: int = 12) -> flo
     rows = candles[-132:-exclude] if len(candles) >= 132 else candles[:-exclude]
     values = [_f(row.get("V")) for row in rows if _f(row.get("V")) > 0]
     return statistics.median(values) if values else 0.0
+
+
+
+def _tape_quality(candles: list[Mapping[str, Any]], count: int = 90) -> tuple[float, float, float]:
+    """Measure whether one-minute quote volume is continuous rather than gap/spike driven."""
+    rows = candles[-count:]
+    if len(rows) < min(60, count) or not _contiguous(rows):
+        return 0.0, 0.0, 1.0
+    volumes = [_f(row.get("V")) for row in rows]
+    positive = [value for value in volumes if value > 0]
+    coverage = len(positive) / len(volumes)
+    if not positive:
+        return 0.0, coverage, 1.0
+    baseline = statistics.median(positive)
+    recent = volumes[-20:]
+    recent_total = sum(recent)
+    spike_share = max(recent, default=0.0) / recent_total if recent_total > 0 else 1.0
+    quiet_fraction = sum(
+        value <= 0 or value < baseline * 0.035
+        for value in volumes
+    ) / len(volumes)
+    extreme_ratio = max(recent, default=0.0) / max(baseline, 1e-9)
+    coverage_score = coverage * 52.0
+    concentration_score = (1.0 - _clamp((spike_share - 0.14) / 0.56, 0.0, 1.0)) * 25.0
+    continuity_score = (1.0 - _clamp(quiet_fraction / 0.36, 0.0, 1.0)) * 18.0
+    extreme_penalty = _clamp((extreme_ratio - 22.0) / 38.0, 0.0, 1.0) * 10.0
+    return _clamp(coverage_score + concentration_score + continuity_score - extreme_penalty), coverage, spike_share
+
+
+def _assess_early(
+    candles: list[Mapping[str, Any]],
+    noise: float,
+    *,
+    max_age_minutes: int,
+    max_consumed_fraction: float,
+    minimum_efficiency: float,
+    minimum_volume_consistency: int,
+) -> Setup:
+    """Find a fresh expansion from compression before most of the expected move is consumed."""
+    rows = _series(candles, 90)
+    if not rows:
+        return Setup("EARLY", reason="insufficient contiguous history")
+    baseline_volume = _baseline_volume(candles, exclude=8)
+    if baseline_volume <= 0:
+        return Setup("EARLY", reason="insufficient quote-volume baseline")
+
+    pre = rows[-42:-7]
+    trigger = rows[-7:]
+    older = rows[-82:-42]
+    pre_high = max(_f(row.get("h")) for row in pre)
+    pre_low = min(_f(row.get("l")) for row in pre)
+    older_high = max(_f(row.get("h")) for row in older)
+    older_low = min(_f(row.get("l")) for row in older)
+    pre_range = max(0.0, _pct(pre_low, pre_high))
+    older_range = max(pre_range, _pct(older_low, older_high))
+    pre_returns = _last_returns(pre, min(20, len(pre) - 1))
+    older_returns = _last_returns(older, min(25, len(older) - 1))
+    pre_noise = statistics.median(abs(value) for value in pre_returns) if pre_returns else noise
+    older_noise = statistics.median(abs(value) for value in older_returns) if older_returns else noise
+    range_ratio = pre_range / max(older_range, noise, 1e-9)
+    noise_ratio = pre_noise / max(older_noise, noise * 0.35, 1e-9)
+    compression_score = _clamp(
+        52.0
+        + (1.0 - _clamp(range_ratio, 0.0, 1.4)) * 30.0
+        + (1.0 - _clamp(noise_ratio, 0.0, 1.5)) * 24.0
+    )
+
+    closes = [_f(row.get("c")) for row in trigger]
+    volumes = [_f(row.get("V")) for row in trigger]
+    returns = [_pct(left, right) for left, right in zip(closes, closes[1:])]
+    target_move = max(0.16, pre_range * 0.82, noise * math.sqrt(20.0) * 3.6)
+    candidates: list[Setup] = []
+    for direction in (1, -1):
+        boundary = pre_high if direction > 0 else pre_low
+        directional_returns = [_directional(value, direction) for value in returns]
+        move_3 = sum(directional_returns[-3:])
+        move_6 = sum(directional_returns)
+        first_3 = sum(directional_returns[:3])
+        acceleration = move_3 - first_3
+        path = sum(abs(value) for value in returns)
+        efficiency = max(0.0, move_6) / max(path, 1e-9)
+        extension = _directional(_pct(boundary, closes[-1]), direction)
+        breakout_floor = max(0.022, noise * 0.42)
+        crossings: list[int] = []
+        for index, close in enumerate(closes):
+            current = _directional(_pct(boundary, close), direction)
+            previous = (
+                _directional(_pct(boundary, closes[index - 1]), direction)
+                if index > 0 else -999.0
+            )
+            if current >= breakout_floor and previous < breakout_floor:
+                crossings.append(index)
+        event_index = crossings[-1] if crossings else None
+        age = None if event_index is None else len(closes) - 1 - event_index
+        consumed = max(0.0, extension) / max(target_move, 1e-9)
+        expected_edge = max(0.0, target_move - max(0.0, extension))
+
+        ratios = [value / baseline_volume for value in volumes[-4:]]
+        consistency = sum(value >= 1.05 for value in ratios)
+        recent_ratio = _mean(ratios)
+        recent_total = sum(volumes[-5:])
+        spike_share = max(volumes[-5:], default=0.0) / recent_total if recent_total > 0 else 1.0
+        volume_score = _clamp(
+            38.0
+            + (recent_ratio - 1.0) * 36.0
+            + consistency * 10.0
+            - max(0.0, spike_share - 0.58) * 90.0
+        )
+        momentum_floor = max(0.035, noise * 1.15)
+        momentum_score = _clamp(
+            42.0
+            + (move_3 / max(momentum_floor, 1e-9) - 1.0) * 24.0
+            + (move_6 / max(momentum_floor * 1.55, 1e-9) - 1.0) * 18.0
+            + acceleration / max(noise, 1e-9) * 5.0
+        )
+        efficiency_score = _clamp(
+            45.0 + (efficiency - minimum_efficiency) * 100.0
+        )
+        recency_score = 58.0 if age is None else {
+            0: 100.0, 1: 94.0, 2: 84.0, 3: 62.0, 4: 38.0
+        }.get(age, 15.0)
+        room_score = _clamp((1.0 - consumed / max(max_consumed_fraction, 1e-9)) * 100.0)
+        score = _clamp(
+            compression_score * 0.18
+            + momentum_score * 0.27
+            + volume_score * 0.20
+            + efficiency_score * 0.17
+            + recency_score * 0.10
+            + room_score * 0.08
+        )
+        positive_candles = sum(value > 0 for value in directional_returns[-4:])
+        near_boundary = extension >= -max(0.045, noise * 0.90)
+        late = (
+            extension > 0
+            and (
+                (age is not None and age > max_age_minutes)
+                or consumed > max_consumed_fraction
+                or efficiency < minimum_efficiency * 0.72
+                or move_3 <= 0
+            )
+        )
+        ready = (
+            event_index is not None
+            and age is not None
+            and age <= max_age_minutes
+            and consumed <= max_consumed_fraction
+            and efficiency >= minimum_efficiency
+            and consistency >= minimum_volume_consistency
+            and recent_ratio >= 1.12
+            and move_3 >= momentum_floor
+            and move_6 >= momentum_floor * 1.45
+            and acceleration >= 0.0
+            and compression_score >= 50.0
+            and positive_candles >= 3
+            and spike_share <= 0.62
+        )
+        forming = (
+            near_boundary
+            and move_3 >= momentum_floor * 0.62
+            and efficiency >= minimum_efficiency * 0.72
+            and consistency >= max(1, minimum_volume_consistency - 1)
+            and score >= 55.0
+        )
+        if late:
+            phase, exit_hint, score = "late", True, min(score, 39.0)
+        elif ready:
+            phase, exit_hint = "ready", False
+        elif forming:
+            phase, exit_hint, score = "forming", False, min(score, 73.0)
+        else:
+            phase, exit_hint, score = "none", False, min(score, 48.0)
+        candidates.append(Setup(
+            "EARLY",
+            direction=direction,
+            score=score,
+            phase=phase,
+            volume_score=volume_score,
+            age_minutes=age,
+            exit_hint=exit_hint,
+            confirmations=positive_candles,
+            event_strength=momentum_score,
+            event_timestamp_ms=(
+                _timestamp_ms(trigger[event_index])
+                if event_index is not None else None
+            ),
+            move_pct=max(0.0, extension),
+            rejection_fraction=efficiency,
+            recovery_fraction=consumed,
+            peak_score=compression_score,
+            expected_edge_pct=expected_edge,
+            reason=(
+                f"compression={compression_score:.1f} move3={move_3:.3f}% "
+                f"eff={efficiency:.2f} volume={recent_ratio:.2f}/{consistency} "
+                f"age={age} used={consumed:.2f} edge={expected_edge:.3f}%"
+            ),
+        ))
+    return max(candidates, key=lambda item: (*_setup_priority(item), item.event_strength))
 
 
 def _assess_trend_once(
@@ -814,6 +1016,7 @@ def _detail_head(signal: Signal) -> str:
 
 def _setup_code(signal: Signal) -> str:
     return {
+        "EARLY": "E",
         "TREND": "T",
         "REVERSAL": "W",
     }.get(signal.selected_setup, "–")
@@ -821,6 +1024,7 @@ def _setup_code(signal: Signal) -> str:
 
 def _selected_setup(signal: Signal) -> Setup:
     return {
+        "EARLY": signal.early,
         "TREND": signal.trend,
         "REVERSAL": signal.reversal,
     }.get(signal.selected_setup, Setup("NONE"))
@@ -882,46 +1086,23 @@ class LighterMonitor:
             raise ValueError("candidate_symbols muss eindeutig und nicht leer sein")
         aliases = self.config.get("aliases") or {}
         invalid_aliases = [
-            symbol
-            for symbol in symbols
+            symbol for symbol in symbols
             if len(str(aliases.get(symbol, symbol[:3])).upper()) != 3
         ]
         if invalid_aliases:
             raise ValueError(f"Coin-Kürzel müssen drei Zeichen haben: {invalid_aliases}")
-        test_symbols = {
-            str(value).upper()
-            for value in self.config.get("test_candidate_symbols", [])
-        }
-        if not test_symbols.issubset(set(symbols)):
-            raise ValueError("test_candidate_symbols müssen im Kandidatenpool liegen")
-        penalties = {
-            str(key).upper(): float(value)
-            for key, value in (self.config.get("candidate_trade_penalty_points") or {}).items()
-        }
-        if set(penalties) != test_symbols or any(
-            not 0.0 < value <= 20.0 for value in penalties.values()
-        ):
-            raise ValueError(
-                "Jeder Testkandidat benötigt genau einen positiven Abschlag"
-            )
-        for key in (
-            "test_candidate_minimum_readiness",
-            "test_candidate_minimum_confidence",
-        ):
-            if not 0.0 <= float(self.config.get(key, 100.0)) <= 100.0:
-                raise ValueError("Testkandidaten-Schwellen müssen zwischen null und 100 liegen")
-        summary_count = int(self.config.get("summary_coin_count", 6))
-        minimum_details = int(self.config.get("minimum_detail_count", 2))
+        summary_count = int(self.config.get("summary_coin_count", 5))
+        minimum_details = int(self.config.get("minimum_detail_count", 1))
         maximum_details = int(self.config.get("maximum_detail_count", 4))
         if not 1 <= summary_count <= len(symbols):
             raise ValueError("summary_coin_count liegt außerhalb der Kandidatenzahl")
-        if not 2 <= minimum_details <= maximum_details <= 4:
-            raise ValueError("Detailzeilen müssen zwischen zwei und vier liegen")
+        if not 1 <= minimum_details <= maximum_details <= 4:
+            raise ValueError("Detailzeilen müssen zwischen eins und vier liegen")
         if int(self.config.get("discord_max_codepoints_per_line", 34)) < summary_count * 4 + 3:
             raise ValueError("Discord-Zeilenlimit ist für die Top-Zeile zu klein")
-        watch = float(self.config.get("watch_trade_readiness", 50))
-        strong = float(self.config.get("strong_trade_readiness", 66))
-        immediate = float(self.config.get("immediate_trade_readiness", 74))
+        watch = float(self.config.get("watch_trade_readiness", 56))
+        strong = float(self.config.get("strong_trade_readiness", 64))
+        immediate = float(self.config.get("immediate_trade_readiness", 76))
         if not 0 < watch < strong < immediate <= 100:
             raise ValueError("Readiness-Schwellen sind nicht logisch geordnet")
         funding_watch = float(self.config.get("funding_watch_hourly_pct", 0.015))
@@ -929,33 +1110,33 @@ class LighterMonitor:
         if not 0 <= funding_watch < funding_hard:
             raise ValueError("Funding-Schwellen sind nicht logisch geordnet")
         setup_thresholds = (
+            "early_minimum_setup_score",
+            "early_minimum_volume_score",
             "trend_minimum_setup_score",
             "trend_minimum_context_strength",
             "trend_minimum_volume_score",
             "reversal_minimum_setup_score",
+            "btc_early_immediate_breadth_score",
             "btc_trend_immediate_breadth_score",
             "btc_reversal_immediate_breadth_score",
+            "minimum_tape_quality",
+            "detail_attention_threshold",
         )
-        if any(
-            not 0 <= float(self.config.get(key, 100)) <= 100
-            for key in setup_thresholds
-        ):
-            raise ValueError("Setup-Schwellen müssen zwischen null und 100 liegen")
-        minimum_reversal = float(
-            self.config.get("hard_reversal_min_move_pct", 0.20)
-        )
-        immediate_reversal = float(
-            self.config.get("reversal_immediate_min_move_pct", 0.75)
-        )
-        rejection = float(
-            self.config.get("reversal_min_rejection_fraction", 0.30)
-        )
-        max_recovery = float(
-            self.config.get("reversal_max_entry_recovery_fraction", 0.68)
-        )
-        late_override = float(
-            self.config.get("reversal_late_recovery_override_move_pct", 1.0)
-        )
+        if any(not 0 <= float(self.config.get(key, 100)) <= 100 for key in setup_thresholds):
+            raise ValueError("Setup- und Qualitätswerte müssen zwischen null und 100 liegen")
+        if not 0 < float(self.config.get("early_max_consumed_fraction", 0.66)) < 1:
+            raise ValueError("early_max_consumed_fraction muss zwischen null und eins liegen")
+        if not 0 < float(self.config.get("early_min_efficiency", 0.52)) <= 1:
+            raise ValueError("early_min_efficiency muss zwischen null und eins liegen")
+        if not 0 <= int(self.config.get("early_max_age_minutes", 2)) <= 4:
+            raise ValueError("early_max_age_minutes muss zwischen null und vier liegen")
+        if not 1 <= int(self.config.get("early_min_volume_consistency", 2)) <= 4:
+            raise ValueError("early_min_volume_consistency muss zwischen eins und vier liegen")
+        minimum_reversal = float(self.config.get("hard_reversal_min_move_pct", 0.20))
+        immediate_reversal = float(self.config.get("reversal_immediate_min_move_pct", 0.75))
+        rejection = float(self.config.get("reversal_min_rejection_fraction", 0.30))
+        max_recovery = float(self.config.get("reversal_max_entry_recovery_fraction", 0.68))
+        late_override = float(self.config.get("reversal_late_recovery_override_move_pct", 1.0))
         if (
             not 0 < minimum_reversal <= immediate_reversal <= late_override
             or not 0 <= rejection <= 1
@@ -963,28 +1144,20 @@ class LighterMonitor:
         ):
             raise ValueError("Wende-Schwellen sind nicht logisch geordnet")
         positive_keys = (
-            "execution_quote_usdc",
-            "minimum_volume_24h_usdc",
-            "minimum_open_interest_usdc",
-            "max_roundtrip_cost_pct",
-            "candle_count",
-            "parallel_requests",
-            "request_timeout_seconds",
+            "execution_quote_usdc", "minimum_volume_24h_usdc",
+            "minimum_open_interest_usdc", "max_roundtrip_cost_pct",
+            "candle_count", "parallel_requests", "request_timeout_seconds",
+            "early_minimum_expected_edge_pct", "early_cost_edge_multiple",
         )
         if any(float(self.config.get(key, 0)) <= 0 for key in positive_keys):
             raise ValueError("Ausführungs- und Datenparameter müssen positiv sein")
         if int(self.config.get("candle_count", 360)) < 200:
             raise ValueError("candle_count muss mindestens 200 betragen")
-        if float(self.config.get("trend_minimum_expected_edge_pct", 0.10)) <= 0:
-            raise ValueError("trend_minimum_expected_edge_pct muss positiv sein")
-        if float(self.config.get("trend_cost_edge_multiple", 3.0)) < 1:
-            raise ValueError("trend_cost_edge_multiple muss mindestens eins sein")
-        breadth_symbols = [
-            str(value).upper()
-            for value in self.config.get("btc_breadth_symbols", [])
-        ]
+        breadth_symbols = [str(value).upper() for value in self.config.get("btc_breadth_symbols", [])]
         if len(set(breadth_symbols)) < 3 or "BTC" in breadth_symbols:
             raise ValueError("btc_breadth_symbols braucht mindestens drei Nicht-BTC-Märkte")
+        if not set(breadth_symbols).issubset(set(symbols)):
+            raise ValueError("btc_breadth_symbols müssen im Kandidatenpool liegen")
 
     def _analyse(
         self,
@@ -1055,7 +1228,10 @@ class LighterMonitor:
             minimum_volume,
             minimum_oi,
         )
-        signal.liquidity_score = signal.activity_score
+        signal.tape_quality, signal.volume_coverage, signal.volume_spike_share = _tape_quality(candles)
+        signal.liquidity_score = _clamp(
+            signal.activity_score * 0.72 + signal.tape_quality * 0.28
+        )
         cost_limit = float(self.config.get("max_roundtrip_cost_pct", 0.15))
         signal.execution_score = (
             0.0
@@ -1065,17 +1241,26 @@ class LighterMonitor:
 
         noise = _robust_noise(candles)
         signal.noise_pct = noise
+        signal.early = _assess_early(
+            candles,
+            noise,
+            max_age_minutes=int(self.config.get("early_max_age_minutes", 2)),
+            max_consumed_fraction=float(self.config.get("early_max_consumed_fraction", 0.66)),
+            minimum_efficiency=float(self.config.get("early_min_efficiency", 0.52)),
+            minimum_volume_consistency=int(self.config.get("early_min_volume_consistency", 2)),
+        )
         signal.trend = _assess_trend(candles, signal.windows, noise)
         signal.reversal = _assess_reversal(
             candles,
             noise,
             float(self.config.get("hard_reversal_min_move_pct", 0.20)),
         )
-        setups = (signal.trend, signal.reversal)
+        setups = (signal.early, signal.trend, signal.reversal)
         selected = max(
             setups,
             key=lambda item: (
                 *_setup_priority(item),
+                3 if item.kind == "EARLY" and item.phase == "ready" else
                 2 if item.kind == "REVERSAL" and item.phase == "ready" else 0,
             ),
         )
@@ -1141,11 +1326,7 @@ class LighterMonitor:
         )
 
         movement = _mean(
-            min(
-                100.0,
-                abs(item.price_pct or 0.0) * 70.0
-                + abs(math.log(max(item.volume_ratio or 1.0, 1e-9))) * 12.0,
-            )
+            min(100.0, abs(item.price_pct or 0.0) * 82.0)
             for item in display_good
         )
         stability = _clamp(
@@ -1162,26 +1343,29 @@ class LighterMonitor:
             stability = max(stability, 88.0)
         signal.opportunity = _clamp(
             raw_setup * 0.52
-            + signal.activity_score * 0.13
-            + signal.execution_score * 0.12
-            + movement * 0.15
+            + signal.activity_score * 0.10
+            + signal.execution_score * 0.10
+            + movement * 0.10
             + stability * 0.08
+            + signal.tape_quality * 0.10
         )
         signal.confidence = _clamp(
-            raw_setup * 0.52
-            + signal.data_quality * 0.12
-            + signal.execution_score * 0.11
-            + signal.activity_score * 0.09
+            raw_setup * 0.46
+            + signal.data_quality * 0.10
+            + signal.execution_score * 0.10
+            + signal.activity_score * 0.07
             + signal.volume_confirmation * 0.08
-            + stability * 0.08
+            + stability * 0.10
+            + signal.tape_quality * 0.09
         )
         signal.trade_readiness = _clamp(
-            raw_setup * 0.57
-            + signal.volume_confirmation * 0.12
-            + signal.data_quality * 0.09
+            raw_setup * 0.53
+            + signal.volume_confirmation * 0.10
+            + signal.data_quality * 0.06
             + signal.execution_score * 0.08
-            + signal.activity_score * 0.07
+            + signal.activity_score * 0.05
             + stability * 0.07
+            + signal.tape_quality * 0.11
             + (4.0 if same_direction_support >= 2 else 0.0)
             - (15.0 if setup_conflict else 0.0)
         )
@@ -1224,6 +1408,7 @@ class LighterMonitor:
         )
         if funding_magnitude > funding_watch:
             setup_factor = {
+                "EARLY": 0.65,
                 "TREND": 0.8,
                 "REVERSAL": 0.25,
             }.get(selected.kind, 0.6)
@@ -1241,27 +1426,24 @@ class LighterMonitor:
         meets_market_minimum = execution_quote >= _f(market.get("min_quote_amount"))
         enough_volume = signal.volume_24h >= minimum_volume
         enough_oi = signal.open_interest_usd >= minimum_oi
+        tape_ok = signal.tape_quality >= float(self.config.get("minimum_tape_quality", 68))
         funding_block = (
             funding_magnitude > funding_hard
-            and selected.kind != "REVERSAL"
+            and selected.kind not in {"REVERSAL"}
         )
         all_display_windows = len(display_good) == len(DISPLAY_WINDOWS)
         immediate_threshold = float(self.config.get("immediate_trade_readiness", 74))
         strong_threshold = float(self.config.get("strong_trade_readiness", 66))
         watch_threshold = float(self.config.get("watch_trade_readiness", 50))
-        if selected.kind == "REVERSAL":
-            fresh_entry = (
-                selected.age_minutes is None
-                or selected.age_minutes <= 3
-            )
-        else:
-            fresh_entry = (
-                selected.age_minutes is None
-                or selected.age_minutes <= 3
-            )
+        fresh_limit = (
+            int(self.config.get("early_max_age_minutes", 2))
+            if selected.kind == "EARLY" else 3
+        )
+        fresh_entry = selected.age_minutes is None or selected.age_minutes <= fresh_limit
         setup_minimum = float(
             self.config.get(
                 {
+                    "EARLY": "early_minimum_setup_score",
                     "TREND": "trend_minimum_setup_score",
                     "REVERSAL": "reversal_minimum_setup_score",
                 }.get(selected.kind, ""),
@@ -1269,7 +1451,21 @@ class LighterMonitor:
             )
         )
         setup_is_precise = selected.score >= setup_minimum
-        if selected.kind == "TREND":
+        if selected.kind == "EARLY":
+            effective_cost = signal.cost_pct if signal.cost_pct is not None else cost_limit
+            expected_edge_required = max(
+                float(self.config.get("early_minimum_expected_edge_pct", 0.10)),
+                effective_cost * float(self.config.get("early_cost_edge_multiple", 3.2)),
+            )
+            setup_is_precise = (
+                setup_is_precise
+                and selected.volume_score >= float(self.config.get("early_minimum_volume_score", 50))
+                and selected.expected_edge_pct >= expected_edge_required
+                and selected.rejection_fraction >= float(self.config.get("early_min_efficiency", 0.52))
+                and selected.recovery_fraction <= float(self.config.get("early_max_consumed_fraction", 0.66))
+                and selected.confirmations >= int(self.config.get("early_min_volume_consistency", 2))
+            )
+        elif selected.kind == "TREND":
             effective_cost = (
                 signal.cost_pct
                 if signal.cost_pct is not None
@@ -1330,6 +1526,7 @@ class LighterMonitor:
             or not meets_market_minimum
             or not enough_volume
             or not enough_oi
+            or not tape_ok
             or funding_block
         )
         test_candidate_ready = (
@@ -1350,6 +1547,9 @@ class LighterMonitor:
         elif not enough_volume or not enough_oi:
             signal.state = "NO_TRADE"
             signal.reasons.append("Liquidität/OI blockiert")
+        elif not tape_ok:
+            signal.state = "NO_TRADE"
+            signal.reasons.append("Volumenverlauf zu lückenhaft/sprunghaft")
         elif funding_block:
             signal.state = "NO_TRADE"
             signal.reasons.append("Funding blockiert Richtung")
@@ -1447,6 +1647,7 @@ class LighterMonitor:
             breadth_threshold = float(
                 self.config.get(
                     {
+                        "EARLY": "btc_early_immediate_breadth_score",
                         "TREND": "btc_trend_immediate_breadth_score",
                         "REVERSAL": "btc_reversal_immediate_breadth_score",
                     }.get(btc.selected_setup, ""),
@@ -1479,7 +1680,7 @@ class LighterMonitor:
             )
             if item.btc_context >= 40.0:
                 continue
-            penalty = 7.0 if item.selected_setup == "REVERSAL" else 12.0
+            penalty = 7.0 if item.selected_setup == "REVERSAL" else (9.0 if item.selected_setup == "EARLY" else 12.0)
             item.trade_readiness = _clamp(item.trade_readiness - penalty)
             item.confidence = _clamp(item.confidence - penalty * 0.55)
             reversal_overrides_btc = (
@@ -1497,140 +1698,117 @@ class LighterMonitor:
                 item.reasons.append("BTC-Kontext verhindert Sofortfreigabe")
 
     @staticmethod
+    @staticmethod
     def _rank(signals: list[Signal]) -> list[Signal]:
+        for item in signals:
+            setup = _selected_setup(item)
+            state_bonus = {
+                "BUY": 16.0, "SELL": 16.0,
+                "STRONG_LONG": 10.0, "STRONG_SHORT": 10.0,
+                "WATCH_LONG": 4.0, "WATCH_SHORT": 4.0,
+                "NO_TRADE": -8.0, "INVALID_DATA": -30.0,
+            }.get(item.state, 0.0)
+            late_penalty = 40.0 if setup.exit_hint or setup.phase in {"late", "invalidated"} else 0.0
+            item.attention_score = _clamp(
+                item.trade_readiness * 0.34
+                + item.confidence * 0.18
+                + item.opportunity * 0.20
+                + setup.score * 0.18
+                + item.tape_quality * 0.10
+                + state_bonus
+                - late_penalty
+            )
         return sorted(
             signals,
             key=lambda item: (
                 -STATE_TIER.get(item.state, 0),
+                -item.attention_score,
                 -item.trade_readiness,
                 -item.confidence,
-                -item.opportunity,
-                -abs(item.direction),
                 item.alias,
             ),
         )
 
     def _include_extra_detail(self, signal: Signal, position: int) -> bool:
-        if position not in {3, 4} or STATE_TIER.get(signal.state, 0) < 2:
-            return False
         setup = _selected_setup(signal)
-        if (
-            setup.phase not in {"ready", "strong", "forming"}
-            or setup.exit_hint
-            or signal.data_quality < 100.0
-        ):
-            return False
-
-        immediate = float(self.config.get("immediate_trade_readiness", 78))
-        setup_minimum = float(
-            self.config.get(
-                {
-                    "TREND": "trend_minimum_setup_score",
-                    "REVERSAL": "reversal_minimum_setup_score",
-                }.get(signal.selected_setup, ""),
-                100.0,
-            )
-        )
-        readiness_gap = max(0.0, immediate - signal.trade_readiness)
-        setup_gap = max(0.0, setup_minimum - setup.score)
-        economical = (
-            signal.execution_score >= (58.0 if position == 4 else 48.0)
-            and signal.liquidity_score >= (58.0 if position == 4 else 50.0)
-            and signal.volume_confirmation >= (55.0 if position == 4 else 44.0)
-        )
-        if signal.state in {"BUY", "SELL"}:
-            return economical
-        if position == 3:
-            if signal.state in {"STRONG_LONG", "STRONG_SHORT"}:
-                return (
-                    economical
-                    and signal.trade_readiness
-                    >= float(self.config.get("strong_trade_readiness", 66)) + 2.0
-                    and setup_gap <= 10.0
-                )
-            return (
-                economical
-                and readiness_gap <= 7.0
-                and setup_gap <= 8.0
-                and setup.confirmations >= 1
-            )
-        return (
-            economical
-            and setup.phase == "ready"
-            and readiness_gap <= 3.0
-            and setup_gap <= 4.0
-            and setup.confirmations >= 1
+        return bool(
+            position <= int(self.config.get("maximum_detail_count", 4))
+            and STATE_TIER.get(signal.state, 0) >= 2
+            and setup.phase in {"ready", "strong", "forming"}
+            and not setup.exit_hint
+            and signal.attention_score >= float(self.config.get("detail_attention_threshold", 72))
         )
 
     def _format(self, signals: list[Signal], now: datetime) -> str:
         ranked = self._rank(signals)
-        summary_count = int(self.config.get("summary_coin_count", 6))
+        summary_count = int(self.config.get("summary_coin_count", 5))
         summary = ranked[:summary_count]
         timestamp = now.astimezone(
             ZoneInfo(str(self.config.get("timezone", "Europe/Berlin")))
         ).strftime(":%M")
         lines = [
-            "".join(
-                f"{item.alias}{SUMMARY_COLORS[item.state]}"
-                for item in reversed(summary)
-            )
+            "".join(f"{item.alias}{SUMMARY_COLORS[item.state]}" for item in reversed(summary))
             + timestamp
         ]
 
-        minimum_details = int(self.config.get("minimum_detail_count", 2))
         maximum_details = int(self.config.get("maximum_detail_count", 4))
-        details = list(ranked[:minimum_details])
-        for position, item in enumerate(
-            ranked[minimum_details:maximum_details],
-            start=minimum_details + 1,
-        ):
-            if self._include_extra_detail(item, position):
-                details.append(item)
-            else:
-                break
+        threshold = float(self.config.get("detail_attention_threshold", 72))
+        watch_threshold = float(self.config.get("detail_watch_attention_threshold", 82))
+        replace_margin = float(self.config.get("detail_replace_btc_margin", 8))
+        btc = next((item for item in ranked if item.symbol == "BTC"), None)
+        screamers = [
+            item for item in ranked
+            if item.symbol != "BTC"
+            and self._include_extra_detail(item, 1)
+            and (
+                item.state not in {"WATCH_LONG", "WATCH_SHORT"}
+                or item.attention_score >= watch_threshold
+            )
+        ]
+        screamers.sort(key=lambda item: (-item.attention_score, -item.trade_readiness))
+        replace_btc = bool(
+            btc is not None
+            and len(screamers) >= 2
+            and screamers[1].attention_score >= btc.attention_score + replace_margin
+        )
+        if replace_btc:
+            details = screamers[:maximum_details]
+        else:
+            details = ([btc] if btc is not None else [])
+            details.extend(
+                item for item in screamers
+                if item not in details and item.attention_score >= threshold
+            )
+            details = details[:maximum_details]
+        if not details and ranked:
+            details = ranked[:1]
+
+        cost_limit = float(self.config.get("max_roundtrip_cost_pct", 0.10))
+        funding_watch = float(self.config.get("funding_watch_hourly_pct", 0.015))
+        tape_min = float(self.config.get("minimum_tape_quality", 68))
         for item in details:
             windows = "".join(
                 f"{minutes}{_window_color(item.windows.get(minutes, Window(minutes)))}"
                 for minutes in DISPLAY_WINDOWS
             )
-            volume_color = (
-                "🟤" if item.volume_confirmation <= 0 else
-                ("🟢" if item.volume_confirmation >= 62 else
-                 ("🟡" if item.volume_confirmation >= 38 else "🔴"))
-            )
-            cost_limit = float(self.config.get("max_roundtrip_cost_pct", 0.15))
-            cost_color = (
-                "🟤" if item.cost_pct is None else
-                ("🟢" if item.cost_pct <= cost_limit * 0.42 else
-                 ("🟡" if item.cost_pct <= cost_limit else "🔴"))
-            )
-            liquidity_color = (
-                "🟢" if item.liquidity_score >= 58 else
-                ("🟡" if item.liquidity_score >= 40 else "🔴")
-            )
-            btc_color = (
-                "🟤" if item.btc_context is None else
-                ("🟢" if item.btc_context >= 72 else
-                 ("🟡" if item.btc_context >= 40 else "🔴"))
-            )
-            funding_watch = float(self.config.get("funding_watch_hourly_pct", 0.015))
-            funding_hard = float(self.config.get("funding_hard_hourly_pct", 0.05))
-            if item.funding_hourly_pct is None:
-                funding_color = "🟤"
-            else:
-                against = _directional(
-                    item.funding_hourly_pct,
-                    _direction(item.direction),
-                )
-                funding_color = (
-                    "🔴" if against > funding_hard else
-                    ("🟡" if against > funding_watch else "🟢")
-                )
+            warnings: list[str] = []
+            if item.tape_quality < tape_min or item.volume_confirmation < 38:
+                warnings.append("V!")
+            if item.liquidity_score < 58:
+                warnings.append("L!")
+            if item.cost_pct is None or item.cost_pct > cost_limit:
+                warnings.append("K!")
+            if item.symbol != "BTC" and item.btc_context is not None and item.btc_context < 40:
+                warnings.append("B!")
+            if item.funding_hourly_pct is not None:
+                against = _directional(item.funding_hourly_pct, _direction(item.direction))
+                if against > funding_watch:
+                    warnings.append("F!")
+            warning_text = (" " + "".join(warnings)) if warnings else ""
             line = (
                 f"{_detail_head(item)} {windows} "
-                f"V{volume_color}L{liquidity_color}B{btc_color}"
-                f"K{cost_color}F{funding_color} "
-                f"{item.alias}{_setup_code(item)}"
+                f"{_setup_code(item)}{round(item.trade_readiness):02d} {item.alias}"
+                f"{warning_text}"
             )
             lines.append(line)
 
@@ -1710,10 +1888,10 @@ class LighterMonitor:
         self.last_signals = self._rank(signals)
         self.last_snapshots = snapshots
         report = self._format(signals, now)
-        minimum_lines = int(self.config.get("minimum_detail_count", 2)) + 1
+        minimum_lines = int(self.config.get("minimum_detail_count", 1)) + 1
         maximum_lines = int(self.config.get("maximum_detail_count", 4)) + 1
         if not minimum_lines <= len(report.splitlines()) <= maximum_lines:
-            raise RuntimeError("Discord-Ausgabe hat nicht drei bis fünf Zeilen")
+            raise RuntimeError("Discord-Ausgabe hat nicht zwei bis fünf Zeilen")
         payload = {
             "version": APP_VERSION,
             "package_revision": PACKAGE_REVISION,
@@ -1732,4 +1910,4 @@ class LighterMonitor:
         return self.client.candles(market_id, count=candle_count), self.client.book(market_id)
 
 
-# Package revision: v3.7.1-tw-only-r2
+# Package revision: v3.8.0-early-swing-r1

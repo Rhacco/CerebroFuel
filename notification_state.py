@@ -1,4 +1,4 @@
-"""Discord change detection and heartbeat state for v3.5.
+"""Discord change detection and heartbeat state for v3.8.
 
 A send decision never marks a report as delivered.  The state is committed only
 after Discord accepts the message, so a network failure is retried next run.
@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 from typing import Any, Mapping
 
-STATE_VERSION = "notification-v350-r1"
+STATE_VERSION = "notification-v380-r1"
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -44,7 +44,7 @@ def report_send_decision(
     heartbeat_minutes = max(3, int(section.get("heartbeat_minutes", 15)))
     state = _load(path)
     # The header minute changes every run; exclude it from semantic change
-    # detection so the 3-minute calculator does not spam Discord.
+    # detection so the recurring monitor does not spam Discord.
     lines = report.splitlines()
     if lines:
         lines[0] = re.sub(r":\d{2}$", ":--", lines[0])
@@ -66,4 +66,4 @@ def mark_report_sent(*, path: Path, digest: str, now_ms: int, reason: str) -> No
         "last_sent_ms": int(now_ms),
         "last_reason": str(reason),
     })
-# Package revision: v3.7-paper-multi-r1
+# Package revision: v3.8.0-early-swing-r1

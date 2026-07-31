@@ -1,4 +1,4 @@
-"""Crypto Signal Monitor v3.7.1 — T/W signals plus persistent paper trading."""
+"""Crypto Signal Monitor v3.8.0 — early swings, T/W and persistent paper trading."""
 from __future__ import annotations
 
 import argparse
@@ -9,6 +9,7 @@ from pathlib import Path
 from discord_sender import send_discord
 from lighter_monitor import APP_VERSION, LighterMonitor
 from paper_trader import PaperTrader
+from notification_state import mark_report_sent, report_send_decision
 
 ROOT = Path(__file__).resolve().parent
 
@@ -34,6 +35,7 @@ def main() -> int:
 
     monitor = LighterMonitor(config)
     report, payload = monitor.run()
+    semantic_report = report
     output = ROOT / "output"
     output.mkdir(exist_ok=True)
     paper_result = None
@@ -82,20 +84,39 @@ def main() -> int:
         and os.getenv("SEND_DISCORD", "true").lower() not in {"0", "false", "no", "off"}
     )
     if should_send:
-        webhook = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
-        if not webhook:
-            raise RuntimeError("DISCORD_WEBHOOK_URL fehlt")
-        send_discord(
-            webhook,
-            report,
-            username=str(config.get("discord_username", "CF v3.7.1")),
-            avatar_url=str(config.get("discord_avatar_url", "")).strip(),
+        notification_path = output / "notification_state.json"
+        now_ms = int(monitor.generated_at.timestamp() * 1000)
+        action_force = bool(paper_result and paper_result.get("actions"))
+        send_now, send_reason, digest = report_send_decision(
+            path=notification_path,
+            report=semantic_report,
+            now_ms=now_ms,
+            config=config,
+            force=bool(args.force_discord or action_force),
         )
-        print("Discord gesendet.")
+        if send_now:
+            webhook = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
+            if not webhook:
+                raise RuntimeError("DISCORD_WEBHOOK_URL fehlt")
+            send_discord(
+                webhook,
+                report,
+                username=str(config.get("discord_username", "CF v3.8.0")),
+                avatar_url=str(config.get("discord_avatar_url", "")).strip(),
+            )
+            mark_report_sent(
+                path=notification_path,
+                digest=digest,
+                now_ms=now_ms,
+                reason=send_reason,
+            )
+            print(f"Discord gesendet ({send_reason}).")
+        else:
+            print("Discord übersprungen (inhaltlich unverändert).")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
 
-# Package revision: v3.7.1-tw-only-r2
+# Package revision: v3.8.0-early-swing-r1
