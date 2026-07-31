@@ -2,12 +2,10 @@
   "app_version": "3.8.0",
   "balance_usd": 99.5480567936,
   "checkpoint_requested": false,
-  "cooldowns": {
-    "ETH": 1785526749
-  },
-  "last_checkpoint_at": "2026-07-31T19:36:11.582338+00:00",
-  "last_decision_key": "1785526560000",
-  "last_run_at": "2026-07-31T19:36:09.919074+00:00",
+  "cooldowns": {},
+  "last_checkpoint_at": "2026-07-31T19:41:03.923896+00:00",
+  "last_decision_key": "1785526800000",
+  "last_run_at": "2026-07-31T19:41:02.960934+00:00",
   "ledger": [
     {
       "action": {
@@ -3841,6 +3839,39 @@
         "raw_net_pnl_usd": 0.01914253420885465
       },
       "timestamp": "2026-07-31T19:36:09.919074+00:00"
+    },
+    {
+      "action": {
+        "alias": "HYP",
+        "direction": -1,
+        "discord_visible": false,
+        "full_close": false,
+        "is_add": false,
+        "kind": "OPEN",
+        "leverage": 10,
+        "margin_usd": 2.0,
+        "priority": 78.85572683585427,
+        "realized_pnl_usd": 0.0,
+        "reason": "E 94.0/89.6, Stop 0.254%",
+        "symbol": "HYPE"
+      },
+      "balance_usd": 99.54805679,
+      "details": {
+        "base_size": 0.38158908960475,
+        "confidence": 89.63885363981784,
+        "entry_fee_usd": 0.0,
+        "entry_price": 52.4124,
+        "entry_roundtrip_cost_pct": 0.033961428974824945,
+        "entry_state": "SELL",
+        "notional_usd": 20.0,
+        "rank": 1,
+        "readiness": 94.01943290980276,
+        "setup": "E",
+        "stop_price": 52.54571239032689,
+        "target_one_price": 52.25909075112408,
+        "target_two_price": 52.13244398031353
+      },
+      "timestamp": "2026-07-31T19:41:02.960934+00:00"
     }
   ],
   "observations": {
@@ -3851,13 +3882,13 @@
       "state": "WATCH_SHORT"
     },
     "ADA": {
-      "candle_ms": 1785526560000,
+      "candle_ms": 1785526800000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "BTC": {
-      "candle_ms": 1785526560000,
+      "candle_ms": 1785526800000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
@@ -3875,7 +3906,7 @@
       "state": "NO_TRADE"
     },
     "ETH": {
-      "candle_ms": 1785526560000,
+      "candle_ms": 1785526800000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
@@ -3887,10 +3918,10 @@
       "state": "NO_TRADE"
     },
     "HYPE": {
-      "candle_ms": 1785526560000,
-      "entry_direction": 0,
-      "entry_streak": 0,
-      "state": "WATCH_SHORT"
+      "candle_ms": 1785526800000,
+      "entry_direction": -1,
+      "entry_streak": 1,
+      "state": "SELL"
     },
     "LIT": {
       "candle_ms": 1785493260000,
@@ -3911,7 +3942,7 @@
       "state": "NO_TRADE"
     },
     "SOL": {
-      "candle_ms": 1785526560000,
+      "candle_ms": 1785526800000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
@@ -3947,8 +3978,40 @@
       "state": "WATCH_LONG"
     }
   },
-  "positions": {},
-  "run_count": 1578,
+  "positions": {
+    "HYPE": {
+      "alias": "HYP",
+      "base_size": 0.38158908960475,
+      "degrade_streak": 0,
+      "direction": -1,
+      "entry_confidence": 89.63885363981784,
+      "entry_fee_remaining_usd": 0.0,
+      "entry_price": 52.4124,
+      "entry_rank": 1,
+      "entry_readiness": 94.01943290980276,
+      "entry_roundtrip_cost_pct": 0.033961428974824945,
+      "entry_state": "SELL",
+      "funding_accrued_usd": 0.0,
+      "funding_updated_at": "2026-07-31T19:41:02.960934+00:00",
+      "last_candle_ms": 1785526800000,
+      "leverage": 10,
+      "margin_usd": 2.0,
+      "notional_usd": 20.0,
+      "opened_at": "2026-07-31T19:41:02.960934+00:00",
+      "probe_entry": false,
+      "risk_usd": 0.05766283945283506,
+      "scale_count": 0,
+      "setup": "E",
+      "stop_pct": 0.25435276828935033,
+      "stop_price": 52.54571239032689,
+      "symbol": "HYPE",
+      "taker_fee_pct": 0.0,
+      "target_one_price": 52.25909075112408,
+      "target_one_taken": false,
+      "target_two_price": 52.13244398031353
+    }
+  },
+  "run_count": 1583,
   "schema": 1,
   "starting_balance_usd": 100.0
 }
