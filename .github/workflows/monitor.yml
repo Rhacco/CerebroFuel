@@ -1,5 +1,5 @@
-name: Crypto Signal Monitor v3.8.1
-# Package revision: v3.8.1-events-trend-dip-r1
+name: Crypto Signal Monitor v3.8.2
+# Package revision: v3.8.2-hourly-events-paper-review-r2
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: crypto-signal-monitor-v381
+  group: crypto-signal-monitor-v382
   cancel-in-progress: false
 
 jobs:
@@ -36,8 +36,11 @@ jobs:
             output/paper_state.json
             output/notification_state.json
             output/event_cache.json
-          key: runtime-state-v381-${{ github.run_id }}
+            output/event_display_state.json
+            output/parameter_review.json
+          key: runtime-state-v382-${{ github.run_id }}
           restore-keys: |
+            runtime-state-v382-
             runtime-state-v381-
             paper-state-v371-
       - name: Paper-State wiederherstellen
@@ -59,11 +62,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python paper_state_store.py checkpoint output/paper_state.json --interval-hours 6
       - name: Laufzeit-State-Cache speichern
-        if: always() && hashFiles('output/paper_state.json') != ''
+        if: always()
         uses: actions/cache/save@v4
         with:
           path: |
             output/paper_state.json
             output/notification_state.json
             output/event_cache.json
-          key: runtime-state-v381-${{ github.run_id }}
+            output/event_display_state.json
+            output/parameter_review.json
+          key: runtime-state-v382-${{ github.run_id }}

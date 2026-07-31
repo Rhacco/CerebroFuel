@@ -1,4 +1,4 @@
-"""Restore and checkpoint the v3.8.1 paper state through the GitHub API."""
+"""Restore and checkpoint the v3.8.2 paper state through the GitHub API."""
 from __future__ import annotations
 
 import argparse
@@ -16,8 +16,8 @@ from urllib.request import Request, urlopen
 API = "https://api.github.com"
 BRANCH = "paper-state"
 REMOTE_FILE = "paper_state.json"
-APP_VERSION = "3.8.1"
-COMPATIBLE_APP_VERSIONS = {"3.7", "3.7.1", "3.8.0", APP_VERSION}
+APP_VERSION = "3.8.2"
+COMPATIBLE_APP_VERSIONS = {"3.7", "3.7.1", "3.8.0", "3.8.1", APP_VERSION}
 
 
 class GitHubStateStore:
@@ -51,7 +51,7 @@ class GitHubStateStore:
                 "Accept": "application/vnd.github+json",
                 "Authorization": f"Bearer {self.token}",
                 "Content-Type": "application/json",
-                "User-Agent": "cf-paper-state/3.8.1",
+                "User-Agent": "cf-paper-state/3.8.2",
                 "X-GitHub-Api-Version": "2022-11-28",
             },
         )

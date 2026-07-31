@@ -1,4 +1,4 @@
-"""Verified critical-event context for CF v3.8.1.
+"""Verified critical-event context for CF v3.8.2.
 
 Automatic facts come only from official public schedules/status pages. Project-
 specific events such as token unlocks are accepted only from a local or remote
@@ -8,6 +8,7 @@ and neutral risk controls.
 """
 from __future__ import annotations
 
+import calendar
 import json
 import math
 import os
@@ -24,8 +25,8 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-CACHE_VERSION = "event-cache-v381-r1"
-USER_AGENT = "crypto-signal-monitor/3.8.1"
+CACHE_VERSION = "event-cache-v382-r2"
+USER_AGENT = "crypto-signal-monitor/3.8.2"
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4,
     "may": 5, "june": 6, "july": 7, "august": 8,
@@ -367,7 +368,7 @@ def _parse_fomc_calendar(text: str, years: Iterable[int]) -> list[CriticalEvent]
                 ends_at=None,
                 exact_time=True,
                 priority=DEFAULT_PRIORITIES["FOMC"],
-                source_name="Federal Reserve Board",
+                source_name="Federal Reserve Board - FOMC",
                 source_url="https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
             ))
     return result
@@ -405,6 +406,104 @@ def _parse_status_events(text: str, *, symbol: str, source_name: str, source_url
         ))
     return result
 
+
+
+def _parse_fed_month_calendar(text: str, *, year: int, month: int) -> list[CriticalEvent]:
+    """Parse officially timed FOMC-minutes releases from a Fed month page."""
+    flat = _html_text(text)
+    eastern = ZoneInfo("America/New_York")
+    result: list[CriticalEvent] = []
+    pattern = re.compile(
+        r"(\d{1,2}:\d{2})\s*(a\.m\.|p\.m\.)\s+FOMC Minutes\s+"
+        r"Meeting of\s+[A-Za-z]+\s+\d{1,2}-\d{1,2}\s+(\d{1,2})(?=\s|$)",
+        flags=re.IGNORECASE,
+    )
+    for clock, ampm, day_text in pattern.findall(flat):
+        try:
+            local = datetime.strptime(
+                f"{year}-{month:02d}-{int(day_text):02d} {clock} {ampm.replace('.', '').upper()}",
+                "%Y-%m-%d %I:%M %p",
+            ).replace(tzinfo=eastern)
+        except ValueError:
+            continue
+        result.append(CriticalEvent(
+            symbol="BTC",
+            kind="FOMC",
+            title="FOMC Minutes",
+            starts_at=_iso(local),
+            ends_at=None,
+            exact_time=True,
+            priority=88,
+            source_name="Federal Reserve Board Calendar",
+            source_url=f"https://www.federalreserve.gov/newsevents/{year}-{local:%B}.htm".lower(),
+        ))
+    return result
+
+
+def _parse_deribit_expiries(
+    text: str,
+    *,
+    currency: str,
+    now: datetime,
+    config: Mapping[str, Any],
+) -> list[CriticalEvent]:
+    """Create factual large-options-expiry events from Deribit public OI."""
+    try:
+        payload = json.loads(text)
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return []
+    rows = payload.get("result") if isinstance(payload, Mapping) else None
+    if not isinstance(rows, list):
+        return []
+    groups: dict[datetime, float] = {}
+    total = 0.0
+    pattern = re.compile(rf"^{re.escape(currency)}-(\d{{1,2}}[A-Z]{{3}}\d{{2}})-", re.IGNORECASE)
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        match = pattern.match(str(row.get("instrument_name") or ""))
+        if not match:
+            continue
+        try:
+            expiry = datetime.strptime(match.group(1).upper(), "%d%b%y").replace(
+                hour=8, tzinfo=timezone.utc
+            )
+        except ValueError:
+            continue
+        open_interest = max(0.0, float(row.get("open_interest") or 0.0))
+        underlying = max(0.0, float(row.get("underlying_price") or 0.0))
+        notional = open_interest * underlying
+        if notional <= 0:
+            continue
+        groups[expiry] = groups.get(expiry, 0.0) + notional
+        total += notional
+    if total <= 0:
+        return []
+    thresholds = config.get("deribit_expiry_min_notional_usd")
+    thresholds = thresholds if isinstance(thresholds, Mapping) else {}
+    minimum = float(thresholds.get(currency, 500_000_000 if currency == "BTC" else 250_000_000))
+    minimum_share = float(config.get("deribit_expiry_min_share_pct", 8.0))
+    horizon_days = max(1, int(config.get("coin_event_display_days", 7)))
+    result: list[CriticalEvent] = []
+    for expiry, notional in sorted(groups.items()):
+        hours = (expiry - now).total_seconds() / 3600.0
+        if hours < -1 or hours > horizon_days * 24:
+            continue
+        share = notional / total * 100.0
+        if notional < minimum or share < minimum_share:
+            continue
+        result.append(CriticalEvent(
+            symbol=currency,
+            kind="EXPIRY",
+            title=f"Deribit {currency} options expiry: ${notional/1_000_000:.0f}m OI ({share:.1f}%)",
+            starts_at=_iso(expiry),
+            ends_at=None,
+            exact_time=True,
+            priority=min(92, 78 + int(min(14.0, share / 2.0))),
+            source_name="Deribit public API",
+            source_url=f"https://www.deribit.com/api/v2/public/get_book_summary_by_currency?currency={currency}&kind=option",
+        ))
+    return result
 
 def _host_allowed(url: str, allowlist: Iterable[str]) -> bool:
     try:
@@ -620,92 +719,185 @@ def load_critical_events(
     cached = _load_json(cache_path)
     if cached.get("version") != CACHE_VERSION:
         cached = {"version": CACHE_VERSION}
+    now_s = int(now.timestamp())
 
+    def cached_events(key: str) -> list[CriticalEvent]:
+        raw = cached.get(key) if isinstance(cached.get(key), list) else []
+        return [
+            event for event in (
+                _event_from_dict(item) for item in raw if isinstance(item, Mapping)
+            ) if event
+        ]
+
+    # Official macro schedules are checked hourly. Each source has its own
+    # successful-fetch timestamp, so a temporary failure cannot make another
+    # source refresh an old date indefinitely. Failed checks are not retried on
+    # every one-minute monitor run.
     schedule_refresh = max(15, int(section.get("schedule_refresh_minutes", 60))) * 60
     max_stale = max(1, int(section.get("schedule_cache_max_stale_hours", 48))) * 3600
-    fetched_at = int(cached.get("schedule_fetched_at") or 0)
-    schedule_raw = cached.get("schedule_events") if isinstance(cached.get("schedule_events"), list) else []
-    schedule_events = [event for event in (_event_from_dict(item) for item in schedule_raw if isinstance(item, Mapping)) if event]
+    schedule_checked_at = int(cached.get("schedule_checked_at") or 0)
+    raw_source_rows = cached.get("schedule_source_events")
+    raw_source_rows = raw_source_rows if isinstance(raw_source_rows, Mapping) else {}
+    raw_source_times = cached.get("schedule_source_fetched_at")
+    raw_source_times = raw_source_times if isinstance(raw_source_times, Mapping) else {}
+    schedule_by_source: dict[str, list[CriticalEvent]] = {}
+    source_fetched_at: dict[str, int] = {}
+    for source_id, rows in raw_source_rows.items():
+        if not isinstance(source_id, str) or not isinstance(rows, list):
+            continue
+        parsed_rows = [
+            event for event in (
+                _event_from_dict(item) for item in rows if isinstance(item, Mapping)
+            ) if event
+        ]
+        if parsed_rows:
+            schedule_by_source[source_id] = parsed_rows
+            source_fetched_at[source_id] = int(raw_source_times.get(source_id) or 0)
 
-    refresh_schedule = int(now.timestamp()) - fetched_at >= schedule_refresh or not schedule_events
-    if refresh_schedule:
-        sources = {
-            "bls": str(section.get("bls_ics_url", "https://www.bls.gov/schedule/news_release/bls.ics")),
-            "bea": str(section.get("bea_schedule_url", "https://www.bea.gov/news/schedule")),
-            "fomc": str(section.get("fomc_calendar_url", "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm")),
-        }
+    next_month = (now.replace(day=28) + timedelta(days=4)).replace(day=1)
+    fed_months = {(now.year, now.month), (next_month.year, next_month.month)}
+    sources: dict[str, str] = {
+        "bls": str(section.get("bls_ics_url", "https://www.bls.gov/schedule/news_release/bls.ics")),
+        "bea": str(section.get("bea_schedule_url", "https://www.bea.gov/news/schedule")),
+        "fomc": str(section.get("fomc_calendar_url", "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm")),
+    }
+    for year, month in sorted(fed_months):
+        sources[f"fedmonth-{year}-{month}"] = (
+            f"https://www.federalreserve.gov/newsevents/{year}-{calendar.month_name[month].lower()}.htm"
+        )
+    # Remove old monthly Fed pages once they are no longer current/next month.
+    for source_id in list(schedule_by_source):
+        if source_id.startswith("fedmonth-") and source_id not in sources:
+            schedule_by_source.pop(source_id, None)
+            source_fetched_at.pop(source_id, None)
+
+    if now_s - schedule_checked_at >= schedule_refresh or schedule_checked_at <= 0:
         fetched: dict[str, str] = {}
-        with ThreadPoolExecutor(max_workers=3) as pool:
+        failed: dict[str, str] = {}
+        with ThreadPoolExecutor(max_workers=min(5, len(sources))) as pool:
             futures = {pool.submit(_request_text, url, timeout=timeout): name for name, url in sources.items()}
             for future in as_completed(futures):
                 name = futures[future]
                 try:
                     fetched[name] = future.result()
                 except Exception as exc:
-                    diagnostics.append(f"{name}-Kalender nicht aktualisiert: {exc}")
-        parsers = {
-            "bls": lambda value: _parse_bls_ics(value),
-            "bea": lambda value: _parse_bea_schedule(value, now.year),
-            "fomc": lambda value: _parse_fomc_calendar(value, (now.year, now.year + 1)),
-        }
-        source_names = {
-            "bls": "U.S. Bureau of Labor Statistics",
-            "bea": "U.S. Bureau of Economic Analysis",
-            "fomc": "Federal Reserve Board",
-        }
-        fresh: list[CriticalEvent] = []
-        replaced_sources: set[str] = set()
+                    failed[name] = str(exc)
         for name, value in fetched.items():
-            parsed = parsers[name](value)
+            if name == "bls":
+                parsed = _parse_bls_ics(value)
+            elif name == "bea":
+                parsed = _parse_bea_schedule(value, now.year)
+            elif name == "fomc":
+                parsed = _parse_fomc_calendar(value, (now.year, now.year + 1))
+            else:
+                _, year_text, month_text = name.split("-")
+                parsed = _parse_fed_month_calendar(
+                    value, year=int(year_text), month=int(month_text)
+                )
             if parsed:
-                fresh.extend(parsed)
-                replaced_sources.add(source_names[name])
+                schedule_by_source[name] = _dedupe(parsed)
+                source_fetched_at[name] = now_s
             else:
                 diagnostics.append(f"{name}-Kalender gelesen, aber keine passenden Termine erkannt")
-        if fresh:
-            # A temporary failure of one official source must not erase its
-            # still-valid cached dates merely because another source succeeded.
-            retained = [
-                event for event in schedule_events
-                if event.source_name not in replaced_sources
-            ]
-            schedule_events = _dedupe([*retained, *fresh])
-            cached["schedule_fetched_at"] = int(now.timestamp())
-            cached["schedule_events"] = [asdict(event) for event in schedule_events]
-        elif fetched_at and int(now.timestamp()) - fetched_at > max_stale:
-            schedule_events = []
-            diagnostics.append("Offizieller Termin-Cache zu alt; keine Termine angezeigt")
+        for name, error in failed.items():
+            diagnostics.append(f"{name}-Kalender nicht aktualisiert: {error}")
+        cached["schedule_checked_at"] = now_s
 
-    status_sources = [
-        ("SOL", "Solana Status", "https://status.solana.com/api/v2/incidents/unresolved.json", False),
-        ("SOL", "Solana Status", "https://status.solana.com/api/v2/scheduled-maintenances/upcoming.json", True),
-        ("HYPE", "Hyperliquid Status", "https://hyperliquid.statuspage.io/api/v2/incidents/unresolved.json", False),
-        ("HYPE", "Hyperliquid Status", "https://hyperliquid.statuspage.io/api/v2/scheduled-maintenances/upcoming.json", True),
-    ]
-    status_events: list[CriticalEvent] = []
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = {
-            pool.submit(_request_text, url, timeout=timeout): (symbol, source_name, url, scheduled)
-            for symbol, source_name, url, scheduled in status_sources
-            if symbol in symbols
-        }
-        for future in as_completed(futures):
-            symbol, source_name, url, scheduled = futures[future]
-            try:
-                status_events.extend(_parse_status_events(
-                    future.result(),
-                    symbol=symbol,
-                    source_name=source_name,
-                    source_url=url,
-                    scheduled=scheduled,
-                ))
-            except Exception as exc:
-                diagnostics.append(f"{source_name} nicht aktualisiert: {exc}")
+    # Expire each source independently after the configured stale window.
+    for source_id in list(schedule_by_source):
+        fetched_at = int(source_fetched_at.get(source_id) or 0)
+        if fetched_at <= 0 or now_s - fetched_at > max_stale:
+            schedule_by_source.pop(source_id, None)
+            source_fetched_at.pop(source_id, None)
+            diagnostics.append(f"{source_id}-Termin-Cache zu alt; Quelle ausgeblendet")
+    schedule_events = _dedupe(
+        event for rows in schedule_by_source.values() for event in rows
+    )
+    cached["schedule_source_events"] = {
+        source_id: [asdict(event) for event in rows]
+        for source_id, rows in schedule_by_source.items()
+    }
+    cached["schedule_source_fetched_at"] = source_fetched_at
+    cached["schedule_events"] = [asdict(event) for event in schedule_events]
+    cached["schedule_fetched_at"] = max(source_fetched_at.values(), default=0)
+
+    # Network incidents can change quickly. Check every five minutes by default
+    # while retaining the last successful result briefly on transient failures.
+    status_refresh = max(1, int(section.get("status_refresh_minutes", 5))) * 60
+    status_fetched_at = int(cached.get("status_fetched_at") or 0)
+    status_checked_at = int(cached.get("status_checked_at") or 0)
+    status_events = cached_events("status_events")
+    if now_s - status_checked_at >= status_refresh or status_checked_at <= 0:
+        status_sources = [
+            ("SOL", "Solana Status", "https://status.solana.com/api/v2/incidents/unresolved.json", False),
+            ("SOL", "Solana Status", "https://status.solana.com/api/v2/scheduled-maintenances/upcoming.json", True),
+            ("HYPE", "Hyperliquid Status", "https://hyperliquid.statuspage.io/api/v2/incidents/unresolved.json", False),
+            ("HYPE", "Hyperliquid Status", "https://hyperliquid.statuspage.io/api/v2/scheduled-maintenances/upcoming.json", True),
+        ]
+        fresh_status: list[CriticalEvent] = []
+        successful_status = 0
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {
+                pool.submit(_request_text, url, timeout=timeout): (symbol, source_name, url, scheduled)
+                for symbol, source_name, url, scheduled in status_sources if symbol in symbols
+            }
+            for future in as_completed(futures):
+                symbol, source_name, url, scheduled = futures[future]
+                try:
+                    fresh_status.extend(_parse_status_events(
+                        future.result(), symbol=symbol, source_name=source_name,
+                        source_url=url, scheduled=scheduled,
+                    ))
+                    successful_status += 1
+                except Exception as exc:
+                    diagnostics.append(f"{source_name} nicht aktualisiert: {exc}")
+        cached["status_checked_at"] = now_s
+        if successful_status:
+            status_events = _dedupe(fresh_status)
+            cached["status_fetched_at"] = now_s
+            cached["status_events"] = [asdict(event) for event in status_events]
+        elif status_fetched_at and now_s - status_fetched_at > 7200:
+            status_events = []
+
+    # Large BTC/ETH option expiries are derived hourly from Deribit's official
+    # public open-interest endpoint. A label appears only when both the absolute
+    # notional and share-of-total thresholds are met.
+    derivatives_refresh = max(15, int(section.get("derivatives_refresh_minutes", 60))) * 60
+    derivatives_fetched_at = int(cached.get("derivatives_fetched_at") or 0)
+    derivatives_checked_at = int(cached.get("derivatives_checked_at") or 0)
+    derivative_events = cached_events("derivative_events")
+    if now_s - derivatives_checked_at >= derivatives_refresh or derivatives_checked_at <= 0:
+        currencies = [symbol for symbol in ("BTC", "ETH") if symbol in symbols]
+        fresh_derivatives: list[CriticalEvent] = []
+        successful_derivatives = 0
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = {
+                pool.submit(
+                    _request_text,
+                    f"https://www.deribit.com/api/v2/public/get_book_summary_by_currency?currency={currency}&kind=option",
+                    timeout=timeout,
+                ): currency for currency in currencies
+            }
+            for future in as_completed(futures):
+                currency = futures[future]
+                try:
+                    fresh_derivatives.extend(_parse_deribit_expiries(
+                        future.result(), currency=currency, now=now, config=section
+                    ))
+                    successful_derivatives += 1
+                except Exception as exc:
+                    diagnostics.append(f"Deribit-{currency}-Verfälle nicht aktualisiert: {exc}")
+        cached["derivatives_checked_at"] = now_s
+        if successful_derivatives:
+            derivative_events = _dedupe(fresh_derivatives)
+            cached["derivatives_fetched_at"] = now_s
+            cached["derivative_events"] = [asdict(event) for event in derivative_events]
+        elif derivatives_fetched_at and now_s - derivatives_fetched_at > max_stale:
+            derivative_events = []
 
     allowlist = {
         str(value).lower().strip()
-        for value in section.get("verified_source_domains", [])
-        if str(value).strip()
+        for value in section.get("verified_source_domains", []) if str(value).strip()
     }
     feed_events: list[CriticalEvent] = []
     if local_feed_path is not None:
@@ -716,22 +908,41 @@ def load_critical_events(
             feed_events.extend(_verified_feed_events(json.loads(inline), allowlist, symbols))
         except (ValueError, TypeError, json.JSONDecodeError):
             diagnostics.append("CRYPTO_EVENTS_JSON ist ungültig")
+
+    # Remote verified feeds (unlocks, ETF decisions, upgrades, governance and
+    # supply events) refresh hourly. Local/inline facts are evaluated every run.
     feed_url = os.getenv("CRYPTO_EVENTS_URL", "").strip() or str(section.get("verified_feed_url", "")).strip()
+    remote_feed_events = cached_events("remote_feed_events")
+    remote_feed_fetched_at = int(cached.get("remote_feed_fetched_at") or 0)
+    remote_feed_checked_at = int(cached.get("remote_feed_checked_at") or 0)
+    feed_refresh = max(15, int(section.get("verified_feed_refresh_minutes", 60))) * 60
     if feed_url:
-        if _host_allowed(feed_url, allowlist):
+        if not _host_allowed(feed_url, allowlist):
+            diagnostics.append("Ereignisfeed-Domain nicht freigegeben")
+            remote_feed_events = []
+        elif now_s - remote_feed_checked_at >= feed_refresh or remote_feed_checked_at <= 0:
+            cached["remote_feed_checked_at"] = now_s
             try:
-                feed_events.extend(_verified_feed_events(json.loads(_request_text(feed_url, timeout=timeout)), allowlist, symbols))
+                raw = json.loads(_request_text(feed_url, timeout=timeout))
+                remote_feed_events = _verified_feed_events(raw, allowlist, symbols)
+                cached["remote_feed_fetched_at"] = now_s
+                cached["remote_feed_events"] = [asdict(event) for event in remote_feed_events]
             except Exception as exc:
                 diagnostics.append(f"Verifizierter Ereignisfeed nicht aktualisiert: {exc}")
-        else:
-            diagnostics.append("Ereignisfeed-Domain nicht freigegeben")
+                if remote_feed_fetched_at and now_s - remote_feed_fetched_at > max_stale:
+                    remote_feed_events = []
+    else:
+        remote_feed_events = []
+    feed_events.extend(remote_feed_events)
 
-    all_events = _dedupe([*schedule_events, *status_events, *feed_events])
+    all_events = _dedupe([
+        *schedule_events, *status_events, *derivative_events, *feed_events
+    ])
     timing_section = dict(section)
     timing_section["timezone_name"] = timezone_name
     marks = _pick_marks(all_events, symbols, now, timezone_name, timing_section)
     cached["version"] = CACHE_VERSION
-    cached["updated_at"] = int(now.timestamp())
+    cached["updated_at"] = now_s
     try:
         _save_json(cache_path, cached)
     except OSError as exc:
@@ -739,4 +950,4 @@ def load_critical_events(
     return EventSnapshot(marks, all_events, diagnostics, _iso(now) or "")
 
 
-# Package revision: v3.8.1-events-trend-dip-r1
+# Package revision: v3.8.2-hourly-events-paper-review-r2

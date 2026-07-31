@@ -1,4 +1,4 @@
-"""Lighter-native early-swing/T/W signal engine for CF v3.8.1."""
+"""Lighter-native early-swing/T/W signal engine for CF v3.8.2."""
 from __future__ import annotations
 
 import json
@@ -15,13 +15,14 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-APP_VERSION = "3.8.1"
-PACKAGE_REVISION = "v3.8.1-events-trend-dip-r1"
+APP_VERSION = "3.8.2"
+PACKAGE_REVISION = "v3.8.2-hourly-events-paper-review-r2"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 TREND_WINDOWS = (5, 15, 60)
 # Kept as the stable public display contract.
 WINDOWS = DISPLAY_WINDOWS
+GLOBAL_BTC_EVENT_KINDS = {"FOMC", "CPI", "NFP", "PPI", "GDP", "PCE", "EXPIRY", "ETF"}
 
 SUMMARY_COLORS = {
     "BUY": "🟢",
@@ -148,6 +149,7 @@ class Signal:
     candidate_tier: str = "core"
     candidate_penalty: float = 0.0
     event_code: str = ""
+    event_display_code: str = ""
     event_kind: str = ""
     event_title: str = ""
     event_priority: float = 0.0
@@ -1731,27 +1733,60 @@ class LighterMonitor:
         self,
         signals: list[Signal],
         event_marks: Mapping[str, Any] | None,
+        event_display_codes: Mapping[str, str] | None = None,
     ) -> None:
         marks = event_marks if isinstance(event_marks, Mapping) else {}
-        for item in signals:
-            mark = marks.get(item.symbol)
+        display_codes_provided = isinstance(event_display_codes, Mapping)
+        display_codes = event_display_codes if display_codes_provided else {}
+
+        def field(mark: Any, name: str, default: Any = None) -> Any:
             if mark is None:
+                return default
+            if isinstance(mark, Mapping):
+                return mark.get(name, default)
+            return getattr(mark, name, default)
+
+        btc_mark = marks.get("BTC")
+        btc_kind = str(field(btc_mark, "kind", "") or "")
+        for item in signals:
+            own_mark = marks.get(item.symbol)
+            global_mark = (
+                btc_mark
+                if item.symbol != "BTC" and btc_kind in GLOBAL_BTC_EVENT_KINDS
+                else None
+            )
+            applicable = [mark for mark in (own_mark, global_mark) if mark is not None]
+            if not applicable:
+                item.event_display_code = str(display_codes.get(item.symbol, "") or "")
                 continue
-            def value(name: str, default: Any = None) -> Any:
-                if isinstance(mark, Mapping):
-                    return mark.get(name, default)
-                return getattr(mark, name, default)
-            item.event_code = str(value("code", "") or "")
-            item.event_kind = str(value("kind", "") or "")
-            item.event_title = str(value("title", "") or "")
-            item.event_priority = _clamp(_f(value("priority", 0.0)))
-            item.event_risk = _clamp(_f(value("risk", 0.0)))
-            item.event_block_new = bool(value("block_new", False))
-            raw_cap = value("leverage_cap")
-            item.event_leverage_cap = int(raw_cap) if raw_cap is not None else None
-            item.event_source_name = str(value("source_name", "") or "")
-            item.event_source_url = str(value("source_url", "") or "")
-            item.event_starts_at = value("starts_at")
+
+            # The coin-specific event owns the label/metadata. A confirmed BTC
+            # macro event is additionally applied as market-wide risk without
+            # duplicating its label on ETH/SOL/HYPE.
+            primary = own_mark or global_mark
+            item.event_code = str(field(primary, "code", "") or "")
+            display_default = item.event_code if own_mark is not None and not display_codes_provided else ""
+            item.event_display_code = str(display_codes.get(item.symbol, display_default) or "")
+            item.event_kind = str(field(primary, "kind", "") or "")
+            item.event_title = str(field(primary, "title", "") or "")
+            item.event_priority = max(
+                _clamp(_f(field(mark, "priority", 0.0))) for mark in applicable
+            )
+            item.event_risk = max(
+                _clamp(_f(field(mark, "risk", 0.0))) for mark in applicable
+            )
+            item.event_block_new = any(
+                bool(field(mark, "block_new", False)) for mark in applicable
+            )
+            caps = [
+                int(raw)
+                for raw in (field(mark, "leverage_cap") for mark in applicable)
+                if raw is not None
+            ]
+            item.event_leverage_cap = min(caps) if caps else None
+            item.event_source_name = str(field(primary, "source_name", "") or "")
+            item.event_source_url = str(field(primary, "source_url", "") or "")
+            item.event_starts_at = field(primary, "starts_at")
 
             # Events never create a direction. They only reduce confidence or
             # block fresh risk close to a confirmed event.
@@ -1761,9 +1796,21 @@ class LighterMonitor:
             elif item.event_risk >= 45:
                 item.trade_readiness = _clamp(item.trade_readiness - 4.0)
                 item.confidence = _clamp(item.confidence - 2.0)
-            if item.event_kind == "NETWORK" and bool(value("active", False)):
+
+            active_network = any(
+                str(field(mark, "kind", "") or "") == "NETWORK"
+                and bool(field(mark, "active", False))
+                for mark in applicable
+            )
+            reason_codes = []
+            for mark in applicable:
+                code = str(field(mark, "code", "") or "")
+                if code and code not in reason_codes:
+                    reason_codes.append(code)
+            reason_code = "+".join(reason_codes) or "Ereignis"
+            if active_network:
                 item.state = "NO_TRADE"
-                item.reasons.append(f"{item.event_code} aktive Netzwerkstörung")
+                item.reasons.append(f"{reason_code} aktive Netzwerkstörung")
             elif item.event_block_new:
                 if item.state == "BUY":
                     item.state = "STRONG_LONG"
@@ -1773,9 +1820,9 @@ class LighterMonitor:
                     item.state = "WATCH_LONG"
                 elif item.state == "STRONG_SHORT":
                     item.state = "WATCH_SHORT"
-                item.reasons.append(f"{item.event_code} blockiert neue Position kurzzeitig")
-            elif item.event_code:
-                item.reasons.append(f"kritisches Ereignis: {item.event_code}")
+                item.reasons.append(f"{reason_code} blockiert neue Position kurzzeitig")
+            else:
+                item.reasons.append(f"kritisches Ereignis: {reason_code}")
 
     @staticmethod
     def _rank(signals: list[Signal]) -> list[Signal]:
@@ -1826,20 +1873,20 @@ class LighterMonitor:
             for value in self.config.get("candidate_symbols", [])
         ]
         by_symbol = {item.symbol: item for item in signals}
-        btc = by_symbol.get("BTC")
-        others = [
-            item for item in ranked
-            if item.symbol != "BTC" and item.symbol in requested
+        configured_order = [
+            str(value).upper()
+            for value in self.config.get("summary_order", ["HYPE", "SOL", "ETH", "BTC"])
         ]
-        # BTC is fixed; the remaining markets keep the established convention
-        # that the most attention-worthy one sits furthest to the right.
-        summary = ([btc] if btc is not None else []) + list(reversed(others))
+        summary = [by_symbol[symbol] for symbol in configured_order if symbol in by_symbol and symbol in requested]
+        for symbol in requested:
+            if symbol in by_symbol and by_symbol[symbol] not in summary:
+                summary.append(by_symbol[symbol])
         summary = summary[:int(self.config.get("summary_coin_count", 4))]
 
         def summary_line(compact_clock: bool = False) -> str:
             tokens: list[str] = []
             for item in summary:
-                event = item.event_code
+                event = item.event_display_code
                 if compact_clock:
                     event = re.sub(r"@(\d{2}):\d{2}$", r"@\1", event)
                 tokens.append(f"{item.alias}{SUMMARY_COLORS[item.state]}{event}")
@@ -1854,7 +1901,6 @@ class LighterMonitor:
         maximum_details = int(self.config.get("maximum_detail_count", 4))
         threshold = float(self.config.get("detail_attention_threshold", 72))
         watch_threshold = float(self.config.get("detail_watch_attention_threshold", 82))
-        replace_margin = float(self.config.get("detail_replace_btc_margin", 8))
         btc = next((item for item in ranked if item.symbol == "BTC"), None)
         screamers = [
             item for item in ranked
@@ -1866,20 +1912,13 @@ class LighterMonitor:
             )
         ]
         screamers.sort(key=lambda item: (-item.attention_score, -item.trade_readiness))
-        replace_btc = bool(
-            btc is not None
-            and len(screamers) >= 2
-            and screamers[1].attention_score >= btc.attention_score + replace_margin
+        # BTC is the permanent reference and is never displaced from details.
+        details = ([btc] if btc is not None else [])
+        details.extend(
+            item for item in screamers
+            if item not in details and item.attention_score >= threshold
         )
-        if replace_btc:
-            details = screamers[:maximum_details]
-        else:
-            details = ([btc] if btc is not None else [])
-            details.extend(
-                item for item in screamers
-                if item not in details and item.attention_score >= threshold
-            )
-            details = details[:maximum_details]
+        details = details[:maximum_details]
         if not details and ranked:
             details = ranked[:1]
 
@@ -1900,7 +1939,9 @@ class LighterMonitor:
                 warnings.append("K!")
             if item.symbol != "BTC" and item.btc_context is not None and item.btc_context < 40:
                 warnings.append("B!")
-            if item.funding_hourly_pct is not None:
+            if item.funding_hourly_pct is None:
+                warnings.append("F!")
+            else:
                 against = _directional(item.funding_hourly_pct, _direction(item.direction))
                 if against > funding_watch:
                     warnings.append("F!")
@@ -1921,6 +1962,8 @@ class LighterMonitor:
         self,
         *,
         event_marks: Mapping[str, Any] | None = None,
+        event_display_codes: Mapping[str, str] | None = None,
+        semantic_event_codes: Mapping[str, str] | None = None,
         now: datetime | None = None,
     ) -> tuple[str, dict[str, Any]]:
         now = now or datetime.now(timezone.utc)
@@ -1990,10 +2033,19 @@ class LighterMonitor:
             )
 
         self._apply_btc_context(signals)
-        self._apply_event_context(signals, event_marks)
+        self._apply_event_context(signals, event_marks, event_display_codes)
         self.last_signals = self._rank(signals)
         self.last_snapshots = snapshots
         report = self._format(signals, now)
+        if semantic_event_codes is not None:
+            previous_codes = {item.symbol: item.event_display_code for item in signals}
+            for item in signals:
+                item.event_display_code = str(semantic_event_codes.get(item.symbol, "") or "")
+            semantic_report = self._format(signals, now)
+            for item in signals:
+                item.event_display_code = previous_codes.get(item.symbol, "")
+        else:
+            semantic_report = report
         minimum_lines = int(self.config.get("minimum_detail_count", 1)) + 1
         maximum_lines = int(self.config.get("maximum_detail_count", 4)) + 1
         if not minimum_lines <= len(report.splitlines()) <= maximum_lines:
@@ -2003,6 +2055,7 @@ class LighterMonitor:
             "package_revision": PACKAGE_REVISION,
             "generated_at": now.isoformat(),
             "report": report,
+            "semantic_report": semantic_report,
             "signals": [asdict(item) for item in self.last_signals],
             "event_marks": {
                 symbol: (asdict(mark) if hasattr(mark, "__dataclass_fields__") else dict(mark))
@@ -2020,4 +2073,4 @@ class LighterMonitor:
         return self.client.candles(market_id, count=candle_count), self.client.book(market_id)
 
 
-# Package revision: v3.8.1-events-trend-dip-r1
+# Package revision: v3.8.2-hourly-events-paper-review-r2

@@ -195,4 +195,4 @@ def compute_target_profile(
         "round_trip_cost_pct": round(max(0.0, float(round_trip_cost_pct)), 4),
         "method": "past-only-24h-net-target-before-stop-r2",
     }
-# Package revision: v3.8.1-events-trend-dip-r1
+# Package revision: v3.8.2-hourly-events-paper-review-r2

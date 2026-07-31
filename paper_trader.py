@@ -1,4 +1,4 @@
-"""Deterministic, multi-candidate paper-trading engine for CF v3.8.1."""
+"""Deterministic, multi-candidate paper-trading engine for CF v3.8.2."""
 from __future__ import annotations
 
 import json
@@ -10,8 +10,8 @@ from typing import Any, Iterable, Mapping
 
 
 STATE_SCHEMA = 1
-APP_VERSION = "3.8.1"
-COMPATIBLE_APP_VERSIONS = {"3.7", "3.7.1", "3.8.0", APP_VERSION}
+APP_VERSION = "3.8.2"
+COMPATIBLE_APP_VERSIONS = {"3.7", "3.7.1", "3.8.0", "3.8.1", APP_VERSION}
 ENTRY_STATES = {"BUY": 1, "SELL": -1, "STRONG_LONG": 1, "STRONG_SHORT": -1}
 IMMEDIATE_STATES = {"BUY", "SELL"}
 PROBE_STATES = {"STRONG_LONG", "STRONG_SHORT"}
@@ -446,7 +446,7 @@ class PaperTrader:
             20 if quality >= 82 else 15 if quality >= 78 else 10
         )
         if signal.state in PROBE_STATES:
-            quality_cap = min(quality_cap, 15)
+            quality_cap = min(quality_cap, int(self.config.get("paper_probe_max_leverage", 20)))
         if signal.selected_setup == "REVERSAL":
             quality_cap = min(quality_cap, 20)
         elif signal.selected_setup == "EARLY":
@@ -461,7 +461,7 @@ class PaperTrader:
         if signal.execution_score < 72 or signal.volume_confirmation < 48:
             quality_cap = min(quality_cap, 10)
         if signal.funding_hourly_pct is None:
-            quality_cap = min(quality_cap, 15)
+            quality_cap = min(quality_cap, int(self.config.get("paper_missing_funding_leverage_cap", 20)))
         maintenance = max(0.0, _f(getattr(signal, "maintenance_margin_pct", 0.0)) / 100.0)
         safety = stop_pct / 100.0 + float(self.config.get("paper_liquidation_buffer_pct", 0.25)) / 100.0 + maintenance
         liquidation_cap = int(math.floor(1.0 / safety)) if safety > 0 else maximum
@@ -479,7 +479,7 @@ class PaperTrader:
         direction = ENTRY_STATES.get(signal.state)
         if direction is None:
             return "kein starkes Einstiegssignal"
-        if signal.data_quality < 66:
+        if signal.data_quality < float(self.config.get("paper_min_data_quality", 62)):
             return "zu wenige belastbare Datenfenster"
         if float(getattr(signal, "tape_quality", 0.0)) < float(self.config.get("paper_min_tape_quality", 72)):
             return "Volumenverlauf zu lückenhaft/sprunghaft"
@@ -512,7 +512,13 @@ class PaperTrader:
         if confidence < minimum_confidence:
             return "Confidence unter Paperfreigabe"
         setup = _setup(signal)
-        if setup.exit_hint or setup.phase != "ready":
+        allowed_phases = {"ready"}
+        if (
+            signal.state in PROBE_STATES
+            and bool(self.config.get("paper_allow_strong_phase_probe", True))
+        ):
+            allowed_phases.add("strong")
+        if setup.exit_hint or setup.phase not in allowed_phases:
             return "Setup nicht frisch"
         if signal.selected_setup == "EARLY":
             if setup.age_minutes is not None and setup.age_minutes > int(self.config.get("early_max_age_minutes", 2)):
@@ -524,7 +530,7 @@ class PaperTrader:
     def _target_margin(self, signal: Any, rank: int) -> float:
         quality = self._quality(signal)
         if signal.state in PROBE_STATES:
-            amount = 1.0
+            amount = 1.5 if quality >= 84 else 1.0
         else:
             amount = 4.0 if quality >= 94 else 3.0 if quality >= 88 else 2.0 if quality >= 81 else 1.0
         if signal.selected_setup in {"REVERSAL", "EARLY"}:
@@ -725,6 +731,7 @@ class PaperTrader:
             "scale_count": 0,
             "entry_fee_remaining_usd": entry_fee,
             "funding_accrued_usd": 0.0,
+            "realized_pnl_usd": 0.0,
             "taker_fee_pct": taker_fee_pct,
             "risk_usd": actual_risk,
             "entry_roundtrip_cost_pct": actual_roundtrip_cost,
@@ -733,6 +740,32 @@ class PaperTrader:
             "entry_rank": rank,
             "entry_state": signal.state,
             "probe_entry": signal.state in PROBE_STATES,
+            "entry_features": {
+                "setup": setup,
+                "setup_phase": str(_setup(signal).phase),
+                "setup_score": float(_setup(signal).score),
+                "setup_age_minutes": _setup(signal).age_minutes,
+                "setup_consumed_fraction": float(_setup(signal).recovery_fraction),
+                "readiness": float(signal.trade_readiness),
+                "confidence": float(signal.confidence),
+                "execution_score": float(signal.execution_score),
+                "liquidity_score": float(signal.liquidity_score),
+                "volume_confirmation": float(signal.volume_confirmation),
+                "tape_quality": float(getattr(signal, "tape_quality", 0.0)),
+                "btc_context": 58.0 if signal.btc_context is None else float(signal.btc_context),
+                "cost_pct": float(actual_roundtrip_cost),
+                "funding_hourly_pct": None if signal.funding_hourly_pct is None else float(signal.funding_hourly_pct),
+                "funding_missing": signal.funding_hourly_pct is None,
+                "event_risk": float(getattr(signal, "event_risk", 0.0)),
+                "event_kind": str(getattr(signal, "event_kind", "") or ""),
+                "data_quality": float(signal.data_quality),
+                "leverage": int(leverage),
+                "margin_usd": float(margin),
+                "risk_usd": float(actual_risk),
+                "probe_entry": signal.state in PROBE_STATES,
+                "symbol": symbol,
+                "rank": int(rank),
+            },
         }
         self.state.setdefault("positions", {})[symbol] = position
         kind = "REVERSE" if reverse_pnl is not None else "OPEN"
@@ -826,10 +859,13 @@ class PaperTrader:
             _f(self.state.get("balance_usd")) + net + entry_fee,
             10,
         )
+        previous_realized = _f(position.get("realized_pnl_usd"))
+        trade_net_pnl = previous_realized + net
         full = fraction >= 1.0 - 1e-9
         if full:
             self.state.setdefault("positions", {}).pop(symbol, None)
         else:
+            position["realized_pnl_usd"] = round(trade_net_pnl, 12)
             for key in (
                 "margin_usd",
                 "notional_usd",
@@ -850,6 +886,13 @@ class PaperTrader:
             priority=priority,
             full_close=full,
         )
+        entry_features = dict(position.get("entry_features") or {})
+        entry_features.setdefault("setup", str(position.get("setup") or ""))
+        entry_features.setdefault("readiness", _f(position.get("entry_readiness")))
+        entry_features.setdefault("confidence", _f(position.get("entry_confidence")))
+        entry_features.setdefault("leverage", int(position.get("leverage", 0)))
+        entry_features.setdefault("risk_usd", _f(position.get("risk_usd")))
+        entry_features.setdefault("probe_entry", bool(position.get("probe_entry", False)))
         close_details = {
             "entry_price": entry,
             "exit_price": exit_price,
@@ -859,8 +902,11 @@ class PaperTrader:
             "exit_fee_usd": exit_fee,
             "funding_usd": funding,
             "raw_net_pnl_usd": raw_net,
+            "trade_net_pnl_usd": trade_net_pnl,
             "isolated_loss_capped": loss_capped,
             "full_close": full,
+            "entry_features": entry_features,
+            "holding_minutes": max(0.0, (self.now - _parse_time(position.get("opened_at"), self.now)).total_seconds() / 60.0),
         }
         if record_action:
             self.actions.append(action)
@@ -1232,7 +1278,7 @@ class PaperTrader:
         for symbol, position in list((self.state.get("positions") or {}).items()):
             reason: str | None = None
             if symbol not in allowed_symbols:
-                reason = "Symbol nicht mehr im v3.8.1-Kandidatenpool"
+                reason = "Symbol nicht mehr im v3.8.2-Kandidatenpool"
             elif str(position.get("setup")) == "P":
                 reason = "P-Setup seit v3.7.1 deaktiviert"
             if reason is None:
@@ -1369,7 +1415,8 @@ class PaperTrader:
                 f"{top}"
             )
         equity, free, margin = self._equity()
-        action_line = self._pack_actions()
+        # Paper actions are deliberately log-only in v3.8.2.
+        action_line = None
         self._log(
             f"KONTO Balance {_money(_f(self.state.get('balance_usd')), compact=False)} | "
             f"Equity {_money(equity, compact=False)} | "

@@ -1,4 +1,4 @@
-"""Crypto Signal Monitor v3.8.1 — verified events, early swings and paper trading."""
+"""Crypto Signal Monitor v3.8.2 — verified events, early swings and paper review."""
 from __future__ import annotations
 
 import argparse
@@ -12,6 +12,8 @@ from lighter_monitor import APP_VERSION, LighterMonitor
 from paper_trader import PaperTrader
 from notification_state import mark_report_sent, report_send_decision
 from event_context import load_critical_events
+from event_display_state import mark_event_displayed, plan_event_display
+from paper_optimizer import review_paper_parameters
 
 ROOT = Path(__file__).resolve().parent
 
@@ -44,13 +46,22 @@ def main() -> int:
         cache_path=output / "event_cache.json",
         local_feed_path=ROOT / "events.json",
     )
+    event_display_path = output / "event_display_state.json"
+    event_plan = plan_event_display(
+        marks=event_snapshot.marks,
+        now=generated_at,
+        timezone_name=str(config.get("timezone", "Europe/Berlin")),
+        state_path=event_display_path,
+    )
     monitor = LighterMonitor(config)
     report, payload = monitor.run(
         event_marks=event_snapshot.marks,
+        event_display_codes=event_plan.codes,
+        semantic_event_codes=event_plan.semantic_codes,
         now=generated_at,
     )
     payload["events"] = event_snapshot.to_dict()
-    semantic_report = report
+    semantic_report = str(payload.get("semantic_report") or report)
     paper_result = None
     if bool(config.get("paper_trading_enabled", True)) and not args.no_paper:
         paper_result = PaperTrader(
@@ -61,11 +72,21 @@ def main() -> int:
             monitor.last_snapshots,
             monitor.generated_at,
         )
-        action_line = paper_result.get("action_line")
-        if action_line:
-            report += "\n" + str(action_line)
         payload["paper"] = paper_result
+        parameter_review = review_paper_parameters(
+            paper_state_path=Path(args.paper_state),
+            review_state_path=output / "parameter_review.json",
+            config=config,
+        )
+        payload["parameter_review"] = parameter_review
+        for line in parameter_review.get("logs", []):
+            paper_result.setdefault("logs", []).append(str(line))
+        if parameter_review.get("alert"):
+            alert_line = "Parameter-Fehler/Optimierung gefunden!"
+            report += "\n" + alert_line
+            semantic_report += "\n" + alert_line
         payload["report"] = report
+        payload["semantic_report"] = semantic_report
         with (output / "paper_decisions.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(
                 json.dumps(
@@ -101,13 +122,18 @@ def main() -> int:
     if should_send:
         notification_path = output / "notification_state.json"
         now_ms = int(monitor.generated_at.timestamp() * 1000)
-        action_force = bool(paper_result and paper_result.get("actions"))
+        parameter_force = bool(
+            paper_result
+            and isinstance(payload.get("parameter_review"), dict)
+            and payload["parameter_review"].get("alert")
+        )
+        event_force = bool(event_plan.force_send)
         send_now, send_reason, digest = report_send_decision(
             path=notification_path,
             report=semantic_report,
             now_ms=now_ms,
             config=config,
-            force=bool(args.force_discord or action_force),
+            force=bool(args.force_discord or parameter_force or event_force),
         )
         if send_now:
             webhook = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
@@ -116,7 +142,7 @@ def main() -> int:
             send_discord(
                 webhook,
                 report,
-                username=str(config.get("discord_username", "CF v3.8.1")),
+                username=str(config.get("discord_username", "CF v3.8.2")),
                 avatar_url=str(config.get("discord_avatar_url", "")).strip(),
             )
             mark_report_sent(
@@ -124,6 +150,11 @@ def main() -> int:
                 digest=digest,
                 now_ms=now_ms,
                 reason=send_reason,
+            )
+            mark_event_displayed(
+                state_path=event_display_path,
+                plan=event_plan,
+                now=generated_at,
             )
             print(f"Discord gesendet ({send_reason}).")
         else:
@@ -134,4 +165,4 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 
-# Package revision: v3.8.1-events-trend-dip-r1
+# Package revision: v3.8.2-hourly-events-paper-review-r2
