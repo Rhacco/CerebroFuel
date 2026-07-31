@@ -5,9 +5,9 @@
   "cooldowns": {
     "GRAM": 1785484387
   },
-  "last_checkpoint_at": "2026-07-31T07:45:00.065335+00:00",
-  "last_decision_key": "1785483840000",
-  "last_run_at": "2026-07-31T07:44:57.752587+00:00",
+  "last_checkpoint_at": "2026-07-31T07:46:00.784070+00:00",
+  "last_decision_key": "1785483900000",
+  "last_run_at": "2026-07-31T07:45:58.322788+00:00",
   "ledger": [
     {
       "action": {
@@ -2172,89 +2172,113 @@
         "target_two_price": 63655.82039607976
       },
       "timestamp": "2026-07-31T07:44:57.752587+00:00"
+    },
+    {
+      "action": {
+        "alias": "BTC",
+        "direction": -1,
+        "discord_visible": false,
+        "full_close": false,
+        "is_add": true,
+        "kind": "OPEN",
+        "leverage": 25,
+        "margin_usd": 1.0,
+        "priority": 84.41083685994249,
+        "realized_pnl_usd": 0.0,
+        "reason": "zweite lila Bestätigung; Preis noch nah am Einstieg",
+        "symbol": "BTC"
+      },
+      "balance_usd": 100.01753472,
+      "details": {
+        "entry_fee_usd": 0.0,
+        "fill_price": 63919.8,
+        "new_entry_price": 63908.57422289666,
+        "new_margin_usd": 2.0
+      },
+      "timestamp": "2026-07-31T07:45:58.322788+00:00"
     }
   ],
   "observations": {
     "AAVE": {
-      "candle_ms": 1785483840000,
+      "candle_ms": 1785483900000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "WATCH_SHORT"
     },
     "BTC": {
-      "candle_ms": 1785483840000,
+      "candle_ms": 1785483900000,
       "entry_direction": -1,
-      "entry_streak": 1,
+      "entry_streak": 2,
       "state": "SELL"
     },
     "ENA": {
-      "candle_ms": 1785483840000,
+      "candle_ms": 1785483900000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "ETH": {
-      "candle_ms": 1785483840000,
+      "candle_ms": 1785483900000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "WATCH_SHORT"
     },
     "GRAM": {
-      "candle_ms": 1785483840000,
+      "candle_ms": 1785483900000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "HYPE": {
-      "candle_ms": 1785483840000,
+      "candle_ms": 1785483900000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "STRONG_SHORT"
     },
     "LIT": {
-      "candle_ms": 1785483840000,
+      "candle_ms": 1785483900000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "NO_TRADE"
+      "state": "WATCH_SHORT"
     },
     "NEAR": {
-      "candle_ms": 1785483840000,
+      "candle_ms": 1785483900000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "PUMP": {
-      "candle_ms": 1785483840000,
+      "candle_ms": 1785483900000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "WATCH_SHORT"
+      "state": "NO_TRADE"
     },
     "SOL": {
-      "candle_ms": 1785483840000,
+      "candle_ms": 1785483900000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "WATCH_SHORT"
+      "state": "NO_TRADE"
     },
     "UNI": {
-      "candle_ms": 1785483840000,
+      "candle_ms": 1785483900000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "WATCH_SHORT"
     },
     "XPL": {
-      "candle_ms": 1785483840000,
+      "candle_ms": 1785483900000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "XRP": {
-      "candle_ms": 1785483840000,
+      "candle_ms": 1785483900000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "WATCH_SHORT"
     },
     "ZEC": {
-      "candle_ms": 1785483840000,
+      "candle_ms": 1785483900000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
@@ -2263,24 +2287,25 @@
   "positions": {
     "BTC": {
       "alias": "BTC",
-      "base_size": 0.00039125251776,
+      "base_size": 0.00078236763389,
       "degrade_streak": 0,
       "direction": -1,
       "entry_confidence": 85.1607205023791,
       "entry_fee_remaining_usd": 0.0,
-      "entry_price": 63897.3523881068,
+      "entry_price": 63908.57422289666,
       "entry_rank": 1,
       "entry_readiness": 88.08311600726708,
       "entry_roundtrip_cost_pct": 0.0011700201420780292,
-      "funding_accrued_usd": 0.0,
-      "funding_updated_at": "2026-07-31T07:44:57.752587+00:00",
-      "last_candle_ms": 1785483840000,
+      "funding_accrued_usd": -4.03801e-05,
+      "funding_updated_at": "2026-07-31T07:45:58.322788+00:00",
+      "last_candle_ms": 1785483900000,
+      "last_funding_hourly_pct": 0.0096,
       "leverage": 25,
-      "margin_usd": 1.0,
-      "notional_usd": 25.0,
+      "margin_usd": 2.0,
+      "notional_usd": 50.0,
       "opened_at": "2026-07-31T07:44:57.752587+00:00",
-      "risk_usd": 0.04529250503551951,
-      "scale_count": 0,
+      "risk_usd": 0.0929520878,
+      "scale_count": 1,
       "setup": "P",
       "stop_pct": 0.18,
       "stop_price": 64012.3676224054,
@@ -2301,9 +2326,9 @@
       "entry_rank": 2,
       "entry_readiness": 87.11547116860744,
       "entry_roundtrip_cost_pct": 0.03223957254229908,
-      "funding_accrued_usd": -0.0006380438,
-      "funding_updated_at": "2026-07-31T07:44:57.752587+00:00",
-      "last_candle_ms": 1785483840000,
+      "funding_accrued_usd": -0.0006528498,
+      "funding_updated_at": "2026-07-31T07:45:58.322788+00:00",
+      "last_candle_ms": 1785483900000,
       "last_funding_hourly_pct": 0.0088,
       "leverage": 20,
       "margin_usd": 0.5,
@@ -2321,7 +2346,7 @@
       "target_two_price": 1.07224852174
     }
   },
-  "run_count": 913,
+  "run_count": 914,
   "schema": 1,
   "starting_balance_usd": 100.0
 }
