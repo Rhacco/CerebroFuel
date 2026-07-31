@@ -1,13 +1,14 @@
 {
   "app_version": "3.8.0",
-  "balance_usd": 99.6006968109,
+  "balance_usd": 99.5555582784,
   "checkpoint_requested": false,
   "cooldowns": {
-    "BTC": 1785523508
+    "BTC": 1785523508,
+    "ETH": 1785523569
   },
-  "last_checkpoint_at": "2026-07-31T18:42:09.950500+00:00",
-  "last_decision_key": "1785523320000",
-  "last_run_at": "2026-07-31T18:42:08.722820+00:00",
+  "last_checkpoint_at": "2026-07-31T18:43:10.532666+00:00",
+  "last_decision_key": "1785523380000",
+  "last_run_at": "2026-07-31T18:43:09.331895+00:00",
   "ledger": [
     {
       "action": {
@@ -3622,6 +3623,36 @@
         "raw_net_pnl_usd": -0.0033367495292914683
       },
       "timestamp": "2026-07-31T18:42:08.722820+00:00"
+    },
+    {
+      "action": {
+        "alias": "ETH",
+        "direction": -1,
+        "discord_visible": false,
+        "full_close": true,
+        "is_add": false,
+        "kind": "CLOSE",
+        "leverage": 0,
+        "margin_usd": 2.0,
+        "priority": 98.0,
+        "realized_pnl_usd": -0.045138532512634964,
+        "reason": "Setup abgelaufen",
+        "symbol": "ETH"
+      },
+      "balance_usd": 99.55555828,
+      "details": {
+        "base_size": 0.02680404633884,
+        "entry_fee_usd": 0.0,
+        "entry_price": 1865.39,
+        "exit_fee_usd": 0.0,
+        "exit_price": 1867.08,
+        "full_close": true,
+        "funding_usd": -0.0001603058,
+        "gross_pnl_usd": -0.04529883831263497,
+        "isolated_loss_capped": false,
+        "raw_net_pnl_usd": -0.045138532512634964
+      },
+      "timestamp": "2026-07-31T18:43:09.331895+00:00"
     }
   ],
   "observations": {
@@ -3632,13 +3663,13 @@
       "state": "WATCH_SHORT"
     },
     "ADA": {
-      "candle_ms": 1785523320000,
+      "candle_ms": 1785523380000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "BTC": {
-      "candle_ms": 1785523320000,
+      "candle_ms": 1785523380000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
@@ -3656,10 +3687,10 @@
       "state": "NO_TRADE"
     },
     "ETH": {
-      "candle_ms": 1785523320000,
+      "candle_ms": 1785523380000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "WATCH_SHORT"
+      "state": "NO_TRADE"
     },
     "GRAM": {
       "candle_ms": 1785505980000,
@@ -3668,7 +3699,7 @@
       "state": "NO_TRADE"
     },
     "HYPE": {
-      "candle_ms": 1785523320000,
+      "candle_ms": 1785523380000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "WATCH_SHORT"
@@ -3692,7 +3723,7 @@
       "state": "NO_TRADE"
     },
     "SOL": {
-      "candle_ms": 1785523320000,
+      "candle_ms": 1785523380000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "WATCH_SHORT"
@@ -3728,41 +3759,8 @@
       "state": "WATCH_LONG"
     }
   },
-  "positions": {
-    "ETH": {
-      "alias": "ETH",
-      "base_size": 0.02680404633884,
-      "degrade_streak": 0,
-      "direction": -1,
-      "entry_confidence": 87.37686827776909,
-      "entry_fee_remaining_usd": 0.0,
-      "entry_price": 1865.39,
-      "entry_rank": 1,
-      "entry_readiness": 90.23726264893952,
-      "entry_roundtrip_cost_pct": 0.010185537608748154,
-      "entry_state": "SELL",
-      "funding_accrued_usd": -7.94937e-05,
-      "funding_updated_at": "2026-07-31T18:42:08.722820+00:00",
-      "last_candle_ms": 1785523320000,
-      "last_funding_hourly_pct": 0.0096,
-      "leverage": 25,
-      "margin_usd": 2.0,
-      "notional_usd": 50.0,
-      "opened_at": "2026-07-31T18:41:09.102515+00:00",
-      "probe_entry": false,
-      "risk_usd": 0.0889417755974302,
-      "scale_count": 0,
-      "setup": "E",
-      "stop_pct": 0.16769801358611225,
-      "stop_price": 1868.518221975634,
-      "symbol": "ETH",
-      "taker_fee_pct": 0.0,
-      "target_one_price": 1861.792544728021,
-      "target_one_taken": false,
-      "target_two_price": 1858.8207338511688
-    }
-  },
-  "run_count": 1529,
+  "positions": {},
+  "run_count": 1530,
   "schema": 1,
   "starting_balance_usd": 100.0
 }
