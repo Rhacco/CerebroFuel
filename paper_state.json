@@ -3,9 +3,9 @@
   "balance_usd": 99.9275797221,
   "checkpoint_requested": false,
   "cooldowns": {},
-  "last_checkpoint_at": "2026-07-31T07:02:00.861948+00:00",
-  "last_decision_key": "1785481260000",
-  "last_run_at": "2026-07-31T07:01:57.966818+00:00",
+  "last_checkpoint_at": "2026-07-31T07:04:57.609584+00:00",
+  "last_decision_key": "1785481440000",
+  "last_run_at": "2026-07-31T07:04:54.835819+00:00",
   "ledger": [
     {
       "action": {
@@ -1954,89 +1954,121 @@
         "target_two_price": 98.15780163105259
       },
       "timestamp": "2026-07-31T07:01:57.966818+00:00"
+    },
+    {
+      "action": {
+        "alias": "XRP",
+        "direction": -1,
+        "discord_visible": false,
+        "full_close": false,
+        "is_add": false,
+        "kind": "OPEN",
+        "leverage": 20,
+        "margin_usd": 1.0,
+        "priority": 78.30640324119254,
+        "realized_pnl_usd": 0.0,
+        "reason": "P 87.1/82.6, Stop 0.180%",
+        "symbol": "XRP"
+      },
+      "balance_usd": 99.92757972,
+      "details": {
+        "base_size": 18.581886191521644,
+        "confidence": 82.59446407520949,
+        "entry_fee_usd": 0.0,
+        "entry_price": 1.076317,
+        "entry_roundtrip_cost_pct": 0.03223957254229908,
+        "notional_usd": 20.0,
+        "rank": 2,
+        "readiness": 87.11547116860744,
+        "setup": "P",
+        "stop_price": 1.0782543706,
+        "target_one_price": 1.07408902381,
+        "target_two_price": 1.07224852174
+      },
+      "timestamp": "2026-07-31T07:04:54.835819+00:00"
     }
   ],
   "observations": {
     "AAVE": {
-      "candle_ms": 1785481260000,
+      "candle_ms": 1785481440000,
       "entry_direction": -1,
-      "entry_streak": 1,
+      "entry_streak": 2,
       "state": "SELL"
     },
     "BTC": {
-      "candle_ms": 1785481260000,
+      "candle_ms": 1785481440000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "WATCH_SHORT"
+      "state": "STRONG_SHORT"
     },
     "ENA": {
-      "candle_ms": 1785481260000,
+      "candle_ms": 1785481440000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "ETH": {
-      "candle_ms": 1785481260000,
+      "candle_ms": 1785481440000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "NO_TRADE"
+      "state": "STRONG_SHORT"
     },
     "GRAM": {
-      "candle_ms": 1785481260000,
+      "candle_ms": 1785481440000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "WATCH_LONG"
     },
     "HYPE": {
-      "candle_ms": 1785481260000,
-      "entry_direction": 0,
-      "entry_streak": 0,
-      "state": "WATCH_LONG"
-    },
-    "LIT": {
-      "candle_ms": 1785481260000,
+      "candle_ms": 1785481440000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "WATCH_SHORT"
     },
-    "NEAR": {
-      "candle_ms": 1785481260000,
+    "LIT": {
+      "candle_ms": 1785481440000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
+    "NEAR": {
+      "candle_ms": 1785481440000,
+      "entry_direction": 0,
+      "entry_streak": 0,
+      "state": "WATCH_SHORT"
+    },
     "PUMP": {
-      "candle_ms": 1785481260000,
+      "candle_ms": 1785481440000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "SOL": {
-      "candle_ms": 1785481260000,
+      "candle_ms": 1785481440000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "NO_TRADE"
+      "state": "WATCH_SHORT"
     },
     "UNI": {
-      "candle_ms": 1785481260000,
+      "candle_ms": 1785481440000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "WATCH_LONG"
+      "state": "WATCH_SHORT"
     },
     "XPL": {
-      "candle_ms": 1785481260000,
+      "candle_ms": 1785481440000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "XRP": {
-      "candle_ms": 1785481260000,
-      "entry_direction": 0,
-      "entry_streak": 0,
-      "state": "NO_TRADE"
+      "candle_ms": 1785481440000,
+      "entry_direction": -1,
+      "entry_streak": 1,
+      "state": "SELL"
     },
     "ZEC": {
-      "candle_ms": 1785481260000,
+      "candle_ms": 1785481440000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "WATCH_SHORT"
@@ -2054,9 +2086,10 @@
       "entry_rank": 1,
       "entry_readiness": 89.87341135536035,
       "entry_roundtrip_cost_pct": 0.02830541543250835,
-      "funding_accrued_usd": 0.0,
-      "funding_updated_at": "2026-07-31T07:01:57.966818+00:00",
-      "last_candle_ms": 1785481260000,
+      "funding_accrued_usd": 0.0001862116,
+      "funding_updated_at": "2026-07-31T07:04:54.835819+00:00",
+      "last_candle_ms": 1785481440000,
+      "last_funding_hourly_pct": -0.0176,
       "leverage": 10,
       "margin_usd": 2.0,
       "notional_usd": 20.0,
@@ -2071,9 +2104,38 @@
       "target_one_price": 98.50305803605261,
       "target_one_taken": false,
       "target_two_price": 98.15780163105259
+    },
+    "XRP": {
+      "alias": "XRP",
+      "base_size": 18.58188619152164,
+      "degrade_streak": 0,
+      "direction": -1,
+      "entry_confidence": 82.59446407520949,
+      "entry_fee_remaining_usd": 0.0,
+      "entry_price": 1.076317,
+      "entry_rank": 2,
+      "entry_readiness": 87.11547116860744,
+      "entry_roundtrip_cost_pct": 0.03223957254229908,
+      "funding_accrued_usd": 0.0,
+      "funding_updated_at": "2026-07-31T07:04:54.835819+00:00",
+      "last_candle_ms": 1785481440000,
+      "leverage": 20,
+      "margin_usd": 1.0,
+      "notional_usd": 20.0,
+      "opened_at": "2026-07-31T07:04:54.835819+00:00",
+      "risk_usd": 0.04244791450845982,
+      "scale_count": 0,
+      "setup": "P",
+      "stop_pct": 0.18,
+      "stop_price": 1.0782543706,
+      "symbol": "XRP",
+      "taker_fee_pct": 0.0,
+      "target_one_price": 1.07408902381,
+      "target_one_taken": false,
+      "target_two_price": 1.07224852174
     }
   },
-  "run_count": 870,
+  "run_count": 873,
   "schema": 1,
   "starting_balance_usd": 100.0
 }
