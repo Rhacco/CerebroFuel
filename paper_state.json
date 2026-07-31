@@ -3,9 +3,9 @@
   "balance_usd": 99.5072305036,
   "checkpoint_requested": false,
   "cooldowns": {},
-  "last_checkpoint_at": "2026-07-31T21:03:03.441796+00:00",
-  "last_decision_key": "1785531720000",
-  "last_run_at": "2026-07-31T21:03:01.845828+00:00",
+  "last_checkpoint_at": "2026-07-31T21:03:56.796484+00:00",
+  "last_decision_key": "1785531780000",
+  "last_run_at": "2026-07-31T21:03:55.295203+00:00",
   "ledger": [
     {
       "action": {
@@ -4106,6 +4106,39 @@
         "target_two_price": 1853.2553632
       },
       "timestamp": "2026-07-31T21:03:01.845828+00:00"
+    },
+    {
+      "action": {
+        "alias": "BTC",
+        "direction": -1,
+        "discord_visible": false,
+        "full_close": false,
+        "is_add": false,
+        "kind": "OPEN",
+        "leverage": 25,
+        "margin_usd": 1.0,
+        "priority": 78.91100627865019,
+        "realized_pnl_usd": 0.0,
+        "reason": "E 92.8/89.8, Stop 0.140%",
+        "symbol": "BTC"
+      },
+      "balance_usd": 99.5072305,
+      "details": {
+        "base_size": 0.0003976845216411963,
+        "confidence": 89.79234446598215,
+        "entry_fee_usd": 0.0,
+        "entry_price": 62863.9,
+        "entry_roundtrip_cost_pct": 0.005567583302976748,
+        "entry_state": "SELL",
+        "notional_usd": 25.0,
+        "rank": 1,
+        "readiness": 92.7817121398876,
+        "setup": "E",
+        "stop_price": 62951.90946,
+        "target_one_price": 62762.689121,
+        "target_two_price": 62679.080133999996
+      },
+      "timestamp": "2026-07-31T21:03:55.295203+00:00"
     }
   ],
   "observations": {
@@ -4116,16 +4149,16 @@
       "state": "WATCH_SHORT"
     },
     "ADA": {
-      "candle_ms": 1785531720000,
+      "candle_ms": 1785531780000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "BTC": {
-      "candle_ms": 1785531720000,
-      "entry_direction": 0,
-      "entry_streak": 0,
-      "state": "WATCH_SHORT"
+      "candle_ms": 1785531780000,
+      "entry_direction": -1,
+      "entry_streak": 1,
+      "state": "SELL"
     },
     "DOGE": {
       "candle_ms": 1785505980000,
@@ -4140,10 +4173,10 @@
       "state": "NO_TRADE"
     },
     "ETH": {
-      "candle_ms": 1785531720000,
-      "entry_direction": -1,
-      "entry_streak": 1,
-      "state": "SELL"
+      "candle_ms": 1785531780000,
+      "entry_direction": 0,
+      "entry_streak": 0,
+      "state": "WATCH_SHORT"
     },
     "GRAM": {
       "candle_ms": 1785505980000,
@@ -4152,7 +4185,7 @@
       "state": "NO_TRADE"
     },
     "HYPE": {
-      "candle_ms": 1785531720000,
+      "candle_ms": 1785531780000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
@@ -4176,7 +4209,7 @@
       "state": "NO_TRADE"
     },
     "SOL": {
-      "candle_ms": 1785531720000,
+      "candle_ms": 1785531780000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "WATCH_SHORT"
@@ -4213,6 +4246,37 @@
     }
   },
   "positions": {
+    "BTC": {
+      "alias": "BTC",
+      "base_size": 0.00039768452164,
+      "degrade_streak": 0,
+      "direction": -1,
+      "entry_confidence": 89.79234446598215,
+      "entry_fee_remaining_usd": 0.0,
+      "entry_price": 62863.9,
+      "entry_rank": 1,
+      "entry_readiness": 92.7817121398876,
+      "entry_roundtrip_cost_pct": 0.005567583302976748,
+      "entry_state": "SELL",
+      "funding_accrued_usd": 0.0,
+      "funding_updated_at": "2026-07-31T21:03:55.295203+00:00",
+      "last_candle_ms": 1785531780000,
+      "leverage": 25,
+      "margin_usd": 1.0,
+      "notional_usd": 25.0,
+      "opened_at": "2026-07-31T21:03:55.295203+00:00",
+      "probe_entry": false,
+      "risk_usd": 0.03639189582574419,
+      "scale_count": 0,
+      "setup": "E",
+      "stop_pct": 0.14,
+      "stop_price": 62951.90946,
+      "symbol": "BTC",
+      "taker_fee_pct": 0.0,
+      "target_one_price": 62762.689121,
+      "target_one_taken": false,
+      "target_two_price": 62679.080133999996
+    },
     "ETH": {
       "alias": "ETH",
       "base_size": 0.013450116209,
@@ -4225,9 +4289,10 @@
       "entry_readiness": 90.21892475857214,
       "entry_roundtrip_cost_pct": 0.00430403718687738,
       "entry_state": "SELL",
-      "funding_accrued_usd": 0.0,
-      "funding_updated_at": "2026-07-31T21:03:01.845828+00:00",
-      "last_candle_ms": 1785531720000,
+      "funding_accrued_usd": -2.37553e-05,
+      "funding_updated_at": "2026-07-31T21:03:55.295203+00:00",
+      "last_candle_ms": 1785531780000,
+      "last_funding_hourly_pct": 0.0063999999999999994,
       "leverage": 25,
       "margin_usd": 1.0,
       "notional_usd": 25.0,
@@ -4245,7 +4310,7 @@
       "target_two_price": 1853.2553632
     }
   },
-  "run_count": 1660,
+  "run_count": 1661,
   "schema": 1,
   "starting_balance_usd": 100.0
 }
