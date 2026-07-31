@@ -1,13 +1,13 @@
 {
-  "app_version": "3.8.1",
+  "app_version": "3.8.2",
   "balance_usd": 99.4593827004,
   "checkpoint_requested": false,
   "cooldowns": {
     "HYPE": 1785539524
   },
-  "last_checkpoint_at": "2026-07-31T23:09:05.704286+00:00",
-  "last_decision_key": "1785539280000",
-  "last_run_at": "2026-07-31T23:09:04.297924+00:00",
+  "last_checkpoint_at": "2026-07-31T23:12:02.456318+00:00",
+  "last_decision_key": "1785539460000",
+  "last_run_at": "2026-07-31T23:12:00.244620+00:00",
   "ledger": [
     {
       "action": {
@@ -4388,7 +4388,7 @@
       "state": "NO_TRADE"
     },
     "BTC": {
-      "candle_ms": 1785539280000,
+      "candle_ms": 1785539460000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
@@ -4406,7 +4406,7 @@
       "state": "NO_TRADE"
     },
     "ETH": {
-      "candle_ms": 1785539280000,
+      "candle_ms": 1785539460000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
@@ -4418,7 +4418,7 @@
       "state": "NO_TRADE"
     },
     "HYPE": {
-      "candle_ms": 1785539280000,
+      "candle_ms": 1785539460000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
@@ -4442,7 +4442,7 @@
       "state": "NO_TRADE"
     },
     "SOL": {
-      "candle_ms": 1785539280000,
+      "candle_ms": 1785539460000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
@@ -4479,7 +4479,7 @@
     }
   },
   "positions": {},
-  "run_count": 1782,
+  "run_count": 1783,
   "schema": 1,
   "starting_balance_usd": 100.0
 }
