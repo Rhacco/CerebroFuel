@@ -248,4 +248,4 @@ def record_entry_candidates(
     }
     save_state(path, new_state)
     return {"created": created, "events": len(new_state["events"])}
-# Package revision: v3.8.0-early-swing-r1
+# Package revision: v3.8.1-events-trend-dip-r1

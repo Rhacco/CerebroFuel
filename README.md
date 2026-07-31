@@ -1,32 +1,34 @@
-# Crypto Signal Monitor v3.8.0
+# Crypto Signal Monitor v3.8.1
 
-Lighter-native Marktanalyse mit Discord-Ausgabe und dauerhaftem Paper-Trading.
-
-## Aktiver Marktpool
-
-`BTC, ETH, SOL, HYPE, ADA`
-
-Der Pool ist bewusst auf liquide Perpetual-Märkte mit belastbarerem Open Interest, engerer Ausführung und gleichmäßigerem Ein-Minuten-Volumen reduziert. Zusätzlich blockiert eine dynamische Tape-Qualitätsprüfung lückenhafte oder von einzelnen Ausreißern dominierte Verläufe.
+Lighter-native Analyse für `BTC, ETH, SOL, HYPE` mit kompakter Discord-Ausgabe, verifizierten Ereignissen und Paper-Trading.
 
 ## Signale
 
-- `E` – frühe Expansion nach Kompression; nur solange wenig vom erwarteten Weg verbraucht ist
-- `T` – bestätigte Trendfortsetzung nach Rücksetzer
+- `E` – frische Expansion nach Kompression; nicht mehr anzeigen, sobald der Weg weit verbraucht ist
+- `T` – schneller Dip beziehungsweise Bounce im klar laufenden Preis-Trend mit anhaltend erhöhtem Volumen; bewusst schwächer und nie Sofortsignal
 - `W` – bestätigte Wende nach außergewöhnlichem Schock
+- `+` / `-` – Richtung ohne qualifiziertes E/T/W-Setup
 
-Abgelaufene oder bereits weit gelaufene Chancen werden nicht als Einstieg angezeigt.
+## Ereignisse
+
+Kopfzeile: alle vier Coins, BTC fest enthalten, ohne Schluss-Uhrzeit. Pro Coin erscheint höchstens das wichtigste bestätigte Ereignis; Unlocks werden bis zu 14 Tage voraus gezeigt.
+
+`FED` Fed · `CPI` Inflation · `NFP` Arbeitsmarkt · `PPI` Erzeugerpreise · `GDP` BIP · `PCE` Konsum/Inflation · `EXP` Verfall · `ETF` ETF-Entscheidung · `U` Unlock · `UPG` Upgrade · `GOV` Governance · `NET` Störung · `SUP` Angebot · `N` sonstige kritische News
+
+Suffixe: `U5D` in fünf Tagen · `CPI@14:30` heute · `FED@20` volle Stunde · `U0D` heute ohne bestätigte Uhrzeit · `NET!` aktiv.
+
+BLS, BEA, Fed sowie Solana-/Hyperliquid-Status werden offiziell abgerufen. Coin-spezifische Termine wie Unlocks werden nur aus `events.json`, `CRYPTO_EVENTS_JSON` oder `CRYPTO_EVENTS_URL` übernommen, wenn `verified=true`, eine HTTPS-Quelle und eine freigegebene Quelldomain vorhanden sind. Diese Freigabe ist kuratiert; die App prüft Format und Domain, nicht den Inhalt der verlinkten Seite. Ereignisse erzeugen nie selbst Long oder Short; kurz davor werden neue Paper-Trades blockiert oder der Hebel begrenzt.
 
 ## Discord
 
-- Kopfzeile: Top 5, ohne lila Sofortfarbe
-- Detailzeilen: BTC mindestens einmal, außer 2–4 andere Märkte sind klar auffälliger
-- grüne Standardprüfungen bleiben unsichtbar; nur Warnungen wie `V!`, `L!`, `K!`, `B!`, `F!` erscheinen
-- unveränderte Berichte werden unterdrückt; Heartbeat standardmäßig alle 15 Minuten
-- Paper-Aktionen werden sofort gesendet
+- Zeile 1: `BTC`, `ETH`, `SOL`, `HYP` mit Farbe und optionalem Ereigniskürzel
+- Detailzeilen: nur Kandidaten mit hoher Aufmerksamkeit; Score direkt hinter `E`, `T`, `W`, `+` oder `-`
+- nur Abweichungen erscheinen als `V!`, `L!`, `K!`, `B!`, `F!`
+- unveränderte Berichte werden unterdrückt; Heartbeat nach 15 Minuten
 
 ## Paper-Trading
 
-Starke Signale dürfen als kleine 1-$-Probe starten. Sofortsignale können größer eröffnet oder eine Probe ausbauen. Bis zu drei Märkte können gleichzeitig laufen; Positions-, Gesamtmargin-, Richtungs- und Stop-Risikolimits bleiben aktiv.
+Bis zu drei parallele Positionen. Starke Signale dürfen als kleine Probe starten; bestätigte E-/W-Signale können ausgebaut werden. T bleibt eine kleine Probe. Margin-, Stop-Risiko-, Richtungs-, Liquiditäts- und Ereignislimits bleiben aktiv.
 
 ## Start
 
@@ -34,4 +36,4 @@ Starke Signale dürfen als kleine 1-$-Probe starten. Sofortsignale können grö�
 python main.py --no-send
 ```
 
-Für Discord `DISCORD_WEBHOOK_URL` setzen. Laufzeitdateien liegen in `output/`.
+Für Discord `DISCORD_WEBHOOK_URL` setzen. Optionaler verifizierter Ereignisfeed: `CRYPTO_EVENTS_URL` oder `CRYPTO_EVENTS_JSON`. Laufzeitdateien liegen in `output/`.

@@ -1,5 +1,5 @@
-name: Crypto Signal Monitor v3.8.0
-# Package revision: v3.8.0-early-swing-r1
+name: Crypto Signal Monitor v3.8.1
+# Package revision: v3.8.1-events-trend-dip-r1
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: crypto-signal-monitor-v380
+  group: crypto-signal-monitor-v381
   cancel-in-progress: false
 
 jobs:
@@ -35,9 +35,10 @@ jobs:
           path: |
             output/paper_state.json
             output/notification_state.json
-          key: runtime-state-v380-${{ github.run_id }}
+            output/event_cache.json
+          key: runtime-state-v381-${{ github.run_id }}
           restore-keys: |
-            runtime-state-v380-
+            runtime-state-v381-
             paper-state-v371-
       - name: Paper-State wiederherstellen
         env:
@@ -49,6 +50,8 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           SEND_DISCORD: ${{ inputs.send_discord }}
+          CRYPTO_EVENTS_URL: ${{ secrets.CRYPTO_EVENTS_URL }}
+          CRYPTO_EVENTS_JSON: ${{ secrets.CRYPTO_EVENTS_JSON }}
         run: python main.py
       - name: Paper-State sichern
         if: always() && hashFiles('output/paper_state.json') != ''
@@ -62,4 +65,5 @@ jobs:
           path: |
             output/paper_state.json
             output/notification_state.json
-          key: runtime-state-v380-${{ github.run_id }}
+            output/event_cache.json
+          key: runtime-state-v381-${{ github.run_id }}

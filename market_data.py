@@ -864,4 +864,4 @@ def analyze_candles(
         reasons.append("Spread erhöht")
     metrics.reasons = tuple(reasons)
     return metrics
-# Package revision: v3.8.0-early-swing-r1
+# Package revision: v3.8.1-events-trend-dip-r1

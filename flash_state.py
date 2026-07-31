@@ -585,4 +585,4 @@ def update_and_score(
         "state_points": sum(len(item.get("points", [])) for item in coins.values()),
         "windows": list(WINDOWS),
     }
-# Package revision: v3.8.0-early-swing-r1
+# Package revision: v3.8.1-events-trend-dip-r1

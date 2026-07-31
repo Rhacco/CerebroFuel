@@ -65,4 +65,4 @@ def unlock_context(display: str, config: Mapping[str, Any], *, now: datetime | N
         "stale_days": stale_days,
         "stale": stale,
     }
-# Package revision: v3.8.0-early-swing-r1
+# Package revision: v3.8.1-events-trend-dip-r1

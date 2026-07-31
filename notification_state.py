@@ -1,4 +1,4 @@
-"""Discord change detection and heartbeat state for v3.8.
+"""Discord change detection and heartbeat state for v3.8.1.
 
 A send decision never marks a report as delivered.  The state is committed only
 after Discord accepts the message, so a network failure is retried next run.
@@ -7,11 +7,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from pathlib import Path
 from typing import Any, Mapping
 
-STATE_VERSION = "notification-v380-r1"
+STATE_VERSION = "notification-v381-r1"
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -43,12 +42,8 @@ def report_send_decision(
     section = section if isinstance(section, Mapping) else {}
     heartbeat_minutes = max(3, int(section.get("heartbeat_minutes", 15)))
     state = _load(path)
-    # The header minute changes every run; exclude it from semantic change
-    # detection so the recurring monitor does not spam Discord.
-    lines = report.splitlines()
-    if lines:
-        lines[0] = re.sub(r":\d{2}$", ":--", lines[0])
-    semantic_report = "\n".join(lines)
+    # v3.8.1 has no trailing clock in the header. Normalize whitespace only.
+    semantic_report = "\n".join(line.rstrip() for line in report.splitlines())
     digest = hashlib.sha256(semantic_report.encode("utf-8")).hexdigest()
     previous_digest = str(state.get("digest") or "")
     last_sent = int(state.get("last_sent_ms") or 0)
@@ -66,4 +61,4 @@ def mark_report_sent(*, path: Path, digest: str, now_ms: int, reason: str) -> No
         "last_sent_ms": int(now_ms),
         "last_reason": str(reason),
     })
-# Package revision: v3.8.0-early-swing-r1
+# Package revision: v3.8.1-events-trend-dip-r1

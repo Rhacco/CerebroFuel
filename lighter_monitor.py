@@ -1,8 +1,9 @@
-"""Lighter-native early-swing/T/W signal engine for CF v3.8.0."""
+"""Lighter-native early-swing/T/W signal engine for CF v3.8.1."""
 from __future__ import annotations
 
 import json
 import math
+import re
 import statistics
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -14,8 +15,8 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-APP_VERSION = "3.8.0"
-PACKAGE_REVISION = "v3.8.0-early-swing-r1"
+APP_VERSION = "3.8.1"
+PACKAGE_REVISION = "v3.8.1-events-trend-dip-r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 TREND_WINDOWS = (5, 15, 60)
@@ -146,6 +147,16 @@ class Signal:
     taker_fee_pct: float = 0.0
     candidate_tier: str = "core"
     candidate_penalty: float = 0.0
+    event_code: str = ""
+    event_kind: str = ""
+    event_title: str = ""
+    event_priority: float = 0.0
+    event_risk: float = 0.0
+    event_block_new: bool = False
+    event_leverage_cap: int | None = None
+    event_source_name: str = ""
+    event_source_url: str = ""
+    event_starts_at: str | None = None
     windows: dict[int, Window] = field(default_factory=dict)
     early: Setup = field(default_factory=lambda: Setup("EARLY"))
     trend: Setup = field(default_factory=lambda: Setup("TREND"))
@@ -583,11 +594,18 @@ def _assess_trend_once(
     candles: list[Mapping[str, Any]],
     windows: Mapping[int, Window],
     noise: float,
+    config: Mapping[str, Any],
 ) -> Setup:
-    rows = _series(candles, 80)
+    """Detect only a quick dip/bounce inside a clear continuing trend.
+
+    Price determines direction. Unsigned quote volume is used only to confirm
+    that market activity remains elevated; it never supplies direction.
+    """
+    rows = _series(candles, 130)
     if not rows:
         return Setup("TREND", reason="insufficient contiguous history")
     closes = [_f(row.get("c")) for row in rows]
+    volumes_all = [_f(row.get("V")) for row in rows]
     ret_60 = _pct(closes[-61], closes[-1])
     ret_15 = _pct(closes[-16], closes[-1])
     slope_60, r_squared = _linear_trend(closes[-60:])
@@ -596,43 +614,134 @@ def _assess_trend_once(
     direction = _direction(z_60)
     directional_z_15 = _directional(z_15, direction)
     directional_slope = _directional(slope_60, direction) / max(noise, 1e-9)
+
+    previous_60 = _mean(volumes_all[-120:-60])
+    recent_60 = _mean(volumes_all[-60:])
+    previous_20 = _mean(volumes_all[-40:-20])
+    recent_20 = _mean(volumes_all[-20:])
+    volume_ratio_60 = recent_60 / previous_60 if previous_60 > 0 else 0.0
+    volume_ratio_20 = recent_20 / previous_20 if previous_20 > 0 else 0.0
+    baseline_volume = _mean(volumes_all[-80:-20])
+    recent_active = sum(
+        value >= baseline_volume * 0.85
+        for value in volumes_all[-6:]
+    ) if baseline_volume > 0 else 0
+    minimum_ratio_60 = float(config.get("trend_min_volume_ratio_60", 1.08))
+    minimum_ratio_20 = float(config.get("trend_min_volume_ratio_20", 1.03))
+    activity_trend = (
+        volume_ratio_60 >= minimum_ratio_60
+        and volume_ratio_20 >= minimum_ratio_20
+        and recent_active >= 4
+    )
+
     aligned = directional_z_15 >= 0.25
     context_strength = _clamp(
         abs(z_60) * 23.0
         + max(0.0, directional_z_15) * 16.0
         - max(0.0, -directional_z_15) * 26.0
         + r_squared * 32.0
-        + (12.0 if aligned else -18.0)
-        + min(12.0, max(0.0, directional_slope) * 8.0)
+        + (10.0 if aligned else -18.0)
+        + min(10.0, max(0.0, directional_slope) * 7.0)
         - min(12.0, max(0.0, -directional_slope) * 10.0)
+        + _clamp((volume_ratio_60 - 1.0) * 55.0, -12.0, 12.0)
+        + _clamp((volume_ratio_20 - 1.0) * 45.0, -10.0, 10.0)
     )
-    if abs(z_60) < 0.72 or context_strength < 42:
+    if abs(z_60) < 0.82 or context_strength < 48 or not activity_trend:
         return Setup(
             "TREND",
             direction=direction,
-            score=context_strength * 0.65,
+            score=min(48.0, context_strength * 0.58),
             phase="none",
-            reason="no clear 60m trend",
+            volume_score=_clamp(50.0 + (volume_ratio_60 - 1.0) * 70.0),
+            reason=(
+                f"no continuing price/activity trend v60={volume_ratio_60:.2f} "
+                f"v20={volume_ratio_20:.2f} active={recent_active}/6"
+            ),
         )
 
-    lookback = rows[-12:]
-    highs = [_f(row.get("h")) for row in lookback]
-    lows = [_f(row.get("l")) for row in lookback]
+    lookback = rows[-10:]
+    local_closes = [_f(row.get("c")) for row in lookback]
     volumes = [_f(row.get("V")) for row in lookback]
-    last_close = _f(lookback[-1].get("c"))
-    event: tuple[float, int, int, float] | None = None
-    for index in range(3, len(lookback)):
-        before = range(max(0, index - 8), index)
+    last_close = local_closes[-1]
+    max_duration = max(1, int(config.get("trend_max_pullback_duration_minutes", 3)))
+    candidates: list[tuple[float, int, int, float]] = []
+    # A normal candle wick is not a dip. T requires a real counter-trend close
+    # and at least one completed resume candle after the local extreme.
+    local_returns = _last_returns(lookback, len(lookback) - 1)
+    for event_index in range(2, len(lookback) - 1):
+        before_positions = list(range(max(0, event_index - max_duration), event_index))
+        if not before_positions:
+            continue
         if direction > 0:
-            anchor_index = max(before, key=lambda pos: highs[pos])
-            anchor, extreme = highs[anchor_index], lows[index]
-            move = _pct(anchor, extreme) * -1.0
+            anchor_index = max(before_positions, key=lambda pos: local_closes[pos])
+            anchor, extreme = local_closes[anchor_index], local_closes[event_index]
+            move = -_pct(anchor, extreme)
+            counter_move = local_returns[event_index - 1] < 0
         else:
-            anchor_index = min(before, key=lambda pos: lows[pos])
-            anchor, extreme = lows[anchor_index], highs[index]
+            anchor_index = min(before_positions, key=lambda pos: local_closes[pos])
+            anchor, extreme = local_closes[anchor_index], local_closes[event_index]
             move = _pct(anchor, extreme)
-        if move > 0 and (event is None or move > event[0]):
-            event = (move, index, anchor_index, extreme)
+            counter_move = local_returns[event_index - 1] > 0
+        if move > 0 and counter_move:
+            candidates.append((move, event_index, anchor_index, extreme))
+    if not candidates:
+        return Setup(
+            "TREND",
+            direction=direction,
+            score=min(52.0, context_strength * 0.62),
+            phase="none",
+            volume_score=_clamp(55.0 + (volume_ratio_60 - 1.0) * 65.0),
+            reason="continuing trend without quick dip",
+        )
+
+    # Prefer a recent valid dip over an older, larger move.
+    pullback, event_index, anchor_index, extreme = max(
+        candidates,
+        key=lambda item: (item[1], item[0]),
+    )
+    age = len(lookback) - 1 - event_index
+    duration = event_index - anchor_index
+    trend_move = max(abs(ret_60), noise * math.sqrt(60))
+    retracement = pullback / max(trend_move, 1e-9)
+    min_pullback = max(0.05, noise * 1.05)
+    max_pullback = max(0.46, noise * 4.8)
+    max_age = max(0, int(config.get("trend_max_pullback_age_minutes", 2)))
+    valid_pullback = (
+        0 <= age <= max_age
+        and 1 <= duration <= max_duration
+        and min_pullback <= pullback <= max_pullback
+        and 0.07 <= retracement <= 0.50
+    )
+
+    rebound = _pct(extreme, last_close) if direction > 0 else _pct(extreme, last_close) * -1.0
+    rebound_fraction = rebound / max(pullback, 1e-9)
+    expected_edge = max(
+        max(0.0, pullback - max(0.0, rebound)),
+        noise * math.sqrt(5.0) * 1.7,
+    )
+    recent_returns = _last_returns(lookback, 3)
+    directional_returns = [_directional(value, direction) for value in recent_returns]
+    confirmation_count = sum(value > 0 for value in directional_returns)
+    last_confirms = bool(directional_returns and directional_returns[-1] > 0)
+
+    pullback_slice = volumes[max(0, anchor_index + 1):event_index + 1]
+    resume_slice = volumes[event_index + 1:]
+    pullback_volume_ratio = _mean(pullback_slice) / baseline_volume if baseline_volume > 0 else 0.0
+    resume_volume_ratio = _mean(resume_slice) / baseline_volume if baseline_volume > 0 and resume_slice else 0.0
+    max_pullback_volume = float(config.get("trend_max_pullback_volume_ratio", 1.05))
+    min_resume_volume = float(config.get("trend_min_resume_volume_ratio", 0.90))
+    volume_structure_ok = (
+        pullback_volume_ratio <= max_pullback_volume
+        and resume_volume_ratio >= min_resume_volume
+        and resume_volume_ratio >= pullback_volume_ratio * 0.95
+    )
+    volume_score = _clamp(
+        45.0
+        + (volume_ratio_60 - 1.0) * 80.0
+        + (volume_ratio_20 - 1.0) * 65.0
+        + (1.0 - pullback_volume_ratio) * 30.0
+        + (resume_volume_ratio - 0.85) * 35.0
+    )
 
     middle_scores = [
         _directional(windows[minute].score, direction)
@@ -647,95 +756,38 @@ def _assess_trend_once(
         and middle_opposing == 0
         and _mean(middle_scores) >= 6.0
     )
-    window_bias = _mean(
-        _directional(windows[minute].score, direction)
-        for minute in TREND_WINDOWS
-        if minute in windows and windows[minute].quality == "ok"
-    )
-    forming_score = _clamp(context_strength * 0.72 + max(0.0, window_bias) * 0.18)
-    if event is None:
-        return Setup(
-            "TREND",
-            direction=direction,
-            score=min(69.0, forming_score),
-            phase="forming",
-            volume_score=45.0,
-            reason="trend without pullback",
-        )
-
-    pullback, event_index, anchor_index, extreme = event
-    age = len(lookback) - 1 - event_index
-    trend_move = max(abs(ret_60), noise * math.sqrt(60))
-    retracement = pullback / max(trend_move, 1e-9)
-    min_pullback = max(0.05, noise * 1.05)
-    max_pullback = max(0.55, noise * 5.5)
-    valid_pullback = (
-        0 <= age <= 5
-        and min_pullback <= pullback <= max_pullback
-        and 0.07 <= retracement <= 0.58
-    )
-
-    if direction > 0:
-        rebound = _pct(extreme, last_close)
-    else:
-        rebound = _pct(extreme, last_close) * -1.0
-    rebound_fraction = rebound / max(pullback, 1e-9)
-    expected_edge = max(
-        max(0.0, pullback - max(0.0, rebound)),
-        noise * math.sqrt(5.0) * 1.8,
-    )
-    recent_returns = _last_returns(lookback, 3)
-    directional_returns = [_directional(value, direction) for value in recent_returns]
-    confirmation_count = sum(value > 0 for value in directional_returns)
-    last_confirms = bool(directional_returns and directional_returns[-1] > 0)
-
-    baseline_volume = _baseline_volume(candles)
-    pullback_slice = volumes[max(0, anchor_index + 1):event_index + 1]
-    resume_slice = volumes[event_index + 1:]
-    pullback_volume_ratio = _mean(pullback_slice) / baseline_volume if baseline_volume > 0 else 0.0
-    resume_volume_ratio = _mean(resume_slice) / baseline_volume if baseline_volume > 0 and resume_slice else 0.0
-    volume_score = _clamp(
-        72.0
-        + (1.05 - pullback_volume_ratio) * 55.0
-        + (resume_volume_ratio - 0.75) * 35.0
-    ) if baseline_volume > 0 else 0.0
-
-    pullback_score = _clamp(100.0 - abs(retracement - 0.27) * 185.0)
-    rebound_score = (
-        _clamp(55.0 + rebound_fraction * 105.0)
-        if rebound_fraction <= 0.58
-        else _clamp(115.0 - rebound_fraction * 95.0)
-    )
+    pullback_score = _clamp(100.0 - abs(retracement - 0.24) * 210.0)
+    rebound_score = _clamp(100.0 - abs(rebound_fraction - 0.30) * 180.0)
     trigger_score = _clamp(
-        (45.0 if last_confirms else 0.0)
+        (42.0 if last_confirms else 0.0)
         + confirmation_count * 18.0
-        + (18.0 if resume_volume_ratio >= max(0.75, pullback_volume_ratio) else 0.0)
+        + (18.0 if volume_structure_ok else 0.0)
     )
-    score = _clamp(
-        context_strength * 0.40
-        + pullback_score * 0.23
+    score = min(90.0, _clamp(
+        context_strength * 0.36
+        + pullback_score * 0.22
         + rebound_score * 0.12
-        + volume_score * 0.12
+        + volume_score * 0.17
         + trigger_score * 0.13
-    )
+    ))
 
-    too_deep = pullback > max_pullback or retracement > 0.72
+    too_deep = pullback > max_pullback or retracement > 0.62
     ready = (
         valid_pullback
-        and 1 <= age <= 5
-        and 0.18 <= rebound_fraction <= 0.72
+        and 0.12 <= rebound_fraction <= 0.58
         and last_confirms
         and confirmation_count >= 2
-        and volume_score >= 42
-        and context_strength >= 56
+        and volume_structure_ok
+        and volume_score >= float(config.get("trend_minimum_volume_score", 58))
+        and context_strength >= 60
         and middle_confirmed
     )
     if too_deep:
-        phase, exit_hint, score = "invalidated", True, min(score, 38.0)
+        phase, exit_hint, score = "invalidated", True, min(score, 36.0)
     elif ready:
         phase, exit_hint = "ready", False
     else:
-        phase, exit_hint, score = "forming", False, min(score, 69.0)
+        phase, exit_hint, score = "forming", False, min(score, 65.0)
     return Setup(
         "TREND",
         direction=direction,
@@ -749,9 +801,10 @@ def _assess_trend_once(
         event_timestamp_ms=_timestamp_ms(lookback[event_index]),
         expected_edge_pct=expected_edge,
         reason=(
-            f"pullback={pullback:.3f}% retrace={retracement:.2f} "
-            f"rebound={rebound_fraction:.2f} "
-            f"mid={middle_supporting}/3 edge={expected_edge:.3f}%"
+            f"quick-dip={pullback:.3f}% age={age} duration={duration} "
+            f"retrace={retracement:.2f} rebound={rebound_fraction:.2f} "
+            f"v60={volume_ratio_60:.2f} v20={volume_ratio_20:.2f} "
+            f"dipV={pullback_volume_ratio:.2f} resumeV={resume_volume_ratio:.2f}"
         ),
     )
 
@@ -760,43 +813,9 @@ def _assess_trend(
     candles: list[Mapping[str, Any]],
     windows: Mapping[int, Window],
     noise: float,
+    config: Mapping[str, Any],
 ) -> Setup:
-    current = _assess_trend_once(candles, windows, noise)
-    if current.phase != "ready":
-        return current
-
-    history = [current]
-    for offset in range(1, 5):
-        if len(candles) < 200 + offset:
-            break
-        previous_candles = candles[:-offset]
-        previous_windows = {
-            minutes: _window(previous_candles, minutes)
-            for minutes in ANALYSIS_WINDOWS
-        }
-        history.append(
-            _assess_trend_once(
-                previous_candles,
-                previous_windows,
-                _robust_noise(previous_candles),
-            )
-        )
-
-    ready_streak = 0
-    for item in history:
-        if item.phase == "ready" and item.direction == current.direction:
-            ready_streak += 1
-        else:
-            break
-    older_ready_after_gap = any(
-        item.phase == "ready"
-        for item in history[ready_streak + 1:]
-    )
-    if ready_streak < 2 or (older_ready_after_gap and ready_streak < 3):
-        current.phase = "forming"
-        current.score = min(current.score, 73.0)
-        current.reason += " resume=unstable"
-    return current
+    return _assess_trend_once(candles, windows, noise, config)
 
 
 def _reversal_candidate(
@@ -1019,7 +1038,7 @@ def _setup_code(signal: Signal) -> str:
         "EARLY": "E",
         "TREND": "T",
         "REVERSAL": "W",
-    }.get(signal.selected_setup, "–")
+    }.get(signal.selected_setup, "+" if signal.direction >= 0 else "-")
 
 
 def _selected_setup(signal: Signal) -> Setup:
@@ -1249,7 +1268,7 @@ class LighterMonitor:
             minimum_efficiency=float(self.config.get("early_min_efficiency", 0.52)),
             minimum_volume_consistency=int(self.config.get("early_min_volume_consistency", 2)),
         )
-        signal.trend = _assess_trend(candles, signal.windows, noise)
+        signal.trend = _assess_trend(candles, signal.windows, noise, self.config)
         signal.reversal = _assess_reversal(
             candles,
             noise,
@@ -1369,6 +1388,16 @@ class LighterMonitor:
             + (4.0 if same_direction_support >= 2 else 0.0)
             - (15.0 if setup_conflict else 0.0)
         )
+        if selected.kind == "TREND":
+            signal.opportunity = _clamp(
+                signal.opportunity - float(self.config.get("trend_attention_penalty", 5)) * 0.4
+            )
+            signal.confidence = _clamp(
+                signal.confidence - float(self.config.get("trend_confidence_penalty", 3))
+            )
+            signal.trade_readiness = _clamp(
+                signal.trade_readiness - float(self.config.get("trend_readiness_penalty", 5))
+            )
 
         test_symbols = {
             str(value).upper()
@@ -1560,6 +1589,7 @@ class LighterMonitor:
             and setup_is_precise
             and not setup_conflict
             and test_candidate_ready
+            and (selected.kind != "TREND" or bool(self.config.get("trend_immediate_enabled", False)))
             and signal.trade_readiness >= immediate_threshold
         ):
             signal.state = "BUY" if direction > 0 else "SELL"
@@ -1697,7 +1727,56 @@ class LighterMonitor:
                 )
                 item.reasons.append("BTC-Kontext verhindert Sofortfreigabe")
 
-    @staticmethod
+    def _apply_event_context(
+        self,
+        signals: list[Signal],
+        event_marks: Mapping[str, Any] | None,
+    ) -> None:
+        marks = event_marks if isinstance(event_marks, Mapping) else {}
+        for item in signals:
+            mark = marks.get(item.symbol)
+            if mark is None:
+                continue
+            def value(name: str, default: Any = None) -> Any:
+                if isinstance(mark, Mapping):
+                    return mark.get(name, default)
+                return getattr(mark, name, default)
+            item.event_code = str(value("code", "") or "")
+            item.event_kind = str(value("kind", "") or "")
+            item.event_title = str(value("title", "") or "")
+            item.event_priority = _clamp(_f(value("priority", 0.0)))
+            item.event_risk = _clamp(_f(value("risk", 0.0)))
+            item.event_block_new = bool(value("block_new", False))
+            raw_cap = value("leverage_cap")
+            item.event_leverage_cap = int(raw_cap) if raw_cap is not None else None
+            item.event_source_name = str(value("source_name", "") or "")
+            item.event_source_url = str(value("source_url", "") or "")
+            item.event_starts_at = value("starts_at")
+
+            # Events never create a direction. They only reduce confidence or
+            # block fresh risk close to a confirmed event.
+            if item.event_risk >= 70:
+                item.trade_readiness = _clamp(item.trade_readiness - 8.0)
+                item.confidence = _clamp(item.confidence - 3.0)
+            elif item.event_risk >= 45:
+                item.trade_readiness = _clamp(item.trade_readiness - 4.0)
+                item.confidence = _clamp(item.confidence - 2.0)
+            if item.event_kind == "NETWORK" and bool(value("active", False)):
+                item.state = "NO_TRADE"
+                item.reasons.append(f"{item.event_code} aktive Netzwerkstörung")
+            elif item.event_block_new:
+                if item.state == "BUY":
+                    item.state = "STRONG_LONG"
+                elif item.state == "SELL":
+                    item.state = "STRONG_SHORT"
+                elif item.state == "STRONG_LONG":
+                    item.state = "WATCH_LONG"
+                elif item.state == "STRONG_SHORT":
+                    item.state = "WATCH_SHORT"
+                item.reasons.append(f"{item.event_code} blockiert neue Position kurzzeitig")
+            elif item.event_code:
+                item.reasons.append(f"kritisches Ereignis: {item.event_code}")
+
     @staticmethod
     def _rank(signals: list[Signal]) -> list[Signal]:
         for item in signals:
@@ -1717,6 +1796,7 @@ class LighterMonitor:
                 + item.tape_quality * 0.10
                 + state_bonus
                 - late_penalty
+                - (float(5.0) if item.selected_setup == "TREND" else 0.0)
             )
         return sorted(
             signals,
@@ -1741,15 +1821,35 @@ class LighterMonitor:
 
     def _format(self, signals: list[Signal], now: datetime) -> str:
         ranked = self._rank(signals)
-        summary_count = int(self.config.get("summary_coin_count", 5))
-        summary = ranked[:summary_count]
-        timestamp = now.astimezone(
-            ZoneInfo(str(self.config.get("timezone", "Europe/Berlin")))
-        ).strftime(":%M")
-        lines = [
-            "".join(f"{item.alias}{SUMMARY_COLORS[item.state]}" for item in reversed(summary))
-            + timestamp
+        requested = [
+            str(value).upper()
+            for value in self.config.get("candidate_symbols", [])
         ]
+        by_symbol = {item.symbol: item for item in signals}
+        btc = by_symbol.get("BTC")
+        others = [
+            item for item in ranked
+            if item.symbol != "BTC" and item.symbol in requested
+        ]
+        # BTC is fixed; the remaining markets keep the established convention
+        # that the most attention-worthy one sits furthest to the right.
+        summary = ([btc] if btc is not None else []) + list(reversed(others))
+        summary = summary[:int(self.config.get("summary_coin_count", 4))]
+
+        def summary_line(compact_clock: bool = False) -> str:
+            tokens: list[str] = []
+            for item in summary:
+                event = item.event_code
+                if compact_clock:
+                    event = re.sub(r"@(\d{2}):\d{2}$", r"@\1", event)
+                tokens.append(f"{item.alias}{SUMMARY_COLORS[item.state]}{event}")
+            return " ".join(tokens)
+
+        header = summary_line(False)
+        max_len = int(self.config.get("discord_max_codepoints_per_line", 58))
+        if len(header) > max_len:
+            header = summary_line(True)
+        lines = [header]
 
         maximum_details = int(self.config.get("maximum_detail_count", 4))
         threshold = float(self.config.get("detail_attention_threshold", 72))
@@ -1812,13 +1912,18 @@ class LighterMonitor:
             )
             lines.append(line)
 
-        max_len = int(self.config.get("discord_max_codepoints_per_line", 34))
+        max_len = int(self.config.get("discord_max_codepoints_per_line", 58))
         if any(len(line) > max_len for line in lines):
             raise RuntimeError("Discord-Zeilenlimit überschritten")
         return "\n".join(lines)
 
-    def run(self) -> tuple[str, dict[str, Any]]:
-        now = datetime.now(timezone.utc)
+    def run(
+        self,
+        *,
+        event_marks: Mapping[str, Any] | None = None,
+        now: datetime | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        now = now or datetime.now(timezone.utc)
         self.generated_at = now
         allowed = {str(value).upper() for value in self.config.get("candidate_symbols", [])}
         markets = {
@@ -1885,19 +1990,24 @@ class LighterMonitor:
             )
 
         self._apply_btc_context(signals)
+        self._apply_event_context(signals, event_marks)
         self.last_signals = self._rank(signals)
         self.last_snapshots = snapshots
         report = self._format(signals, now)
         minimum_lines = int(self.config.get("minimum_detail_count", 1)) + 1
         maximum_lines = int(self.config.get("maximum_detail_count", 4)) + 1
         if not minimum_lines <= len(report.splitlines()) <= maximum_lines:
-            raise RuntimeError("Discord-Ausgabe hat nicht zwei bis fünf Zeilen")
+            raise RuntimeError("Discord-Ausgabe hat unerwartete Zeilenzahl")
         payload = {
             "version": APP_VERSION,
             "package_revision": PACKAGE_REVISION,
             "generated_at": now.isoformat(),
             "report": report,
             "signals": [asdict(item) for item in self.last_signals],
+            "event_marks": {
+                symbol: (asdict(mark) if hasattr(mark, "__dataclass_fields__") else dict(mark))
+                for symbol, mark in (event_marks or {}).items()
+            },
         }
         return report, payload
 
@@ -1910,4 +2020,4 @@ class LighterMonitor:
         return self.client.candles(market_id, count=candle_count), self.client.book(market_id)
 
 
-# Package revision: v3.8.0-early-swing-r1
+# Package revision: v3.8.1-events-trend-dip-r1

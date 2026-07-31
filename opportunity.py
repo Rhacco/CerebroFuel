@@ -909,4 +909,4 @@ def assess_opportunity(
         volume_colors=visible_colors,
         reasons=tuple(dict.fromkeys(reasons)),
     )
-# Package revision: v3.8.0-early-swing-r1
+# Package revision: v3.8.1-events-trend-dip-r1

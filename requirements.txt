@@ -1,4 +1,4 @@
-# v3.8.0 active E/T/W runtime uses only the Python standard library.
+# v3.8.1 active E/T/W runtime uses only the Python standard library.
 # requests remains available for the retained compatibility and analysis modules.
-# Package revision: v3.8.0-early-swing-r1
+# Package revision: v3.8.1-events-trend-dip-r1
 requests>=2.31,<3

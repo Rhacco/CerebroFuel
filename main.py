@@ -1,15 +1,17 @@
-"""Crypto Signal Monitor v3.8.0 — early swings, T/W and persistent paper trading."""
+"""Crypto Signal Monitor v3.8.1 — verified events, early swings and paper trading."""
 from __future__ import annotations
 
 import argparse
 import json
 import os
 from pathlib import Path
+from datetime import datetime, timezone
 
 from discord_sender import send_discord
 from lighter_monitor import APP_VERSION, LighterMonitor
 from paper_trader import PaperTrader
 from notification_state import mark_report_sent, report_send_decision
+from event_context import load_critical_events
 
 ROOT = Path(__file__).resolve().parent
 
@@ -33,11 +35,22 @@ def main() -> int:
     if config.get("schema_version") != APP_VERSION:
         raise ValueError(f"config schema_version muss {APP_VERSION} sein")
 
-    monitor = LighterMonitor(config)
-    report, payload = monitor.run()
-    semantic_report = report
     output = ROOT / "output"
     output.mkdir(exist_ok=True)
+    generated_at = datetime.now(timezone.utc)
+    event_snapshot = load_critical_events(
+        config,
+        now=generated_at,
+        cache_path=output / "event_cache.json",
+        local_feed_path=ROOT / "events.json",
+    )
+    monitor = LighterMonitor(config)
+    report, payload = monitor.run(
+        event_marks=event_snapshot.marks,
+        now=generated_at,
+    )
+    payload["events"] = event_snapshot.to_dict()
+    semantic_report = report
     paper_result = None
     if bool(config.get("paper_trading_enabled", True)) and not args.no_paper:
         paper_result = PaperTrader(
@@ -78,6 +91,8 @@ def main() -> int:
     if paper_result:
         for line in paper_result["logs"]:
             print(line)
+    for diagnostic in event_snapshot.diagnostics:
+        print(f"EVENT: {diagnostic}")
 
     should_send = (
         not args.no_send
@@ -101,7 +116,7 @@ def main() -> int:
             send_discord(
                 webhook,
                 report,
-                username=str(config.get("discord_username", "CF v3.8.0")),
+                username=str(config.get("discord_username", "CF v3.8.1")),
                 avatar_url=str(config.get("discord_avatar_url", "")).strip(),
             )
             mark_report_sent(
@@ -119,4 +134,4 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 
-# Package revision: v3.8.0-early-swing-r1
+# Package revision: v3.8.1-events-trend-dip-r1

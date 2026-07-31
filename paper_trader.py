@@ -1,4 +1,4 @@
-"""Deterministic, multi-candidate paper-trading engine for CF v3.8.0."""
+"""Deterministic, multi-candidate paper-trading engine for CF v3.8.1."""
 from __future__ import annotations
 
 import json
@@ -10,8 +10,8 @@ from typing import Any, Iterable, Mapping
 
 
 STATE_SCHEMA = 1
-APP_VERSION = "3.8.0"
-COMPATIBLE_APP_VERSIONS = {"3.7", "3.7.1", APP_VERSION}
+APP_VERSION = "3.8.1"
+COMPATIBLE_APP_VERSIONS = {"3.7", "3.7.1", "3.8.0", APP_VERSION}
 ENTRY_STATES = {"BUY": 1, "SELL": -1, "STRONG_LONG": 1, "STRONG_SHORT": -1}
 IMMEDIATE_STATES = {"BUY", "SELL"}
 PROBE_STATES = {"STRONG_LONG", "STRONG_SHORT"}
@@ -465,11 +465,17 @@ class PaperTrader:
         maintenance = max(0.0, _f(getattr(signal, "maintenance_margin_pct", 0.0)) / 100.0)
         safety = stop_pct / 100.0 + float(self.config.get("paper_liquidation_buffer_pct", 0.25)) / 100.0 + maintenance
         liquidation_cap = int(math.floor(1.0 / safety)) if safety > 0 else maximum
+        event_cap = getattr(signal, "event_leverage_cap", None)
+        if event_cap is not None:
+            quality_cap = min(quality_cap, int(event_cap))
         cap = min(platform, maximum, quality_cap, liquidation_cap)
         valid = [step for step in LEVERAGE_STEPS if minimum <= step <= cap]
         return max(valid) if valid else None
 
     def _entry_block(self, signal: Any, additional: bool) -> str | None:
+        if bool(getattr(signal, "event_block_new", False)):
+            code = str(getattr(signal, "event_code", "Ereignis") or "Ereignis")
+            return f"{code} blockiert neue Position"
         direction = ENTRY_STATES.get(signal.state)
         if direction is None:
             return "kein starkes Einstiegssignal"
@@ -696,7 +702,7 @@ class PaperTrader:
             _f(self.state.get("balance_usd")) - entry_fee,
             10,
         )
-        setup = SETUP_CODES.get(signal.selected_setup, "–")
+        setup = SETUP_CODES.get(signal.selected_setup, "+" if signal.direction >= 0 else "-")
         position = {
             "symbol": symbol,
             "alias": signal.alias,
@@ -1226,7 +1232,7 @@ class PaperTrader:
         for symbol, position in list((self.state.get("positions") or {}).items()):
             reason: str | None = None
             if symbol not in allowed_symbols:
-                reason = "Symbol nicht mehr im v3.8.0-Kandidatenpool"
+                reason = "Symbol nicht mehr im v3.8.1-Kandidatenpool"
             elif str(position.get("setup")) == "P":
                 reason = "P-Setup seit v3.7.1 deaktiviert"
             if reason is None:
@@ -1354,7 +1360,7 @@ class PaperTrader:
         if fresh_decision and not self.actions:
             top = " | ".join(
                 f"{signal.alias} {signal.state} "
-                f"{SETUP_CODES.get(signal.selected_setup, '–')} "
+                f"{SETUP_CODES.get(signal.selected_setup, '+' if signal.direction >= 0 else '-')} "
                 f"{signal.trade_readiness:.1f}/{signal.confidence:.1f}"
                 for signal in signals[:3]
             )
