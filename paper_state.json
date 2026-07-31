@@ -2,12 +2,10 @@
   "app_version": "3.7",
   "balance_usd": 100.068625332,
   "checkpoint_requested": false,
-  "cooldowns": {
-    "GRAM": 1785487256
-  },
-  "last_checkpoint_at": "2026-07-31T08:35:58.786191+00:00",
-  "last_decision_key": "1785486900000",
-  "last_run_at": "2026-07-31T08:35:56.442049+00:00",
+  "cooldowns": {},
+  "last_checkpoint_at": "2026-07-31T08:56:00.490976+00:00",
+  "last_decision_key": "1785488100000",
+  "last_run_at": "2026-07-31T08:55:58.458191+00:00",
   "ledger": [
     {
       "action": {
@@ -2380,96 +2378,158 @@
         "raw_net_pnl_usd": 0.03128958239999924
       },
       "timestamp": "2026-07-31T08:35:56.442049+00:00"
+    },
+    {
+      "action": {
+        "alias": "AAV",
+        "direction": -1,
+        "discord_visible": false,
+        "full_close": false,
+        "is_add": false,
+        "kind": "OPEN",
+        "leverage": 10,
+        "margin_usd": 1.0,
+        "priority": 77.98988234418954,
+        "realized_pnl_usd": 0.0,
+        "reason": "P 82.3/82.1, Stop 0.300%",
+        "symbol": "AAVE"
+      },
+      "balance_usd": 100.06862533,
+      "details": {
+        "base_size": 0.10155583539830199,
+        "confidence": 82.12512010569424,
+        "entry_fee_usd": 0.0,
+        "entry_price": 98.468,
+        "entry_roundtrip_cost_pct": 0.027420075557542573,
+        "notional_usd": 10.0,
+        "rank": 1,
+        "readiness": 82.27377824582074,
+        "setup": "P",
+        "stop_price": 98.7635425892802,
+        "target_one_price": 98.12812602232776,
+        "target_two_price": 97.84736056251155
+      },
+      "timestamp": "2026-07-31T08:55:58.458191+00:00"
     }
   ],
   "observations": {
     "AAVE": {
-      "candle_ms": 1785486900000,
-      "entry_direction": 0,
-      "entry_streak": 0,
-      "state": "STRONG_LONG"
+      "candle_ms": 1785488100000,
+      "entry_direction": -1,
+      "entry_streak": 1,
+      "state": "SELL"
     },
     "BTC": {
-      "candle_ms": 1785486900000,
+      "candle_ms": 1785488100000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "ENA": {
-      "candle_ms": 1785486900000,
+      "candle_ms": 1785488100000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "ETH": {
-      "candle_ms": 1785486900000,
-      "entry_direction": 0,
-      "entry_streak": 0,
-      "state": "WATCH_LONG"
-    },
-    "GRAM": {
-      "candle_ms": 1785486900000,
-      "entry_direction": 0,
-      "entry_streak": 0,
-      "state": "WATCH_SHORT"
-    },
-    "HYPE": {
-      "candle_ms": 1785486900000,
+      "candle_ms": 1785488100000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
-    "LIT": {
-      "candle_ms": 1785486900000,
+    "GRAM": {
+      "candle_ms": 1785488100000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "STRONG_LONG"
+      "state": "NO_TRADE"
+    },
+    "HYPE": {
+      "candle_ms": 1785488100000,
+      "entry_direction": 0,
+      "entry_streak": 0,
+      "state": "WATCH_LONG"
+    },
+    "LIT": {
+      "candle_ms": 1785488100000,
+      "entry_direction": 0,
+      "entry_streak": 0,
+      "state": "NO_TRADE"
     },
     "NEAR": {
-      "candle_ms": 1785486900000,
+      "candle_ms": 1785488100000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "WATCH_SHORT"
     },
     "PUMP": {
-      "candle_ms": 1785486900000,
+      "candle_ms": 1785488100000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "WATCH_SHORT"
+      "state": "NO_TRADE"
     },
     "SOL": {
-      "candle_ms": 1785486900000,
+      "candle_ms": 1785488100000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "UNI": {
-      "candle_ms": 1785486900000,
+      "candle_ms": 1785488100000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "NO_TRADE"
+      "state": "WATCH_SHORT"
     },
     "XPL": {
-      "candle_ms": 1785486900000,
+      "candle_ms": 1785488100000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "XRP": {
-      "candle_ms": 1785486900000,
+      "candle_ms": 1785488100000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "ZEC": {
-      "candle_ms": 1785486900000,
+      "candle_ms": 1785488100000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "WATCH_LONG"
+      "state": "WATCH_SHORT"
     }
   },
-  "positions": {},
-  "run_count": 964,
+  "positions": {
+    "AAVE": {
+      "alias": "AAV",
+      "base_size": 0.1015558353983,
+      "degrade_streak": 0,
+      "direction": -1,
+      "entry_confidence": 82.12512010569424,
+      "entry_fee_remaining_usd": 0.0,
+      "entry_price": 98.468,
+      "entry_rank": 1,
+      "entry_readiness": 82.27377824582074,
+      "entry_roundtrip_cost_pct": 0.027420075557542573,
+      "funding_accrued_usd": 0.0,
+      "funding_updated_at": "2026-07-31T08:55:58.458191+00:00",
+      "last_candle_ms": 1785488100000,
+      "leverage": 10,
+      "margin_usd": 1.0,
+      "notional_usd": 10.0,
+      "opened_at": "2026-07-31T08:55:58.458191+00:00",
+      "risk_usd": 0.032756082105883516,
+      "scale_count": 0,
+      "setup": "P",
+      "stop_pct": 0.3001407455012926,
+      "stop_price": 98.7635425892802,
+      "symbol": "AAVE",
+      "taker_fee_pct": 0.0,
+      "target_one_price": 98.12812602232776,
+      "target_one_taken": false,
+      "target_two_price": 97.84736056251155
+    }
+  },
+  "run_count": 984,
   "schema": 1,
   "starting_balance_usd": 100.0
 }
