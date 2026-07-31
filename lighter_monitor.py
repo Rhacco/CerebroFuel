@@ -1,4 +1,4 @@
-"""Lighter-native P/T/W signal engine for CF v3.7."""
+"""Lighter-native T/W signal engine for CF v3.7.1."""
 from __future__ import annotations
 
 import json
@@ -14,11 +14,10 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-APP_VERSION = "3.7"
-PACKAGE_REVISION = "v3.7-paper-multi-r1"
+APP_VERSION = "3.7.1"
+PACKAGE_REVISION = "v3.7.1-tw-only-r2"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
-PRESSURE_WINDOWS = (10, 20, 60)
 TREND_WINDOWS = (5, 15, 60)
 # Kept as the stable public display contract.
 WINDOWS = DISPLAY_WINDOWS
@@ -141,8 +140,9 @@ class Signal:
     platform_max_leverage: float = 0.0
     maintenance_margin_pct: float = 0.0
     taker_fee_pct: float = 0.0
+    candidate_tier: str = "core"
+    candidate_penalty: float = 0.0
     windows: dict[int, Window] = field(default_factory=dict)
-    pressure: Setup = field(default_factory=lambda: Setup("PRESSURE"))
     trend: Setup = field(default_factory=lambda: Setup("TREND"))
     reversal: Setup = field(default_factory=lambda: Setup("REVERSAL"))
     reasons: list[str] = field(default_factory=list)
@@ -260,207 +260,21 @@ def _window(candles: list[Mapping[str, Any]], minutes: int) -> Window:
     noise = max(0.015, statistics.median(returns) * 1.4826 if returns else 0.015)
     expected_move = max(0.06, noise * math.sqrt(minutes))
     price_units = _clamp(price / expected_move, -3.0, 3.0)
-    volume_impulse = _clamp(math.log(max(ratio, 1e-9)) * 45.0, -45.0, 55.0)
     flat_tolerance = max(0.04, expected_move * 0.32)
 
-    # Rising quote volume confirms stable/rising price as accumulation and
-    # confirms falling price as selling pressure. Drying volume dampens a
-    # counter-trend pullback instead of falsely treating it as a full reversal.
-    if price >= -flat_tolerance:
-        score = price_units * 25.0 + volume_impulse
-    else:
-        score = (
-            price_units * 30.0
-            - max(0.0, volume_impulse)
-            + max(0.0, -volume_impulse) * 0.45
-        )
+    # v3.7.1: Price determines direction. Quote volume is deliberately only a
+    # bounded strength modifier because candle volume has no buyer/seller sign.
+    # A large volume spike with flat price must therefore never become a Long
+    # or Short signal by itself.
+    volume_factor = _clamp(
+        1.0 + math.log(max(ratio, 1e-9)) * 0.22,
+        0.72,
+        1.28,
+    )
+    flat_factor = _clamp(abs(price) / flat_tolerance, 0.0, 1.0)
+    score = price_units * 30.0 * volume_factor * flat_factor
     return Window(minutes, price, ratio, _clamp(score, -100.0, 100.0), "ok", "")
 
-
-def _pressure_window(candles: list[Mapping[str, Any]], minutes: int) -> Window:
-    """Measure directional price/quote-volume pressure."""
-    needed = minutes * 2
-    if len(candles) < needed:
-        return Window(minutes=minutes, reason=f"{len(candles)}/{needed} candles")
-    rows = candles[-needed:]
-    if not _contiguous(rows):
-        return Window(minutes=minutes, reason="candle gap")
-    recent, previous = rows[-minutes:], rows[:-minutes]
-    try:
-        prices = [
-            _f(row[key])
-            for row in rows
-            for key in ("o", "h", "l", "c")
-        ]
-        start, end = _f(recent[0]["o"]), _f(recent[-1]["c"])
-    except (KeyError, TypeError):
-        return Window(minutes=minutes, reason="malformed candle")
-    recent_volume = sum(_f(row.get("V")) for row in recent)
-    previous_volume = sum(_f(row.get("V")) for row in previous)
-    if min(prices, default=0.0) <= 0 or start <= 0 or min(recent_volume, previous_volume) <= 0:
-        return Window(minutes=minutes, reason="price/quote-volume")
-
-    price = _pct(start, end)
-    ratio = recent_volume / previous_volume
-    volume_impulse = _clamp((ratio - 1.0) * 70.0, -45.0, 55.0)
-    if price >= -0.08:
-        score = price * 30.0 + volume_impulse
-    else:
-        score = price * 36.0 - max(0.0, volume_impulse)
-    return Window(
-        minutes,
-        price,
-        ratio,
-        _clamp(score, -100.0, 100.0),
-        "ok",
-        "",
-    )
-
-
-def _pressure_once(candles: list[Mapping[str, Any]]) -> Setup:
-    windows = {
-        minutes: _pressure_window(candles, minutes)
-        for minutes in PRESSURE_WINDOWS
-    }
-    good = [window for window in windows.values() if window.quality == "ok"]
-    if len(good) < 2:
-        return Setup("PRESSURE", reason="insufficient pressure windows")
-
-    weights = {10: 0.30, 20: 0.45, 60: 0.25}
-    usable_weight = sum(weights[window.minutes] for window in good)
-    weighted = sum(
-        window.score * weights[window.minutes]
-        for window in good
-    ) / max(usable_weight, 1e-9)
-    direction = _direction(weighted)
-    directional_scores = {
-        minute: _directional(window.score, direction)
-        for minute, window in windows.items()
-        if window.quality == "ok"
-    }
-    supporting = sum(value >= 12.0 for value in directional_scores.values())
-    opposing = sum(value <= -28.0 for value in directional_scores.values())
-    agreement = supporting / max(1, len(good)) * 100.0
-
-    primary = [windows[minute] for minute in (10, 20)]
-    primary_valid = all(window.quality == "ok" for window in primary)
-    primary_aligned = primary_valid and all(
-        _directional(window.score, direction) >= 12.0
-        for window in primary
-    )
-    primary_ratios = [
-        float(window.volume_ratio)
-        for window in primary
-        if window.volume_ratio is not None
-    ]
-    volume_ok = (
-        len(primary_ratios) == 2
-        and primary_ratios[0] >= 1.05
-        and primary_ratios[1] >= 0.85
-        and statistics.mean(primary_ratios) >= 1.10
-    )
-    volume_score = (
-        _clamp(
-            52.0
-            + math.log(max(statistics.mean(primary_ratios), 1e-9)) * 38.0
-            + (10.0 if min(primary_ratios) >= 1.0 else 0.0)
-        )
-        if primary_ratios
-        else 0.0
-    )
-    directional_weighted = _directional(weighted, direction)
-    score = _clamp(
-        directional_weighted * 0.62
-        + agreement * 0.20
-        + volume_score * 0.18
-    )
-
-    candidate = (
-        len(good) == len(PRESSURE_WINDOWS)
-        and directional_weighted >= 38.0
-        and supporting >= 2
-        and opposing == 0
-        and primary_aligned
-        and volume_ok
-    )
-    full_confirmation = (
-        candidate
-        and supporting == len(PRESSURE_WINDOWS)
-        and directional_scores.get(10, 0.0) >= 18.0
-        and directional_scores.get(20, 0.0) >= 15.0
-        and directional_weighted >= 40.0
-    )
-    forming = (
-        directional_weighted >= 15.0
-        and supporting >= 2
-        and not any(value <= -42.0 for value in directional_scores.values())
-    )
-    phase = "ready" if full_confirmation else (
-        "strong" if candidate else ("forming" if forming else "none")
-    )
-    if phase == "none":
-        score = min(score, 44.0)
-    elif phase == "forming":
-        score = min(score, 64.0)
-    elif phase == "strong":
-        score = min(score, 72.0)
-    return Setup(
-        "PRESSURE",
-        direction=direction,
-        score=score,
-        phase=phase,
-        volume_score=volume_score,
-        confirmations=1 if candidate else 0,
-        event_strength=directional_weighted,
-        event_timestamp_ms=_timestamp_ms(candles[-1]) if candles else None,
-        peak_score=score,
-        reason=(
-            f"weighted={weighted:.1f} agree={supporting}/{len(good)} "
-            f"v10={windows[10].volume_ratio} v20={windows[20].volume_ratio}"
-        ),
-    )
-
-
-def _assess_pressure(candles: list[Mapping[str, Any]]) -> Setup:
-    current = _pressure_once(candles)
-    if current.phase not in {"ready", "strong"}:
-        return current
-    confirmations = 1
-    age = 0
-    soft_gap = 0
-    peak_score = current.score
-    for offset in range(1, 9):
-        if len(candles) <= offset:
-            break
-        previous = _pressure_once(candles[:-offset])
-        if (
-            previous.phase in {"ready", "strong"}
-            and previous.direction == current.direction
-        ):
-            confirmations += 1
-            age = offset
-            soft_gap = 0
-            peak_score = max(peak_score, previous.score)
-        elif (
-            previous.phase == "forming"
-            and previous.direction == current.direction
-            and soft_gap < 2
-        ):
-            age = offset
-            soft_gap += 1
-            peak_score = max(peak_score, previous.score)
-        else:
-            break
-    current.confirmations = confirmations
-    current.age_minutes = age
-    current.peak_score = peak_score
-    if candles:
-        current.event_timestamp_ms = _timestamp_ms(candles[-1 - age])
-    if current.phase == "strong" and confirmations >= 2:
-        current.phase = "ready"
-        current.score = _clamp(current.score + 5.0)
-        current.peak_score = max(current.peak_score, current.score)
-    return current
 
 
 def _levels(book: Mapping[str, Any], side: str) -> list[tuple[float, float]]:
@@ -1000,7 +814,6 @@ def _detail_head(signal: Signal) -> str:
 
 def _setup_code(signal: Signal) -> str:
     return {
-        "PRESSURE": "P",
         "TREND": "T",
         "REVERSAL": "W",
     }.get(signal.selected_setup, "–")
@@ -1008,7 +821,6 @@ def _setup_code(signal: Signal) -> str:
 
 def _selected_setup(signal: Signal) -> Setup:
     return {
-        "PRESSURE": signal.pressure,
         "TREND": signal.trend,
         "REVERSAL": signal.reversal,
     }.get(signal.selected_setup, Setup("NONE"))
@@ -1076,6 +888,28 @@ class LighterMonitor:
         ]
         if invalid_aliases:
             raise ValueError(f"Coin-Kürzel müssen drei Zeichen haben: {invalid_aliases}")
+        test_symbols = {
+            str(value).upper()
+            for value in self.config.get("test_candidate_symbols", [])
+        }
+        if not test_symbols.issubset(set(symbols)):
+            raise ValueError("test_candidate_symbols müssen im Kandidatenpool liegen")
+        penalties = {
+            str(key).upper(): float(value)
+            for key, value in (self.config.get("candidate_trade_penalty_points") or {}).items()
+        }
+        if set(penalties) != test_symbols or any(
+            not 0.0 < value <= 20.0 for value in penalties.values()
+        ):
+            raise ValueError(
+                "Jeder Testkandidat benötigt genau einen positiven Abschlag"
+            )
+        for key in (
+            "test_candidate_minimum_readiness",
+            "test_candidate_minimum_confidence",
+        ):
+            if not 0.0 <= float(self.config.get(key, 100.0)) <= 100.0:
+                raise ValueError("Testkandidaten-Schwellen müssen zwischen null und 100 liegen")
         summary_count = int(self.config.get("summary_coin_count", 6))
         minimum_details = int(self.config.get("minimum_detail_count", 2))
         maximum_details = int(self.config.get("maximum_detail_count", 4))
@@ -1088,25 +922,17 @@ class LighterMonitor:
         watch = float(self.config.get("watch_trade_readiness", 50))
         strong = float(self.config.get("strong_trade_readiness", 66))
         immediate = float(self.config.get("immediate_trade_readiness", 74))
-        pressure_immediate = float(
-            self.config.get("pressure_immediate_trade_readiness", immediate)
-        )
-        if not (
-            0 < watch < strong < immediate <= 100
-            and strong < pressure_immediate <= immediate
-        ):
+        if not 0 < watch < strong < immediate <= 100:
             raise ValueError("Readiness-Schwellen sind nicht logisch geordnet")
         funding_watch = float(self.config.get("funding_watch_hourly_pct", 0.015))
         funding_hard = float(self.config.get("funding_hard_hourly_pct", 0.05))
         if not 0 <= funding_watch < funding_hard:
             raise ValueError("Funding-Schwellen sind nicht logisch geordnet")
         setup_thresholds = (
-            "pressure_minimum_setup_score",
             "trend_minimum_setup_score",
             "trend_minimum_context_strength",
             "trend_minimum_volume_score",
             "reversal_minimum_setup_score",
-            "btc_pressure_immediate_breadth_score",
             "btc_trend_immediate_breadth_score",
             "btc_reversal_immediate_breadth_score",
         )
@@ -1149,8 +975,6 @@ class LighterMonitor:
             raise ValueError("Ausführungs- und Datenparameter müssen positiv sein")
         if int(self.config.get("candle_count", 360)) < 200:
             raise ValueError("candle_count muss mindestens 200 betragen")
-        if int(self.config.get("pressure_entry_max_age_minutes", 2)) < 0:
-            raise ValueError("pressure_entry_max_age_minutes darf nicht negativ sein")
         if float(self.config.get("trend_minimum_expected_edge_pct", 0.10)) <= 0:
             raise ValueError("trend_minimum_expected_edge_pct muss positiv sein")
         if float(self.config.get("trend_cost_edge_multiple", 3.0)) < 1:
@@ -1241,20 +1065,18 @@ class LighterMonitor:
 
         noise = _robust_noise(candles)
         signal.noise_pct = noise
-        signal.pressure = _assess_pressure(candles)
         signal.trend = _assess_trend(candles, signal.windows, noise)
         signal.reversal = _assess_reversal(
             candles,
             noise,
             float(self.config.get("hard_reversal_min_move_pct", 0.20)),
         )
-        setups = (signal.pressure, signal.trend, signal.reversal)
+        setups = (signal.trend, signal.reversal)
         selected = max(
             setups,
             key=lambda item: (
                 *_setup_priority(item),
                 2 if item.kind == "REVERSAL" and item.phase == "ready" else 0,
-                1 if item.kind == "PRESSURE" else 0,
             ),
         )
         signal.selected_setup = selected.kind if selected.phase != "none" else "NONE"
@@ -1321,8 +1143,8 @@ class LighterMonitor:
         movement = _mean(
             min(
                 100.0,
-                abs(item.price_pct or 0.0) * 55.0
-                + abs(math.log(max(item.volume_ratio or 1.0, 1e-9))) * 38.0,
+                abs(item.price_pct or 0.0) * 70.0
+                + abs(math.log(max(item.volume_ratio or 1.0, 1e-9))) * 12.0,
             )
             for item in display_good
         )
@@ -1364,25 +1186,49 @@ class LighterMonitor:
             - (15.0 if setup_conflict else 0.0)
         )
 
+        test_symbols = {
+            str(value).upper()
+            for value in self.config.get("test_candidate_symbols", [])
+        }
+        penalties = self.config.get("candidate_trade_penalty_points") or {}
+        signal.candidate_tier = "test" if symbol in test_symbols else "core"
+        signal.candidate_penalty = _clamp(
+            _f(penalties.get(symbol)),
+            0.0,
+            20.0,
+        )
+        if signal.candidate_penalty > 0:
+            signal.opportunity = _clamp(
+                signal.opportunity - signal.candidate_penalty * 0.75
+            )
+            signal.confidence = _clamp(
+                signal.confidence - signal.candidate_penalty
+            )
+            signal.trade_readiness = _clamp(
+                signal.trade_readiness - signal.candidate_penalty
+            )
+            signal.reasons.append(
+                f"Testkandidat -{signal.candidate_penalty:g} Qualitätspunkte"
+            )
+
         funding_watch = float(self.config.get("funding_watch_hourly_pct", 0.015))
         funding_hard = float(self.config.get("funding_hard_hourly_pct", 0.05))
         funding_against = (
             signal.funding_hourly_pct is not None
             and _directional(signal.funding_hourly_pct, direction) > 0
         )
-        funding_pressure = (
+        funding_magnitude = (
             _directional(signal.funding_hourly_pct or 0.0, direction)
             if funding_against
             else 0.0
         )
-        if funding_pressure > funding_watch:
+        if funding_magnitude > funding_watch:
             setup_factor = {
-                "PRESSURE": 1.0,
                 "TREND": 0.8,
                 "REVERSAL": 0.25,
             }.get(selected.kind, 0.6)
             signal.trade_readiness -= _clamp(
-                (funding_pressure - funding_watch)
+                (funding_magnitude - funding_watch)
                 / max(funding_hard - funding_watch, 1e-9)
                 * 14.0
                 * setup_factor,
@@ -1396,31 +1242,17 @@ class LighterMonitor:
         enough_volume = signal.volume_24h >= minimum_volume
         enough_oi = signal.open_interest_usd >= minimum_oi
         funding_block = (
-            funding_pressure > funding_hard
+            funding_magnitude > funding_hard
             and selected.kind != "REVERSAL"
         )
         all_display_windows = len(display_good) == len(DISPLAY_WINDOWS)
         immediate_threshold = float(self.config.get("immediate_trade_readiness", 74))
-        if selected.kind == "PRESSURE":
-            immediate_threshold = float(
-                self.config.get(
-                    "pressure_immediate_trade_readiness",
-                    immediate_threshold,
-                )
-            )
         strong_threshold = float(self.config.get("strong_trade_readiness", 66))
         watch_threshold = float(self.config.get("watch_trade_readiness", 50))
         if selected.kind == "REVERSAL":
             fresh_entry = (
                 selected.age_minutes is None
                 or selected.age_minutes <= 3
-            )
-        elif selected.kind == "PRESSURE":
-            fresh_entry = (
-                selected.age_minutes is None
-                or selected.age_minutes <= int(
-                    self.config.get("pressure_entry_max_age_minutes", 5)
-                )
             )
         else:
             fresh_entry = (
@@ -1430,7 +1262,6 @@ class LighterMonitor:
         setup_minimum = float(
             self.config.get(
                 {
-                    "PRESSURE": "pressure_minimum_setup_score",
                     "TREND": "trend_minimum_setup_score",
                     "REVERSAL": "reversal_minimum_setup_score",
                 }.get(selected.kind, ""),
@@ -1438,17 +1269,7 @@ class LighterMonitor:
             )
         )
         setup_is_precise = selected.score >= setup_minimum
-        if selected.kind == "PRESSURE":
-            if not setup_is_precise:
-                hold_margin = float(
-                    self.config.get("pressure_hold_score_margin", 7)
-                )
-                setup_is_precise = (
-                    bool(selected.age_minutes)
-                    and selected.peak_score >= setup_minimum
-                    and selected.score >= setup_minimum - hold_margin
-                )
-        elif selected.kind == "TREND":
+        if selected.kind == "TREND":
             effective_cost = (
                 signal.cost_pct
                 if signal.cost_pct is not None
@@ -1511,6 +1332,17 @@ class LighterMonitor:
             or not enough_oi
             or funding_block
         )
+        test_candidate_ready = (
+            signal.candidate_tier != "test"
+            or (
+                signal.trade_readiness >= float(
+                    self.config.get("test_candidate_minimum_readiness", 84.0)
+                )
+                and signal.confidence >= float(
+                    self.config.get("test_candidate_minimum_confidence", 80.0)
+                )
+            )
+        )
 
         if not executable or not meets_market_minimum:
             signal.state = "NO_TRADE"
@@ -1527,6 +1359,7 @@ class LighterMonitor:
             and fresh_entry
             and setup_is_precise
             and not setup_conflict
+            and test_candidate_ready
             and signal.trade_readiness >= immediate_threshold
         ):
             signal.state = "BUY" if direction > 0 else "SELL"
@@ -1551,9 +1384,11 @@ class LighterMonitor:
 
         if setup_conflict:
             signal.reasons.append("Setups widersprechen sich")
+        if signal.candidate_tier == "test" and not test_candidate_ready:
+            signal.reasons.append("Testkandidat nur bei Spitzenqualität")
         if selected.exit_hint:
             signal.reasons.append("Setup abgelaufen/aussteigen prüfen")
-        if funding_pressure > funding_watch and not funding_block:
+        if funding_magnitude > funding_watch and not funding_block:
             signal.reasons.append("Funding gegen Richtung")
         return signal
 
@@ -1612,7 +1447,6 @@ class LighterMonitor:
             breadth_threshold = float(
                 self.config.get(
                     {
-                        "PRESSURE": "btc_pressure_immediate_breadth_score",
                         "TREND": "btc_trend_immediate_breadth_score",
                         "REVERSAL": "btc_reversal_immediate_breadth_score",
                     }.get(btc.selected_setup, ""),
@@ -1688,14 +1522,9 @@ class LighterMonitor:
             return False
 
         immediate = float(self.config.get("immediate_trade_readiness", 78))
-        if signal.selected_setup == "PRESSURE":
-            immediate = float(
-                self.config.get("pressure_immediate_trade_readiness", immediate)
-            )
         setup_minimum = float(
             self.config.get(
                 {
-                    "PRESSURE": "pressure_minimum_setup_score",
                     "TREND": "trend_minimum_setup_score",
                     "REVERSAL": "reversal_minimum_setup_score",
                 }.get(signal.selected_setup, ""),
@@ -1903,4 +1732,4 @@ class LighterMonitor:
         return self.client.candles(market_id, count=candle_count), self.client.book(market_id)
 
 
-# Package revision: v3.7-paper-multi-r1
+# Package revision: v3.7.1-tw-only-r2

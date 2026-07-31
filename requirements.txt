@@ -1,4 +1,4 @@
-# v3.7 active runtime uses only the Python standard library.
-# Keep requests available for the retained v3.5 compatibility modules.
-# Package revision: v3.7-paper-multi-r1
+# v3.7.1 active T/W runtime uses only the Python standard library.
+# requests remains available for the retained compatibility and analysis modules.
+# Package revision: v3.7.1-tw-only-r2
 requests>=2.31,<3

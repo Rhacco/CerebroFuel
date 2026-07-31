@@ -1,5 +1,5 @@
-name: Crypto Signal Monitor v3.7
-# Package revision: v3.7-paper-multi-r1
+name: Crypto Signal Monitor v3.7.1
+# Package revision: v3.7.1-tw-only-r2
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: crypto-signal-monitor-v37
+  group: crypto-signal-monitor-v371
   cancel-in-progress: false
 
 jobs:
@@ -33,8 +33,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: output/paper_state.json
-          key: paper-state-v37-${{ github.run_id }}
+          key: paper-state-v371-${{ github.run_id }}
           restore-keys: |
+            paper-state-v371-
             paper-state-v37-
       - name: Paper-State wiederherstellen
         env:
@@ -57,4 +58,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: output/paper_state.json
-          key: paper-state-v37-${{ github.run_id }}
+          key: paper-state-v371-${{ github.run_id }}

@@ -1,4 +1,4 @@
-"""Deterministic, stateful paper-trading engine for CF v3.7."""
+"""Deterministic, stateful paper-trading engine for CF v3.7.1."""
 from __future__ import annotations
 
 import json
@@ -10,6 +10,8 @@ from typing import Any, Iterable, Mapping
 
 
 STATE_SCHEMA = 1
+APP_VERSION = "3.7.1"
+COMPATIBLE_APP_VERSIONS = {"3.7", APP_VERSION}
 ENTRY_STATES = {"BUY": 1, "SELL": -1}
 SUPPORT_STATES = {
     "BUY": 1,
@@ -19,7 +21,7 @@ SUPPORT_STATES = {
     "STRONG_SHORT": -1,
     "WATCH_SHORT": -1,
 }
-SETUP_CODES = {"PRESSURE": "P", "TREND": "T", "REVERSAL": "W"}
+SETUP_CODES = {"TREND": "T", "REVERSAL": "W"}
 LEVERAGE_STEPS = (10, 15, 20, 25, 30, 40, 50)
 
 
@@ -49,11 +51,16 @@ def _parse_time(value: Any, fallback: datetime) -> datetime:
 
 
 def _setup(signal: Any) -> Any:
-    return {
-        "PRESSURE": signal.pressure,
+    selected = {
         "TREND": signal.trend,
         "REVERSAL": signal.reversal,
-    }.get(signal.selected_setup, signal.pressure)
+    }.get(signal.selected_setup)
+    if selected is not None:
+        return selected
+    return max(
+        (signal.trend, signal.reversal),
+        key=lambda item: (item.phase != "none", float(item.score)),
+    )
 
 
 def _direction_letter(direction: int) -> str:
@@ -243,7 +250,7 @@ class PaperTrader:
         capital = round(float(self.config.get("paper_starting_capital_usd", 100.0)), 8)
         return {
             "schema": STATE_SCHEMA,
-            "app_version": "3.7",
+            "app_version": APP_VERSION,
             "starting_balance_usd": capital,
             "balance_usd": capital,
             "positions": {},
@@ -280,12 +287,15 @@ class PaperTrader:
         if (
             not isinstance(payload, dict)
             or int(payload.get("schema", -1)) != STATE_SCHEMA
-            or payload.get("app_version") != "3.7"
+            or payload.get("app_version") not in COMPATIBLE_APP_VERSIONS
             or not isinstance(payload.get("positions"), dict)
             or _f(payload.get("balance_usd"), -1.0) < 0
             or invalid_position
         ):
             raise RuntimeError("Paper-State ist inkompatibel oder beschädigt")
+        if payload.get("app_version") != APP_VERSION:
+            payload["app_version"] = APP_VERSION
+            payload["checkpoint_requested"] = True
         return payload
 
     def _save_state(self) -> None:
@@ -404,7 +414,7 @@ class PaperTrader:
             return min(0.58, raw)
         if signal.selected_setup == "TREND":
             return min(0.52, max(0.16, noise * 3.6, cost * 2.7))
-        return min(0.62, max(0.18, noise * 4.2, cost * 2.8))
+        return min(0.56, max(0.18, noise * 3.9, cost * 2.8))
 
     def _quality(self, signal: Any) -> float:
         setup = _setup(signal)
@@ -1022,7 +1032,6 @@ class PaperTrader:
             "BUY", "SELL", "STRONG_LONG", "STRONG_SHORT"
         }
         exit_hint = bool(setup_now.exit_hint) and signal.selected_setup == {
-            "P": "PRESSURE",
             "T": "TREND",
             "W": "REVERSAL",
         }.get(position.get("setup"))
@@ -1033,10 +1042,9 @@ class PaperTrader:
         opened = _parse_time(position.get("opened_at"), self.now)
         age_minutes = max(0.0, (self.now - opened).total_seconds() / 60.0)
         max_age = {
-            "P": int(self.config.get("paper_pressure_max_hold_minutes", 45)),
             "T": int(self.config.get("paper_trend_max_hold_minutes", 25)),
             "W": int(self.config.get("paper_reversal_max_hold_minutes", 12)),
-        }.get(str(position.get("setup")), 20)
+        }.get(str(position.get("setup")), 15)
         reason = ""
         priority = 88.0
         if hard_opposition:
@@ -1264,6 +1272,31 @@ class PaperTrader:
             for index, signal in enumerate(signals)
         }
         acted_symbols: set[str] = set()
+        allowed_symbols = {
+            str(symbol)
+            for symbol in self.config.get("candidate_symbols", [])
+        }
+        for symbol, position in list((self.state.get("positions") or {}).items()):
+            reason: str | None = None
+            if symbol not in allowed_symbols:
+                reason = "Symbol nicht mehr im v3.7.1-Kandidatenpool"
+            elif str(position.get("setup")) == "P":
+                reason = "P-Setup in v3.7.1 deaktiviert"
+            if reason is None:
+                continue
+            signal = self.signals.get(symbol)
+            self._funding_update(position, signal)
+            self._close(
+                position,
+                _f(position["margin_usd"]),
+                reason,
+                130.0,
+            )
+            self.state.setdefault("cooldowns", {})[symbol] = int(
+                self.now.timestamp()
+            ) + int(self.config.get("paper_close_cooldown_minutes", 5)) * 60
+            acted_symbols.add(symbol)
+
         for symbol in list((self.state.get("positions") or {}).keys()):
             position = self.state.get("positions", {}).get(symbol)
             if position is None:

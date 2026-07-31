@@ -1,4 +1,4 @@
-"""Crypto Signal Monitor v3.7 — signals plus persistent paper trading."""
+"""Crypto Signal Monitor v3.7.1 — T/W signals plus persistent paper trading."""
 from __future__ import annotations
 
 import argparse
@@ -88,7 +88,7 @@ def main() -> int:
         send_discord(
             webhook,
             report,
-            username=str(config.get("discord_username", "CF v3.7")),
+            username=str(config.get("discord_username", "CF v3.7.1")),
             avatar_url=str(config.get("discord_avatar_url", "")).strip(),
         )
         print("Discord gesendet.")
@@ -98,4 +98,4 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 
-# Package revision: v3.7-paper-multi-r1
+# Package revision: v3.7.1-tw-only-r2

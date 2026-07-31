@@ -1,4 +1,4 @@
-"""Restore and checkpoint the v3.7 paper state through the GitHub API."""
+"""Restore and checkpoint the v3.7.1 paper state through the GitHub API."""
 from __future__ import annotations
 
 import argparse
@@ -16,6 +16,8 @@ from urllib.request import Request, urlopen
 API = "https://api.github.com"
 BRANCH = "paper-state"
 REMOTE_FILE = "paper_state.json"
+APP_VERSION = "3.7.1"
+COMPATIBLE_APP_VERSIONS = {"3.7", APP_VERSION}
 
 
 class GitHubStateStore:
@@ -49,7 +51,7 @@ class GitHubStateStore:
                 "Accept": "application/vnd.github+json",
                 "Authorization": f"Bearer {self.token}",
                 "Content-Type": "application/json",
-                "User-Agent": "cf-paper-state/3.7",
+                "User-Agent": "cf-paper-state/3.7.1",
                 "X-GitHub-Api-Version": "2022-11-28",
             },
         )
@@ -96,7 +98,7 @@ def _read_state(path: Path) -> dict[str, Any]:
         raise RuntimeError(f"Paper-State ist nicht lesbar: {exc}") from exc
     if (
         not isinstance(state, dict)
-        or state.get("app_version") != "3.7"
+        or state.get("app_version") not in COMPATIBLE_APP_VERSIONS
         or int(state.get("schema", -1)) != 1
     ):
         raise RuntimeError("Paper-State ist inkompatibel")
