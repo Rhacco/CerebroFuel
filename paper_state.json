@@ -1,11 +1,13 @@
 {
   "app_version": "3.8.0",
-  "balance_usd": 99.5422227362,
+  "balance_usd": 99.5758699882,
   "checkpoint_requested": false,
-  "cooldowns": {},
-  "last_checkpoint_at": "2026-07-31T16:57:07.205585+00:00",
-  "last_decision_key": "1785516960000",
-  "last_run_at": "2026-07-31T16:57:05.396882+00:00",
+  "cooldowns": {
+    "HYPE": 1785517444
+  },
+  "last_checkpoint_at": "2026-07-31T17:01:06.264125+00:00",
+  "last_decision_key": "1785517200000",
+  "last_run_at": "2026-07-31T17:01:04.833495+00:00",
   "ledger": [
     {
       "action": {
@@ -3314,6 +3316,36 @@
         "raw_net_pnl_usd": 0.06699718749759988
       },
       "timestamp": "2026-07-31T16:57:05.396882+00:00"
+    },
+    {
+      "action": {
+        "alias": "HYP",
+        "direction": -1,
+        "discord_visible": false,
+        "full_close": true,
+        "is_add": false,
+        "kind": "CLOSE",
+        "leverage": 0,
+        "margin_usd": 1.0,
+        "priority": 92.0,
+        "realized_pnl_usd": 0.03364725198691226,
+        "reason": "Richtung zweimal nicht bestätigt",
+        "symbol": "HYPE"
+      },
+      "balance_usd": 99.57586999,
+      "details": {
+        "base_size": 0.280428344949,
+        "entry_fee_usd": 0.0,
+        "entry_price": 53.4896,
+        "exit_fee_usd": 0.0,
+        "exit_price": 53.3702,
+        "full_close": true,
+        "funding_usd": -0.0001641076,
+        "gross_pnl_usd": 0.033483144386912266,
+        "isolated_loss_capped": false,
+        "raw_net_pnl_usd": 0.03364725198691226
+      },
+      "timestamp": "2026-07-31T17:01:04.833495+00:00"
     }
   ],
   "observations": {
@@ -3324,13 +3356,13 @@
       "state": "WATCH_SHORT"
     },
     "ADA": {
-      "candle_ms": 1785516960000,
+      "candle_ms": 1785517200000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "BTC": {
-      "candle_ms": 1785516960000,
+      "candle_ms": 1785517200000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
@@ -3348,7 +3380,7 @@
       "state": "NO_TRADE"
     },
     "ETH": {
-      "candle_ms": 1785516960000,
+      "candle_ms": 1785517200000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
@@ -3360,10 +3392,10 @@
       "state": "NO_TRADE"
     },
     "HYPE": {
-      "candle_ms": 1785516960000,
+      "candle_ms": 1785517200000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "WATCH_SHORT"
+      "state": "WATCH_LONG"
     },
     "LIT": {
       "candle_ms": 1785493260000,
@@ -3384,7 +3416,7 @@
       "state": "NO_TRADE"
     },
     "SOL": {
-      "candle_ms": 1785516960000,
+      "candle_ms": 1785517200000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
@@ -3420,41 +3452,8 @@
       "state": "WATCH_LONG"
     }
   },
-  "positions": {
-    "HYPE": {
-      "alias": "HYP",
-      "base_size": 0.280428344949,
-      "degrade_streak": 0,
-      "direction": -1,
-      "entry_confidence": 87.19853134096518,
-      "entry_fee_remaining_usd": 0.0,
-      "entry_price": 53.4896,
-      "entry_rank": 1,
-      "entry_readiness": 90.3518145120773,
-      "entry_roundtrip_cost_pct": 0.009908468188205382,
-      "entry_state": "SELL",
-      "funding_accrued_usd": -7.422015e-05,
-      "funding_updated_at": "2026-07-31T16:57:05.396882+00:00",
-      "last_candle_ms": 1785516960000,
-      "last_funding_hourly_pct": 0.0096,
-      "leverage": 15,
-      "margin_usd": 1.0,
-      "notional_usd": 15.0,
-      "opened_at": "2026-07-31T16:53:59.846580+00:00",
-      "probe_entry": false,
-      "risk_usd": 0.059680154878,
-      "scale_count": 0,
-      "setup": "E",
-      "stop_pct": 0.387959231000578,
-      "stop_price": 53.478902080000005,
-      "symbol": "HYPE",
-      "taker_fee_pct": 0.0,
-      "target_one_price": 53.250954483050926,
-      "target_one_taken": true,
-      "target_two_price": 53.0538125342669
-    }
-  },
-  "run_count": 1430,
+  "positions": {},
+  "run_count": 1434,
   "schema": 1,
   "starting_balance_usd": 100.0
 }
