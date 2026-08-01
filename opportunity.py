@@ -909,4 +909,4 @@ def assess_opportunity(
         volume_colors=visible_colors,
         reasons=tuple(dict.fromkeys(reasons)),
     )
-# Package revision: v3.8.4-state-fix-r1
+# Package revision: v3.8.5-w-clarity-r1

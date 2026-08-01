@@ -1,4 +1,4 @@
-"""Lighter-native early-swing/T/W signal engine for CF v3.8.4."""
+"""Lighter-native early-swing/T/W signal engine for CF v3.8.5."""
 from __future__ import annotations
 
 import json
@@ -17,8 +17,8 @@ from zoneinfo import ZoneInfo
 
 from regime_context import calculate_regimes
 
-APP_VERSION = "3.8.4"
-PACKAGE_REVISION = "v3.8.4-state-fix-r1"
+APP_VERSION = "3.8.5"
+PACKAGE_REVISION = "v3.8.5-w-clarity-r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 TREND_WINDOWS = (5, 15, 60)
@@ -878,12 +878,18 @@ def _reversal_candidate(
             shock = _pct(anchor, extreme)
         duration = max(1, event_index - anchor_index)
         shock_z = shock / max(noise * math.sqrt(duration), 1e-9)
-        if shock > 0 and (best is None or shock_z > best[0]):
-            best = (shock_z, shock, event_index, anchor_index, extreme)
+        # A reversal belongs to the largest actual shock. Using z-score alone
+        # lets a smaller later candle reset the event age merely because its
+        # duration is shorter.
+        if shock > 0 and (
+            best is None
+            or (shock, shock_z) > (best[0], best[1])
+        ):
+            best = (shock, shock_z, event_index, anchor_index, extreme)
 
     if best is None:
         return Setup("REVERSAL")
-    shock_z, shock, event_index, anchor_index, extreme = best
+    shock, shock_z, event_index, anchor_index, extreme = best
     age = len(rows) - 1 - event_index
     dynamic_minimum = max(minimum_move_pct, noise * math.sqrt(max(1, event_index - anchor_index)) * 2.65)
     if shock < dynamic_minimum or shock_z < 2.65:
@@ -969,11 +975,16 @@ def _reversal_candidate(
         and event_strength >= 8.00
     )
     late = age > 4 or rebound_fraction > 0.92 or stalled
-    ready = exceptional_rejection or rejection_followthrough or ordinary_confirmation
+    # A same-candle rejection is useful attention context, but it is not yet a
+    # confirmed reversal. At least one later closed candle must follow through
+    # before W becomes ready.
+    ready = rejection_followthrough or ordinary_confirmation
     if late:
         phase, exit_hint, score = "late", True, min(score, 35.0)
     elif ready:
         phase, exit_hint = "ready", False
+    elif exceptional_rejection:
+        phase, exit_hint = "strong", False
     else:
         phase, exit_hint, score = "forming", False, min(score, 69.0)
     return Setup(
@@ -1016,8 +1027,9 @@ def _assess_reversal(
     return max(
         candidates,
         key=lambda item: (
+            item.move_pct,
             item.event_strength,
-            item.event_timestamp_ms or 0,
+            -(item.event_timestamp_ms or 0),
             item.score,
         ),
     )
@@ -1076,6 +1088,13 @@ def _setup_code(signal: Signal) -> str:
     }.get(signal.selected_setup, "+" if signal.direction >= 0 else "-")
 
 
+def _setup_age_code(signal: Signal) -> str:
+    setup = _selected_setup(signal)
+    if signal.selected_setup not in {"EARLY", "TREND", "REVERSAL"} or setup.age_minutes is None:
+        return ""
+    return f"a{max(0, min(9, int(setup.age_minutes)))}"
+
+
 def _selected_setup(signal: Signal) -> Setup:
     return {
         "EARLY": signal.early,
@@ -1098,6 +1117,22 @@ def _market_bias(signal: Signal) -> float | None:
         item.score * weights[item.minutes]
         for item in valid
     ) / usable_weight
+
+
+def _directional_window_agreement(signal: Signal, direction: int) -> tuple[int, int]:
+    threshold = max(0.01, signal.noise_pct * 0.30)
+    aligned = 0
+    opposed = 0
+    for minutes in DISPLAY_WINDOWS:
+        window = signal.windows.get(minutes)
+        if window is None or window.quality != "ok" or window.price_pct is None:
+            continue
+        directional_move = _directional(window.price_pct, direction)
+        if directional_move >= threshold:
+            aligned += 1
+        elif directional_move <= -threshold:
+            opposed += 1
+    return aligned, opposed
 
 
 def _window_color(window: Window) -> str:
@@ -1191,10 +1226,22 @@ class LighterMonitor:
         rejection = float(self.config.get("reversal_min_rejection_fraction", 0.30))
         max_recovery = float(self.config.get("reversal_max_entry_recovery_fraction", 0.68))
         late_override = float(self.config.get("reversal_late_recovery_override_move_pct", 1.0))
+        reversal_confirmations = int(
+            self.config.get("reversal_immediate_min_confirmations", 2)
+        )
+        reversal_agreement = int(
+            self.config.get("reversal_immediate_min_window_agreement", 2)
+        )
+        reversal_opposed = int(
+            self.config.get("reversal_immediate_max_opposed_windows", 1)
+        )
         if (
             not 0 < minimum_reversal <= immediate_reversal <= late_override
             or not 0 <= rejection <= 1
             or not 0 < max_recovery < 1
+            or not 1 <= reversal_confirmations <= 3
+            or not 1 <= reversal_agreement <= len(DISPLAY_WINDOWS)
+            or not 0 <= reversal_opposed < len(DISPLAY_WINDOWS)
         ):
             raise ValueError("Wende-Schwellen sind nicht logisch geordnet")
         positive_keys = (
@@ -1580,6 +1627,9 @@ class LighterMonitor:
                 and selected.age_minutes is not None
                 and selected.age_minutes <= 2
             )
+            aligned_windows, opposed_windows = _directional_window_agreement(
+                signal, direction
+            )
             setup_is_precise = (
                 setup_is_precise
                 and selected.move_pct >= float(
@@ -1588,6 +1638,17 @@ class LighterMonitor:
                 and selected.rejection_fraction >= float(
                     self.config.get("reversal_min_rejection_fraction", 0.30)
                 )
+                and selected.confirmations >= int(
+                    self.config.get("reversal_immediate_min_confirmations", 2)
+                )
+                and aligned_windows >= int(
+                    self.config.get("reversal_immediate_min_window_agreement", 2)
+                )
+                and opposed_windows <= int(
+                    self.config.get("reversal_immediate_max_opposed_windows", 1)
+                )
+                and selected.age_minutes is not None
+                and selected.age_minutes >= 1
                 and (
                     selected.recovery_fraction <= recovery_limit
                     or late_recovery_override
@@ -2065,7 +2126,7 @@ class LighterMonitor:
             warning_text = (" " + "".join(warnings)) if warnings else ""
             line = (
                 f"{_detail_head(item)} {windows} "
-                f"{_setup_code(item)}{round(item.trade_readiness):02d} {item.alias}"
+                f"{_setup_code(item)}{round(item.trade_readiness):02d}{_setup_age_code(item)} {item.alias}"
                 f"{warning_text}"
             )
             lines.append(line)
@@ -2201,4 +2262,4 @@ class LighterMonitor:
         return candles, book, daily
 
 
-# Package revision: v3.8.4-state-fix-r1
+# Package revision: v3.8.5-w-clarity-r1

@@ -1,4 +1,4 @@
-"""Evidence-based review of paper-trading entry parameters for CF v3.8.4.
+"""Evidence-based review of paper-trading entry parameters for CF v3.8.5.
 
 The reviewer never changes live parameters. It only flags a potential problem
 when enough completed paper trades show a large, repeatable underperformance of

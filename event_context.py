@@ -1,4 +1,4 @@
-"""Verified critical-event context for CF v3.8.4.
+"""Verified critical-event context for CF v3.8.5.
 
 Automatic facts come only from official public schedules/status pages. Project-
 specific events such as token unlocks are accepted only from a local or remote
@@ -26,7 +26,7 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 CACHE_VERSION = "event-cache-v382-r2"
-USER_AGENT = "crypto-signal-monitor/3.8.4"
+USER_AGENT = "crypto-signal-monitor/3.8.5"
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4,
     "may": 5, "june": 6, "july": 7, "august": 8,
@@ -43,6 +43,7 @@ KIND_CODES = {
     "ETF": "ETF",
     "UNLOCK": "U",
     "UPGRADE": "UPG",
+    "MAINTENANCE": "MNT",
     "GOVERNANCE": "GOV",
     "SUPPLY": "SUP",
     "NEWS": "N",
@@ -57,6 +58,7 @@ DEFAULT_PRIORITIES = {
     "ETF": 92,
     "SUPPLY": 90,
     "UPGRADE": 88,
+    "MAINTENANCE": 84,
     "GOVERNANCE": 86,
     "PCE": 84,
     "GDP": 82,
@@ -392,9 +394,20 @@ def _parse_status_events(text: str, *, symbol: str, source_name: str, source_url
         ends = _parse_iso(row.get("scheduled_until") if scheduled else row.get("resolved_at"))
         impact = str(row.get("impact") or "minor").lower()
         priority = 100 if not scheduled else (94 if impact in {"major", "critical"} else 86)
+        update_text = " ".join(
+            str(update.get("body") or "")
+            for update in (row.get("incident_updates") or [])
+            if isinstance(update, Mapping)
+        )
+        scheduled_text = f"{title} {update_text}".lower()
+        scheduled_kind = (
+            "UPGRADE"
+            if re.search(r"\b(network|protocol|mainnet|system)?\s*(upgrade|hard[ -]?fork)\b", scheduled_text)
+            else "MAINTENANCE"
+        )
         result.append(CriticalEvent(
             symbol=symbol,
-            kind="UPGRADE" if scheduled else "NETWORK",
+            kind=scheduled_kind if scheduled else "NETWORK",
             title=title,
             starts_at=_iso(starts),
             ends_at=_iso(ends),
@@ -548,7 +561,7 @@ def _dedupe(events: Iterable[CriticalEvent]) -> list[CriticalEvent]:
 def _display_horizon_days(kind: str, config: Mapping[str, Any]) -> int:
     if kind == "UNLOCK":
         return max(1, int(config.get("unlock_display_days", 14)))
-    if kind in {"UPGRADE", "GOVERNANCE", "SUPPLY", "ETF", "EXPIRY", "NEWS"}:
+    if kind in {"UPGRADE", "MAINTENANCE", "GOVERNANCE", "SUPPLY", "ETF", "EXPIRY", "NEWS"}:
         return max(1, int(config.get("coin_event_display_days", 7)))
     return max(1, int(config.get("macro_display_days", 7)))
 
@@ -950,4 +963,4 @@ def load_critical_events(
     return EventSnapshot(marks, all_events, diagnostics, _iso(now) or "")
 
 
-# Package revision: v3.8.4-state-fix-r1
+# Package revision: v3.8.5-w-clarity-r1

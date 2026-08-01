@@ -1,4 +1,4 @@
-"""Crypto Signal Monitor v3.8.4 — verified events, early swings and paper review."""
+"""Crypto Signal Monitor v3.8.5 — verified events, early swings and paper review."""
 from __future__ import annotations
 
 import argparse
@@ -142,7 +142,7 @@ def main() -> int:
             send_discord(
                 webhook,
                 report,
-                username=str(config.get("discord_username", "CF v3.8.4")),
+                username=str(config.get("discord_username", "CF v3.8.5")),
                 avatar_url=str(config.get("discord_avatar_url", "")).strip(),
             )
             mark_report_sent(
@@ -165,4 +165,4 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 
-# Package revision: v3.8.4-state-fix-r1
+# Package revision: v3.8.5-w-clarity-r1

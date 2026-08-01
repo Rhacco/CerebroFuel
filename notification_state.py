@@ -1,4 +1,4 @@
-"""Discord change detection and heartbeat state for v3.8.4.
+"""Discord change detection and heartbeat state for v3.8.5.
 
 A send decision never marks a report as delivered.  The state is committed only
 after Discord accepts the message, so a network failure is retried next run.
@@ -42,7 +42,7 @@ def report_send_decision(
     section = section if isinstance(section, Mapping) else {}
     heartbeat_minutes = max(3, int(section.get("heartbeat_minutes", 15)))
     state = _load(path)
-    # v3.8.4 has no trailing clock in the header. Normalize whitespace only.
+    # v3.8.5 has no trailing clock in the header. Normalize whitespace only.
     semantic_report = "\n".join(line.rstrip() for line in report.splitlines())
     digest = hashlib.sha256(semantic_report.encode("utf-8")).hexdigest()
     previous_digest = str(state.get("digest") or "")
@@ -61,4 +61,4 @@ def mark_report_sent(*, path: Path, digest: str, now_ms: int, reason: str) -> No
         "last_sent_ms": int(now_ms),
         "last_reason": str(reason),
     })
-# Package revision: v3.8.4-state-fix-r1
+# Package revision: v3.8.5-w-clarity-r1

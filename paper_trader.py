@@ -1,4 +1,4 @@
-"""Deterministic, multi-candidate paper-trading engine for CF v3.8.4."""
+"""Deterministic, multi-candidate paper-trading engine for CF v3.8.5."""
 from __future__ import annotations
 
 import json
@@ -10,8 +10,8 @@ from typing import Any, Iterable, Mapping
 
 
 STATE_SCHEMA = 1
-APP_VERSION = "3.8.4"
-COMPATIBLE_APP_VERSIONS = {"3.7", "3.7.1", "3.8.0", "3.8.1", "3.8.2", "3.8.3", APP_VERSION}
+APP_VERSION = "3.8.5"
+COMPATIBLE_APP_VERSIONS = {"3.7", "3.7.1", "3.8.0", "3.8.1", "3.8.2", "3.8.3", "3.8.4", APP_VERSION}
 ENTRY_STATES = {"BUY": 1, "SELL": -1, "STRONG_LONG": 1, "STRONG_SHORT": -1}
 IMMEDIATE_STATES = {"BUY", "SELL"}
 PROBE_STATES = {"STRONG_LONG", "STRONG_SHORT"}
@@ -520,6 +520,9 @@ class PaperTrader:
             allowed_phases.add("strong")
         if setup.exit_hint or setup.phase not in allowed_phases:
             return "Setup nicht frisch"
+        if signal.selected_setup == "REVERSAL":
+            if setup.age_minutes is None or setup.age_minutes < 1:
+                return "W wartet auf eine geschlossene Bestätigungskerze"
         if signal.selected_setup == "EARLY":
             if setup.age_minutes is not None and setup.age_minutes > int(self.config.get("early_max_age_minutes", 2)):
                 return "frühe Chance bereits zu alt"
@@ -1290,7 +1293,7 @@ class PaperTrader:
         for symbol, position in list((self.state.get("positions") or {}).items()):
             reason: str | None = None
             if symbol not in allowed_symbols:
-                reason = "Symbol nicht mehr im v3.8.4-Kandidatenpool"
+                reason = "Symbol nicht mehr im v3.8.5-Kandidatenpool"
             elif str(position.get("setup")) == "P":
                 reason = "P-Setup seit v3.7.1 deaktiviert"
             if reason is None:
@@ -1427,7 +1430,7 @@ class PaperTrader:
                 f"{top}"
             )
         equity, free, margin = self._equity()
-        # Paper actions are deliberately log-only in v3.8.4.
+        # Paper actions are deliberately log-only in v3.8.5.
         action_line = None
         self._log(
             f"KONTO Balance {_money(_f(self.state.get('balance_usd')), compact=False)} | "
