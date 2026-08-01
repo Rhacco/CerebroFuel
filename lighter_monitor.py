@@ -1,4 +1,4 @@
-"""Lighter-native early-swing/T/W signal engine for CF v3.8.2."""
+"""Lighter-native early-swing/T/W signal engine for CF v3.8.3."""
 from __future__ import annotations
 
 import json
@@ -15,8 +15,10 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-APP_VERSION = "3.8.2"
-PACKAGE_REVISION = "v3.8.2-hourly-events-paper-review-r2"
+from regime_context import calculate_regimes
+
+APP_VERSION = "3.8.3"
+PACKAGE_REVISION = "v3.8.3-regime-r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 TREND_WINDOWS = (5, 15, 60)
@@ -148,6 +150,19 @@ class Signal:
     taker_fee_pct: float = 0.0
     candidate_tier: str = "core"
     candidate_penalty: float = 0.0
+    regime_available: bool = False
+    regime_score: float = 0.0
+    regime_consistency: float = 0.0
+    regime_modifier: float = 0.0
+    return_7d: float | None = None
+    return_14d: float | None = None
+    return_30d: float | None = None
+    relative_7d: float | None = None
+    relative_14d: float | None = None
+    relative_30d: float | None = None
+    btc_rebound_pct: float | None = None
+    rebound_participation: float | None = None
+    relative_drift_60m: float | None = None
     event_code: str = ""
     event_display_code: str = ""
     event_kind: str = ""
@@ -234,6 +249,24 @@ class LighterClient:
         if rows and _timestamp_ms(rows[-1]) < closed_end_ms - 120_000:
             raise RuntimeError("Kerzendaten sind veraltet")
         return rows[-count:]
+
+    def daily_candles(self, market_id: int, count: int = 40) -> list[Mapping[str, Any]]:
+        now = int(time.time())
+        payload = self.get(
+            "/candles",
+            market_id=market_id,
+            resolution="1d",
+            start_timestamp=now - (count + 5) * 86_400,
+            end_timestamp=now,
+            count_back=min(500, max(35, count)),
+            set_timestamp_to_end="true",
+        )
+        rows_by_time: dict[int, Mapping[str, Any]] = {}
+        for row in list(payload.get("c") or []):
+            stamp = _timestamp_ms(row)
+            if stamp > 0 and _f(row.get("c")) > 0:
+                rows_by_time[stamp] = row
+        return [rows_by_time[key] for key in sorted(rows_by_time)][-count:]
 
     def book(self, market_id: int, limit: int = 50) -> Mapping[str, Any]:
         return self.get("/orderBookOrders", market_id=market_id, limit=limit)
@@ -1179,6 +1212,14 @@ class LighterMonitor:
             raise ValueError("btc_breadth_symbols braucht mindestens drei Nicht-BTC-Märkte")
         if not set(breadth_symbols).issubset(set(symbols)):
             raise ValueError("btc_breadth_symbols müssen im Kandidatenpool liegen")
+        regime = self.config.get("regime") or {}
+        if bool(regime.get("enabled", True)):
+            horizons = [int(value) for value in regime.get("horizons_days", [7, 14, 30])]
+            if horizons != [7, 14, 30]:
+                raise ValueError("Regime-Horizonte müssen exakt 7/14/30 Tage sein")
+            maximum_modifier = float(regime.get("maximum_modifier_points", 10.0))
+            if not 0 < maximum_modifier <= 10:
+                raise ValueError("Regime-Modifier muss zwischen 0 und 10 liegen")
 
     def _analyse(
         self,
@@ -1729,6 +1770,79 @@ class LighterMonitor:
                 )
                 item.reasons.append("BTC-Kontext verhindert Sofortfreigabe")
 
+    def _apply_regime_context(
+        self,
+        signals: list[Signal],
+        snapshots: Mapping[str, Mapping[str, Any]],
+        daily_candles: Mapping[str, list[Mapping[str, Any]]],
+        now: datetime,
+    ) -> dict[str, Any]:
+        regime_config = self.config.get("regime") or {}
+        if not bool(regime_config.get("enabled", True)):
+            return {}
+        results = calculate_regimes(
+            signals=signals,
+            minute_snapshots=snapshots,
+            daily_candles=daily_candles,
+            now_ms=int(now.timestamp() * 1000),
+            config=self.config,
+        )
+        immediate = float(self.config.get("immediate_trade_readiness", 76))
+        strong = float(self.config.get("strong_trade_readiness", 64))
+        watch = float(self.config.get("watch_trade_readiness", 56))
+        early_block = float(regime_config.get("early_opposition_block_points", -6.5))
+        warning_threshold = float(regime_config.get("warning_threshold_points", -4.0))
+
+        def downgrade(item: Signal) -> None:
+            direction_long = item.direction >= 0
+            if item.state in {"BUY", "SELL"} and item.trade_readiness < immediate:
+                item.state = "STRONG_LONG" if direction_long else "STRONG_SHORT"
+            if item.state in {"STRONG_LONG", "STRONG_SHORT"} and item.trade_readiness < strong:
+                item.state = "WATCH_LONG" if direction_long else "WATCH_SHORT"
+            if item.state in {"WATCH_LONG", "WATCH_SHORT"} and item.trade_readiness < watch:
+                item.state = "NO_TRADE"
+
+        for item in signals:
+            result = results.get(item.symbol)
+            if result is None or not result.available:
+                if result is not None and result.reason:
+                    item.reasons.append(result.reason)
+                continue
+            item.regime_available = True
+            item.regime_score = result.score
+            item.regime_consistency = result.consistency
+            item.regime_modifier = result.modifier
+            item.return_7d = result.return_7d
+            item.return_14d = result.return_14d
+            item.return_30d = result.return_30d
+            item.relative_7d = result.relative_7d
+            item.relative_14d = result.relative_14d
+            item.relative_30d = result.relative_30d
+            item.btc_rebound_pct = result.btc_rebound_pct
+            item.rebound_participation = result.rebound_participation
+            item.relative_drift_60m = result.relative_drift_60m
+
+            modifier = float(result.modifier)
+            item.opportunity = _clamp(item.opportunity + modifier * 0.55)
+            item.confidence = _clamp(item.confidence + modifier * 0.75)
+            item.trade_readiness = _clamp(item.trade_readiness + modifier)
+            if modifier <= warning_threshold:
+                item.reasons.append(f"7/14/30D-Regime widerspricht ({modifier:+.1f})")
+            elif modifier >= abs(warning_threshold):
+                item.reasons.append(f"7/14/30D-Regime bestätigt ({modifier:+.1f})")
+
+            # A strongly opposing multi-week regime may block a fresh E-entry,
+            # but it never creates the opposite direction by itself.
+            if (
+                item.selected_setup == "EARLY"
+                and modifier <= early_block
+                and item.state in {"BUY", "SELL", "STRONG_LONG", "STRONG_SHORT"}
+            ):
+                item.state = "WATCH_LONG" if item.direction >= 0 else "WATCH_SHORT"
+                item.reasons.append("frühes E durch Gegenregime blockiert")
+            downgrade(item)
+        return {symbol: result.to_dict() for symbol, result in results.items()}
+
     def _apply_event_context(
         self,
         signals: list[Signal],
@@ -1939,6 +2053,9 @@ class LighterMonitor:
                 warnings.append("K!")
             if item.symbol != "BTC" and item.btc_context is not None and item.btc_context < 40:
                 warnings.append("B!")
+            regime_warning = float((self.config.get("regime") or {}).get("warning_threshold_points", -4.0))
+            if item.regime_available and item.regime_modifier <= regime_warning:
+                warnings.append("R!")
             if item.funding_hourly_pct is None:
                 warnings.append("F!")
             else:
@@ -1991,6 +2108,7 @@ class LighterMonitor:
 
         signals: list[Signal] = []
         snapshots: dict[str, dict[str, Any]] = {}
+        daily_candles: dict[str, list[Mapping[str, Any]]] = {}
         workers = min(8, max(1, int(self.config.get("parallel_requests", 6))))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {
@@ -2000,12 +2118,13 @@ class LighterMonitor:
             for future in as_completed(futures):
                 symbol = futures[future]
                 try:
-                    candles, book = future.result()
+                    candles, book, daily = future.result()
                     snapshots[symbol] = {
                         "market": markets[symbol],
                         "candles": candles,
                         "book": book,
                     }
+                    daily_candles[symbol] = daily
                     signals.append(
                         self._analyse(
                             markets[symbol],
@@ -2033,6 +2152,7 @@ class LighterMonitor:
             )
 
         self._apply_btc_context(signals)
+        regime_payload = self._apply_regime_context(signals, snapshots, daily_candles, now)
         self._apply_event_context(signals, event_marks, event_display_codes)
         self.last_signals = self._rank(signals)
         self.last_snapshots = snapshots
@@ -2057,6 +2177,7 @@ class LighterMonitor:
             "report": report,
             "semantic_report": semantic_report,
             "signals": [asdict(item) for item in self.last_signals],
+            "regime": regime_payload,
             "event_marks": {
                 symbol: (asdict(mark) if hasattr(mark, "__dataclass_fields__") else dict(mark))
                 for symbol, mark in (event_marks or {}).items()
@@ -2067,10 +2188,17 @@ class LighterMonitor:
     def _load_one(
         self,
         market: Mapping[str, Any],
-    ) -> tuple[list[Mapping[str, Any]], Mapping[str, Any]]:
+    ) -> tuple[list[Mapping[str, Any]], Mapping[str, Any], list[Mapping[str, Any]]]:
         market_id = int(market["market_id"])
         candle_count = int(self.config.get("candle_count", 360))
-        return self.client.candles(market_id, count=candle_count), self.client.book(market_id)
+        daily_count = int((self.config.get("regime") or {}).get("daily_candle_count", 40))
+        candles = self.client.candles(market_id, count=candle_count)
+        book = self.client.book(market_id)
+        try:
+            daily = self.client.daily_candles(market_id, count=daily_count)
+        except Exception:
+            daily = []
+        return candles, book, daily
 
 
-# Package revision: v3.8.2-hourly-events-paper-review-r2
+# Package revision: v3.8.3-regime-r1

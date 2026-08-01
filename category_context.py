@@ -755,4 +755,4 @@ def select_category_entries(
         item.short.sell_count = 1 if direction == "▼" else 0
         valid_chosen.append(item)
     return valid_chosen[:top_count]
-# Package revision: v3.8.2-hourly-events-paper-review-r2
+# Package revision: v3.8.3-regime-r1

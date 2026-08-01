@@ -65,4 +65,4 @@ def unlock_context(display: str, config: Mapping[str, Any], *, now: datetime | N
         "stale_days": stale_days,
         "stale": stale,
     }
-# Package revision: v3.8.2-hourly-events-paper-review-r2
+# Package revision: v3.8.3-regime-r1

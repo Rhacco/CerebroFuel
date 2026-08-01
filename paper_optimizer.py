@@ -1,4 +1,4 @@
-"""Evidence-based review of paper-trading entry parameters for CF v3.8.2.
+"""Evidence-based review of paper-trading entry parameters for CF v3.8.3.
 
 The reviewer never changes live parameters. It only flags a potential problem
 when enough completed paper trades show a large, repeatable underperformance of
@@ -13,7 +13,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Callable, Iterable, Mapping
 
-STATE_VERSION = "paper-optimizer-v382-r2"
+STATE_VERSION = "paper-optimizer-v383-r1"
 
 
 def _f(value: Any, default: float = 0.0) -> float:
@@ -104,6 +104,9 @@ def _feature_rules() -> list[tuple[str, str, Callable[[Mapping[str, Any]], bool]
         ("HIGH_COST", "hohe Roundtrip-Kosten", lambda f: _f(f.get("cost_pct")) > 0.065),
         ("FUNDING_MISSING", "fehlendes Funding", lambda f: bool(f.get("funding_missing", False))),
         ("EVENT_RISK", "erhöhtes Ereignisrisiko", lambda f: _f(f.get("event_risk")) >= 45),
+        ("REGIME_AGAINST", "7/14/30D-Regime gegen Einstieg", lambda f: bool(f.get("regime_available", False)) and _f(f.get("regime_modifier")) <= -4),
+        ("REGIME_WEAK", "schwach bestätigtes Mehrwochen-Regime", lambda f: bool(f.get("regime_available", False)) and _f(f.get("regime_consistency")) < 0.67),
+        ("LOW_REBOUND_PARTICIPATION", "schwache Teilnahme an BTC-Erholung", lambda f: f.get("rebound_participation") is not None and _f(f.get("rebound_participation"), 1.0) < 0.35),
         ("HIGH_LEVERAGE", "Hebel ab 25x", lambda f: _f(f.get("leverage")) >= 25),
         ("PROBE", "Probe-Einstieg", lambda f: bool(f.get("probe_entry", False))),
         ("PHASE_STRONG", "noch nicht vollständig bereite Strong-Phase", lambda f: str(f.get("setup_phase")) == "strong"),

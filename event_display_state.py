@@ -1,4 +1,4 @@
-"""Hourly display throttling for future events in CF v3.8.2.
+"""Hourly display throttling for future events in CF v3.8.3.
 
 Future-day events are shown once in the first successful Discord report of each
 local clock hour. Events scheduled for today, active incidents, and date-only

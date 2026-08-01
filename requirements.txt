@@ -1,4 +1,4 @@
-# v3.8.2 active E/T/W runtime uses only the Python standard library.
+# v3.8.3 active E/T/W runtime uses only the Python standard library.
 # requests remains available for the retained compatibility and analysis modules.
-# Package revision: v3.8.2-hourly-events-paper-review-r2
+# Package revision: v3.8.3-regime-r1
 requests>=2.31,<3

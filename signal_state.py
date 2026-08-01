@@ -285,4 +285,4 @@ def update_signal_states(
         "qualified_exits": sum(item.qualified_exit for item in result.values()),
         "fallback_eligible": sum(item.fallback_eligible for item in result.values()),
     }
-# Package revision: v3.8.2-hourly-events-paper-review-r2
+# Package revision: v3.8.3-regime-r1

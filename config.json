@@ -1,6 +1,6 @@
 {
-  "schema_version": "3.8.2",
-  "package_revision": "v3.8.2-hourly-events-paper-review-r2",
+  "schema_version": "3.8.3",
+  "package_revision": "v3.8.3-regime-r1",
   "lighter_base_url": "https://mainnet.zklighter.elliot.ai/api/v1",
   "timezone": "Europe/Berlin",
   "candidate_symbols": [
@@ -87,7 +87,7 @@
   "paper_stop_cooldown_minutes": 12,
   "paper_action_line_max_codepoints": 34,
   "paper_ledger_limit": 500,
-  "discord_username": "CF v3.8.2",
+  "discord_username": "CF v3.8.3",
   "discord_avatar_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Cryptocurrency_Logo.svg/330px-Cryptocurrency_Logo.svg.png",
   "test_candidate_symbols": [],
   "candidate_trade_penalty_points": {},
@@ -173,5 +173,23 @@
   "paper_optimizer_min_r_gap": 0.35,
   "paper_optimizer_max_bucket_win_rate": 0.38,
   "paper_min_data_quality": 62,
-  "paper_allow_strong_phase_probe": true
+  "paper_allow_strong_phase_probe": true,
+  "regime": {
+    "enabled": true,
+    "horizons_days": [
+      7,
+      14,
+      30
+    ],
+    "daily_candle_count": 40,
+    "maximum_modifier_points": 10.0,
+    "multiweek_modifier_cap": 8.0,
+    "early_opposition_block_points": -6.5,
+    "warning_threshold_points": -4.0,
+    "rebound_lookback_minutes": 60,
+    "rebound_min_drop_pct": 0.35,
+    "rebound_min_rebound_pct": 0.18,
+    "rebound_min_recovery_fraction": 0.25,
+    "relative_drift_scale_pct": 1.2
+  }
 }

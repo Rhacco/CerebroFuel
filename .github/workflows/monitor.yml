@@ -1,5 +1,5 @@
-name: Crypto Signal Monitor v3.8.2
-# Package revision: v3.8.2-hourly-events-paper-review-r2
+name: Crypto Signal Monitor v3.8.3
+# Package revision: v3.8.3-regime-r1
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: crypto-signal-monitor-v382
+  group: crypto-signal-monitor-v383
   cancel-in-progress: false
 
 jobs:
@@ -38,8 +38,9 @@ jobs:
             output/event_cache.json
             output/event_display_state.json
             output/parameter_review.json
-          key: runtime-state-v382-${{ github.run_id }}
+          key: runtime-state-v383-${{ github.run_id }}
           restore-keys: |
+            runtime-state-v383-
             runtime-state-v382-
             runtime-state-v381-
             paper-state-v371-
@@ -71,4 +72,4 @@ jobs:
             output/event_cache.json
             output/event_display_state.json
             output/parameter_review.json
-          key: runtime-state-v382-${{ github.run_id }}
+          key: runtime-state-v383-${{ github.run_id }}
