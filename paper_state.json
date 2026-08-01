@@ -2,13 +2,10 @@
   "app_version": "3.8.4",
   "balance_usd": 99.3694019844,
   "checkpoint_requested": false,
-  "cooldowns": {
-    "BTC": 1785551277,
-    "ETH": 1785551277
-  },
-  "last_checkpoint_at": "2026-08-01T02:24:58.857824+00:00",
-  "last_decision_key": "1785551040000",
-  "last_run_at": "2026-08-01T02:24:57.114328+00:00",
+  "cooldowns": {},
+  "last_checkpoint_at": "2026-08-01T03:15:03.883548+00:00",
+  "last_decision_key": "1785554040000",
+  "last_run_at": "2026-08-01T03:15:02.008448+00:00",
   "ledger": [
     {
       "action": {
@@ -4900,6 +4897,72 @@
         "trade_net_pnl_usd": -0.0310228723288
       },
       "timestamp": "2026-08-01T02:24:57.114328+00:00"
+    },
+    {
+      "action": {
+        "alias": "SOL",
+        "direction": -1,
+        "discord_visible": false,
+        "full_close": false,
+        "is_add": false,
+        "kind": "OPEN",
+        "leverage": 25,
+        "margin_usd": 2.0,
+        "priority": 79.22742367020373,
+        "realized_pnl_usd": 0.0,
+        "reason": "E 93.3/93.2, Stop 0.140%",
+        "symbol": "SOL"
+      },
+      "balance_usd": 99.36940198,
+      "details": {
+        "base_size": 0.6855889208830385,
+        "confidence": 93.18682746246616,
+        "entry_fee_usd": 0.0,
+        "entry_price": 72.93,
+        "entry_roundtrip_cost_pct": 0.006855889208824149,
+        "entry_state": "SELL",
+        "notional_usd": 50.0,
+        "rank": 1,
+        "readiness": 93.32673736420435,
+        "setup": "E",
+        "stop_price": 73.03210200000001,
+        "target_one_price": 72.81258270000001,
+        "target_two_price": 72.7155858
+      },
+      "timestamp": "2026-08-01T03:15:02.008448+00:00"
+    },
+    {
+      "action": {
+        "alias": "BTC",
+        "direction": -1,
+        "discord_visible": false,
+        "full_close": false,
+        "is_add": false,
+        "kind": "OPEN",
+        "leverage": 25,
+        "margin_usd": 1.0,
+        "priority": 79.05472435609823,
+        "realized_pnl_usd": 0.0,
+        "reason": "E 90.9/91.6, Stop 0.140%",
+        "symbol": "BTC"
+      },
+      "balance_usd": 99.36940198,
+      "details": {
+        "base_size": 0.0003970421944680905,
+        "confidence": 91.57936067910045,
+        "entry_fee_usd": 0.0,
+        "entry_price": 62965.6,
+        "entry_roundtrip_cost_pct": 0.00015881687778492511,
+        "entry_state": "SELL",
+        "notional_usd": 25.0,
+        "rank": 2,
+        "readiness": 90.86006943780174,
+        "setup": "E",
+        "stop_price": 63053.751840000004,
+        "target_one_price": 62864.225384,
+        "target_two_price": 62780.481135999995
+      },
+      "timestamp": "2026-08-01T03:15:02.008448+00:00"
     }
   ],
   "observations": {
@@ -4916,10 +4979,10 @@
       "state": "NO_TRADE"
     },
     "BTC": {
-      "candle_ms": 1785551040000,
-      "entry_direction": 0,
-      "entry_streak": 0,
-      "state": "NO_TRADE"
+      "candle_ms": 1785554040000,
+      "entry_direction": -1,
+      "entry_streak": 1,
+      "state": "SELL"
     },
     "DOGE": {
       "candle_ms": 1785505980000,
@@ -4934,10 +4997,10 @@
       "state": "NO_TRADE"
     },
     "ETH": {
-      "candle_ms": 1785551040000,
+      "candle_ms": 1785554040000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "NO_TRADE"
+      "state": "WATCH_SHORT"
     },
     "GRAM": {
       "candle_ms": 1785505980000,
@@ -4946,7 +5009,7 @@
       "state": "NO_TRADE"
     },
     "HYPE": {
-      "candle_ms": 1785551040000,
+      "candle_ms": 1785554040000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
@@ -4970,10 +5033,10 @@
       "state": "NO_TRADE"
     },
     "SOL": {
-      "candle_ms": 1785551040000,
-      "entry_direction": 0,
-      "entry_streak": 0,
-      "state": "NO_TRADE"
+      "candle_ms": 1785554040000,
+      "entry_direction": -1,
+      "entry_streak": 1,
+      "state": "SELL"
     },
     "UNI": {
       "candle_ms": 1785505980000,
@@ -5006,8 +5069,149 @@
       "state": "WATCH_LONG"
     }
   },
-  "positions": {},
-  "run_count": 1949,
+  "positions": {
+    "BTC": {
+      "alias": "BTC",
+      "base_size": 0.00039704219447,
+      "degrade_streak": 0,
+      "direction": -1,
+      "entry_confidence": 91.57936067910045,
+      "entry_features": {
+        "btc_context": 92.44558666452838,
+        "confidence": 91.57936067910045,
+        "cost_pct": 0.00015881687778492511,
+        "data_quality": 100.0,
+        "event_kind": "NFP",
+        "event_risk": 20.0,
+        "execution_score": 96.15672497451158,
+        "funding_hourly_pct": 0.0096,
+        "funding_missing": false,
+        "leverage": 25,
+        "liquidity_score": 88.7418959360175,
+        "margin_usd": 1.0,
+        "probe_entry": false,
+        "rank": 2,
+        "readiness": 90.86006943780174,
+        "rebound_participation": null,
+        "regime_available": true,
+        "regime_consistency": 0.6667,
+        "regime_modifier": 0.8891,
+        "regime_score": -11.1136,
+        "relative_14d": -1.4811,
+        "relative_30d": 4.9204,
+        "relative_7d": -1.8081,
+        "relative_drift_60m": null,
+        "return_14d": -1.4811,
+        "return_30d": 4.9204,
+        "return_7d": -1.8081,
+        "risk_usd": 0.03503970421944624,
+        "setup": "E",
+        "setup_age_minutes": 2,
+        "setup_consumed_fraction": 0.32991339907377437,
+        "setup_phase": "ready",
+        "setup_score": 85.28634769795701,
+        "symbol": "BTC",
+        "tape_quality": 92.45891220867703,
+        "volume_confirmation": 95.41367336581061
+      },
+      "entry_fee_remaining_usd": 0.0,
+      "entry_price": 62965.6,
+      "entry_rank": 2,
+      "entry_readiness": 90.86006943780174,
+      "entry_roundtrip_cost_pct": 0.00015881687778492511,
+      "entry_state": "SELL",
+      "funding_accrued_usd": 0.0,
+      "funding_updated_at": "2026-08-01T03:15:02.008448+00:00",
+      "last_candle_ms": 1785554040000,
+      "leverage": 25,
+      "margin_usd": 1.0,
+      "notional_usd": 25.0,
+      "opened_at": "2026-08-01T03:15:02.008448+00:00",
+      "probe_entry": false,
+      "realized_pnl_usd": 0.0,
+      "risk_usd": 0.03503970421944624,
+      "scale_count": 0,
+      "setup": "E",
+      "stop_pct": 0.14,
+      "stop_price": 63053.751840000004,
+      "symbol": "BTC",
+      "taker_fee_pct": 0.0,
+      "target_one_price": 62864.225384,
+      "target_one_taken": false,
+      "target_two_price": 62780.481135999995
+    },
+    "SOL": {
+      "alias": "SOL",
+      "base_size": 0.68558892088304,
+      "degrade_streak": 0,
+      "direction": -1,
+      "entry_confidence": 93.18682746246616,
+      "entry_features": {
+        "btc_context": 100.0,
+        "confidence": 93.18682746246616,
+        "cost_pct": 0.006855889208824149,
+        "data_quality": 100.0,
+        "event_kind": "NFP",
+        "event_risk": 20.0,
+        "execution_score": 93.14458079112455,
+        "funding_hourly_pct": 0.0096,
+        "funding_missing": false,
+        "leverage": 25,
+        "liquidity_score": 78.16055940696899,
+        "margin_usd": 2.0,
+        "probe_entry": false,
+        "rank": 1,
+        "readiness": 93.32673736420435,
+        "rebound_participation": null,
+        "regime_available": true,
+        "regime_consistency": 0.6667,
+        "regime_modifier": 1.0838,
+        "regime_score": -12.0009,
+        "relative_14d": -1.2745,
+        "relative_30d": -10.7128,
+        "relative_7d": 0.4891,
+        "relative_drift_60m": -0.0992,
+        "return_14d": -2.7556,
+        "return_30d": -5.7924,
+        "return_7d": -1.319,
+        "risk_usd": 0.07342794460441208,
+        "setup": "E",
+        "setup_age_minutes": 0,
+        "setup_consumed_fraction": 0.06639318940858098,
+        "setup_phase": "ready",
+        "setup_score": 90.5892824670362,
+        "symbol": "SOL",
+        "tape_quality": 92.22222222222223,
+        "volume_confirmation": 100.0
+      },
+      "entry_fee_remaining_usd": 0.0,
+      "entry_price": 72.93,
+      "entry_rank": 1,
+      "entry_readiness": 93.32673736420435,
+      "entry_roundtrip_cost_pct": 0.006855889208824149,
+      "entry_state": "SELL",
+      "funding_accrued_usd": 0.0,
+      "funding_updated_at": "2026-08-01T03:15:02.008448+00:00",
+      "last_candle_ms": 1785554040000,
+      "leverage": 25,
+      "margin_usd": 2.0,
+      "notional_usd": 50.0,
+      "opened_at": "2026-08-01T03:15:02.008448+00:00",
+      "probe_entry": false,
+      "realized_pnl_usd": 0.0,
+      "risk_usd": 0.07342794460441208,
+      "scale_count": 0,
+      "setup": "E",
+      "stop_pct": 0.14,
+      "stop_price": 73.03210200000001,
+      "symbol": "SOL",
+      "taker_fee_pct": 0.0,
+      "target_one_price": 72.81258270000001,
+      "target_one_taken": false,
+      "target_two_price": 72.7155858
+    }
+  },
+  "run_count": 1999,
   "schema": 1,
   "starting_balance_usd": 100.0
 }
