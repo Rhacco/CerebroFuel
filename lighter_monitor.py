@@ -1,4 +1,4 @@
-"""Lighter-native early-swing/T/W signal engine for CF v3.9.0."""
+"""Lighter-native early-swing/T/W signal engine for CF v3.9.1."""
 from __future__ import annotations
 
 import json
@@ -18,8 +18,8 @@ from zoneinfo import ZoneInfo
 from regime_context import calculate_regimes
 from extremity_context import calculate_extremity, extremity_code, extremity_color
 
-APP_VERSION = "3.9.0"
-PACKAGE_REVISION = "v3.9.0-extremity-reclaim-r1"
+APP_VERSION = "3.9.1"
+PACKAGE_REVISION = "v3.9.1-multihorizon-timing-r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 TREND_WINDOWS = (5, 15, 60)
@@ -110,6 +110,7 @@ class Setup:
     relative_opposition: bool = False
     new_extreme_after_event: bool = False
     reclaim_level: float | None = None
+    invalidation_price: float | None = None
     reason: str = ""
 
 
@@ -155,6 +156,14 @@ class Signal:
     extremity_range: float = 0.0
     extremity_funding: float = 0.0
     extremity_regime_adjustment: float = 0.0
+    extremity_intraday: float = 0.0
+    extremity_swing: float = 0.0
+    extremity_swing_available: bool = False
+    extremity_return_1d: float | None = None
+    extremity_return_3d: float | None = None
+    extremity_return_7d: float | None = None
+    technical_stop_price: float | None = None
+    technical_stop_pct: float | None = None
     regime_available: bool = False
     regime_score: float = 0.0
     regime_consistency: float = 0.0
@@ -621,6 +630,9 @@ def _assess_early(
             recovery_fraction=consumed,
             peak_score=compression_score,
             expected_edge_pct=expected_edge,
+            invalidation_price=boundary * (
+                1.0 - direction * max(0.015, noise * 0.65) / 100.0
+            ),
             reason=(
                 f"compression={compression_score:.1f} move3={move_3:.3f}% "
                 f"eff={efficiency:.2f} volume={recent_ratio:.2f}/{consistency} "
@@ -840,6 +852,9 @@ def _assess_trend_once(
         event_strength=context_strength,
         event_timestamp_ms=_timestamp_ms(lookback[event_index]),
         expected_edge_pct=expected_edge,
+        invalidation_price=extreme * (
+            1.0 - direction * max(0.015, noise * 0.65) / 100.0
+        ),
         reason=(
             f"quick-dip={pullback:.3f}% age={age} duration={duration} "
             f"retrace={retracement:.2f} rebound={rebound_fraction:.2f} "
@@ -1052,6 +1067,9 @@ def _reversal_candidate(
         relative_confirmed=True,
         new_extreme_after_event=new_extreme,
         reclaim_level=reclaim_level,
+        invalidation_price=extreme * (
+            1.0 - direction * max(0.002, tolerance_pct) / 100.0
+        ),
         reason=(
             f"shock={shock:.3f}%/{shock_z:.2f}z "
             f"rebound={rebound_fraction:.2f} reject={event_rejection:.2f} "
@@ -1160,6 +1178,19 @@ def _selected_setup(signal: Signal) -> Setup:
         "TREND": signal.trend,
         "REVERSAL": signal.reversal,
     }.get(signal.selected_setup, Setup("NONE"))
+
+
+def _action_code(signal: Signal) -> str:
+    return {
+        "BUY": "NOW",
+        "SELL": "NOW",
+        "STRONG_LONG": "TRY",
+        "STRONG_SHORT": "TRY",
+        "WATCH_LONG": "NEAR",
+        "WATCH_SHORT": "NEAR",
+        "NO_TRADE": "WAIT",
+        "INVALID_DATA": "DATA",
+    }.get(signal.state, "WAIT")
 
 
 def _market_bias(signal: Signal) -> float | None:
@@ -1276,13 +1307,27 @@ class LighterMonitor:
             raise ValueError("early_max_consumed_fraction muss zwischen null und eins liegen")
         if not 0 < float(self.config.get("early_min_efficiency", 0.52)) <= 1:
             raise ValueError("early_min_efficiency muss zwischen null und eins liegen")
-        if not 0 <= int(self.config.get("early_max_age_minutes", 2)) <= 4:
+        early_max_age = int(self.config.get("early_max_age_minutes", 2))
+        if not 0 <= early_max_age <= 4:
             raise ValueError("early_max_age_minutes muss zwischen null und vier liegen")
+        immediate_age = int(self.config.get("early_immediate_max_age_minutes", 1))
+        immediate_used = float(self.config.get("early_immediate_max_consumed_fraction", 0.50))
+        if not 0 <= immediate_age <= early_max_age:
+            raise ValueError("early_immediate_max_age_minutes ist ungültig")
+        if not 0 < immediate_used <= float(self.config.get("early_max_consumed_fraction", 0.66)):
+            raise ValueError("early_immediate_max_consumed_fraction ist ungültig")
         extremity_warning = float(self.config.get("extremity_chase_warning", 55.0))
         extremity_block = float(self.config.get("extremity_chase_block", 72.0))
         extremity_penalty = float(self.config.get("extremity_chase_penalty", 8.0))
         if not 0 < extremity_warning < extremity_block <= 100 or not 0 <= extremity_penalty <= 20:
             raise ValueError("Extremity-Schwellen sind nicht logisch geordnet")
+        early_chase_warning = float(self.config.get("early_chase_warning", 35.0))
+        early_chase_block = float(self.config.get("early_chase_block", 50.0))
+        early_chase_penalty = float(self.config.get("early_chase_penalty", 10.0))
+        if not 0 < early_chase_warning < early_chase_block <= 100 or not 0 <= early_chase_penalty <= 20:
+            raise ValueError("E-Anti-Chase-Schwellen sind nicht logisch geordnet")
+        if not 0 <= float(self.config.get("reversal_now_min_extremity", 18.0)) <= 60:
+            raise ValueError("W-Extremitätsminimum ist ungültig")
         if not 1 <= int(self.config.get("early_min_volume_consistency", 2)) <= 4:
             raise ValueError("early_min_volume_consistency muss zwischen eins und vier liegen")
         minimum_reversal = float(self.config.get("hard_reversal_min_move_pct", 0.20))
@@ -1477,6 +1522,15 @@ class LighterMonitor:
             )
 
         direction = _direction(signal.direction)
+        invalidation = selected.invalidation_price
+        if invalidation is not None and signal.price > 0:
+            valid_side = (
+                (direction > 0 and invalidation < signal.price)
+                or (direction < 0 and invalidation > signal.price)
+            )
+            if valid_side:
+                signal.technical_stop_price = float(invalidation)
+                signal.technical_stop_pct = abs(_pct(signal.price, float(invalidation)))
         active_opposites = [
             item
             for item in setups
@@ -2019,13 +2073,31 @@ class LighterMonitor:
         self,
         signals: list[Signal],
         snapshots: Mapping[str, Mapping[str, Any]],
+        daily_candles: Mapping[str, list[Mapping[str, Any]]],
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {}
         hard_funding = float(self.config.get("funding_hard_hourly_pct", 0.05))
+
+        def cap_immediate(item: Signal, *, to_watch: bool = False) -> None:
+            direction = _direction(item.direction)
+            if to_watch:
+                if item.state in {"BUY", "STRONG_LONG"}:
+                    item.state = "WATCH_LONG"
+                elif item.state in {"SELL", "STRONG_SHORT"}:
+                    item.state = "WATCH_SHORT"
+            else:
+                if item.state == "BUY":
+                    item.state = "STRONG_LONG"
+                elif item.state == "SELL":
+                    item.state = "STRONG_SHORT"
+
         for item in signals:
             rows = list((snapshots.get(item.symbol) or {}).get("candles") or [])
             result = calculate_extremity(
                 candles=rows,
+                daily_candles=list(daily_candles.get(item.symbol) or []),
+                current_price=item.price,
+                current_timestamp_ms=item.candle_timestamp_ms,
                 funding_hourly_pct=item.funding_hourly_pct,
                 tape_quality=item.tape_quality,
                 volume_confirmation=item.volume_confirmation,
@@ -2040,34 +2112,72 @@ class LighterMonitor:
             item.extremity_range = result.range_position
             item.extremity_funding = result.funding_crowding
             item.extremity_regime_adjustment = result.regime_adjustment
+            item.extremity_intraday = result.intraday_score
+            item.extremity_swing = result.swing_score
+            item.extremity_swing_available = result.swing_available
+            item.extremity_return_1d = result.return_1d
+            item.extremity_return_3d = result.return_3d
+            item.extremity_return_7d = result.return_7d
 
-            # Extremity is a state warning, never a reversal signal. It only
-            # reduces confidence when the selected trade chases an already
-            # stretched move in the same direction.
             if result.available and item.state not in {"INVALID_DATA", "NO_TRADE"}:
                 direction = _direction(item.direction)
                 chase = result.score * direction
-                warning = float(self.config.get("extremity_chase_warning", 55.0))
-                block = float(self.config.get("extremity_chase_block", 72.0))
-                penalty = float(self.config.get("extremity_chase_penalty", 8.0))
-                if chase >= warning:
-                    applied = penalty if chase >= block else penalty * 0.5
-                    item.trade_readiness = _clamp(item.trade_readiness - applied)
-                    item.confidence = _clamp(item.confidence - applied * 0.55)
-                    item.opportunity = _clamp(item.opportunity - applied * 0.40)
-                    item.attention_score = _clamp(item.attention_score - applied * 0.35)
-                    item.reasons.append(
-                        f"Bewegung bereits gleichgerichtet überdehnt ({chase:.0f})"
+                setup = _selected_setup(item)
+
+                if item.selected_setup == "EARLY":
+                    warning = float(self.config.get("early_chase_warning", 35.0))
+                    block = float(self.config.get("early_chase_block", 50.0))
+                    penalty = float(self.config.get("early_chase_penalty", 10.0))
+                    window60 = item.windows.get(60)
+                    aligned60 = bool(
+                        window60 is not None
+                        and window60.quality == "ok"
+                        and window60.price_pct is not None
+                        and _directional(window60.price_pct, direction)
+                        >= max(0.03, item.noise_pct * 0.35)
+                    )
+                    exact_age = int(self.config.get("early_immediate_max_age_minutes", 1))
+                    exact_used = float(self.config.get("early_immediate_max_consumed_fraction", 0.50))
+                    not_exact = (
+                        (setup.age_minutes is not None and setup.age_minutes > exact_age)
+                        or setup.recovery_fraction > exact_used
                     )
                     if chase >= block:
-                        if item.state == "BUY":
-                            item.state = "STRONG_LONG"
-                        elif item.state == "SELL":
-                            item.state = "STRONG_SHORT"
-                        elif item.state == "STRONG_LONG":
-                            item.state = "WATCH_LONG"
-                        elif item.state == "STRONG_SHORT":
-                            item.state = "WATCH_SHORT"
+                        item.trade_readiness = _clamp(item.trade_readiness - penalty)
+                        item.confidence = _clamp(item.confidence - penalty * 0.55)
+                        item.opportunity = _clamp(item.opportunity - penalty * 0.45)
+                        cap_immediate(item, to_watch=True)
+                        item.reasons.append("E bereits stark ausgereizt; nicht hinterherlaufen")
+                    elif chase >= warning and not aligned60:
+                        item.trade_readiness = _clamp(item.trade_readiness - penalty * 0.65)
+                        item.confidence = _clamp(item.confidence - penalty * 0.35)
+                        cap_immediate(item)
+                        item.reasons.append("E überdehnt ohne bestätigendes 60m-Fenster")
+                    elif not_exact:
+                        cap_immediate(item)
+                        item.reasons.append("E nicht mehr im exakten Sofortfenster")
+
+                elif item.selected_setup == "REVERSAL":
+                    exhaustion = -result.score * direction
+                    required = float(self.config.get("reversal_now_min_extremity", 18.0))
+                    if item.state in {"BUY", "SELL"} and exhaustion < required:
+                        cap_immediate(item)
+                        item.reasons.append(
+                            "W strukturell bestätigt, Extrempunkt aber nicht klar ausgereizt"
+                        )
+                else:
+                    warning = float(self.config.get("extremity_chase_warning", 55.0))
+                    block = float(self.config.get("extremity_chase_block", 72.0))
+                    penalty = float(self.config.get("extremity_chase_penalty", 8.0))
+                    if chase >= warning:
+                        applied = penalty if chase >= block else penalty * 0.5
+                        item.trade_readiness = _clamp(item.trade_readiness - applied)
+                        item.confidence = _clamp(item.confidence - applied * 0.55)
+                        item.opportunity = _clamp(item.opportunity - applied * 0.40)
+                        cap_immediate(item, to_watch=chase >= block)
+                        item.reasons.append(
+                            f"Bewegung bereits gleichgerichtet überdehnt ({chase:.0f})"
+                        )
 
             payload[item.symbol] = result.to_dict()
         return payload
@@ -2330,6 +2440,15 @@ class LighterMonitor:
                 warnings.append("R!")
             if item.selected_setup == "REVERSAL" and item.reversal.relative_opposition:
                 warnings.append("RS!")
+            setup = _selected_setup(item)
+            if item.selected_setup == "EARLY":
+                directional_extreme = item.extremity_score * _direction(item.direction)
+                if (
+                    directional_extreme >= float(self.config.get("early_chase_warning", 35.0))
+                    or (setup.age_minutes is not None and setup.age_minutes > int(self.config.get("early_immediate_max_age_minutes", 1)))
+                    or setup.recovery_fraction > float(self.config.get("early_immediate_max_consumed_fraction", 0.50))
+                ):
+                    warnings.append("CH!")
             if item.funding_hourly_pct is None:
                 warnings.append("F!")
             else:
@@ -2348,6 +2467,7 @@ class LighterMonitor:
             tail = " ".join(
                 value for value in (
                     f"{item.alias}{round(item.trade_readiness):02d}",
+                    _action_code(item),
                     setup_token,
                     extreme_token,
                     warning_text,
@@ -2439,7 +2559,7 @@ class LighterMonitor:
 
         self._apply_btc_context(signals)
         regime_payload = self._apply_regime_context(signals, snapshots, daily_candles, now)
-        extremity_payload = self._apply_extremity_context(signals, snapshots)
+        extremity_payload = self._apply_extremity_context(signals, snapshots, daily_candles)
         self._apply_event_context(signals, event_marks, event_display_codes)
         self.last_signals = self._rank(signals)
         self.last_snapshots = snapshots
@@ -2489,4 +2609,4 @@ class LighterMonitor:
         return candles, book, daily
 
 
-# Package revision: v3.9.0-extremity-reclaim-r1
+# Package revision: v3.9.1-multihorizon-timing-r1

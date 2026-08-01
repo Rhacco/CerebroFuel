@@ -864,4 +864,4 @@ def analyze_candles(
         reasons.append("Spread erhöht")
     metrics.reasons = tuple(reasons)
     return metrics
-# Package revision: v3.9.0-extremity-reclaim-r1
+# Package revision: v3.9.1-multihorizon-timing-r1

@@ -1,4 +1,4 @@
-"""Restore, migrate and checkpoint the v3.9.0 paper state through GitHub."""
+"""Restore, migrate and checkpoint the v3.9.1 paper state through GitHub."""
 from __future__ import annotations
 
 import argparse
@@ -17,9 +17,9 @@ from urllib.request import Request, urlopen
 API = "https://api.github.com"
 BRANCH = "paper-state"
 REMOTE_FILE = "paper_state.json"
-APP_VERSION = "3.9.0"
+APP_VERSION = "3.9.1"
 STATE_SCHEMA = 1
-COMPATIBLE_APP_VERSIONS = {APP_VERSION}
+COMPATIBLE_APP_VERSIONS = {APP_VERSION, "3.9.0"}
 
 
 class GitHubStateStore:
@@ -53,7 +53,7 @@ class GitHubStateStore:
                 "Accept": "application/vnd.github+json",
                 "Authorization": f"Bearer {self.token}",
                 "Content-Type": "application/json",
-                "User-Agent": "cf-paper-state/3.9.0",
+                "User-Agent": "cf-paper-state/3.9.1",
                 "X-GitHub-Api-Version": "2022-11-28",
             },
         )
@@ -127,6 +127,25 @@ def _migrate_state(raw: Any) -> tuple[dict[str, Any], bool]:
         raise RuntimeError("Paper-State-Kontostand ist ungültig") from exc
     if balance < 0:
         raise RuntimeError("Paper-State-Kontostand ist negativ")
+
+    if source_version == "3.9.0":
+        capital = 100.0
+        state = {
+            "schema": STATE_SCHEMA,
+            "app_version": APP_VERSION,
+            "starting_balance_usd": capital,
+            "balance_usd": capital,
+            "positions": {},
+            "observations": {},
+            "cooldowns": {},
+            "ledger": [],
+            "run_count": 0,
+            "last_run_at": None,
+            "last_decision_key": None,
+            "last_checkpoint_at": None,
+            "checkpoint_requested": True,
+        }
+        return state, True
 
     state = dict(raw)
     changed = source_version != APP_VERSION or state.get("app_version") != APP_VERSION

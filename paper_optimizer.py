@@ -1,4 +1,4 @@
-"""Fast diagnostic plus evidence-based paper review for CF v3.9.0.
+"""Fast diagnostic plus evidence-based paper review for CF v3.9.1.
 
 No finding changes trading parameters automatically.  The rapid audit can flag
 one objectively poor entry after only one to three closed trades, but labels it
@@ -14,7 +14,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Callable, Iterable, Mapping
 
-STATE_VERSION = "paper-optimizer-v390-r1"
+STATE_VERSION = "paper-optimizer-v391-r1"
 
 
 def _f(value: Any, default: float = 0.0) -> float:
@@ -102,7 +102,14 @@ def _rapid_rules(config: Mapping[str, Any]) -> list[tuple[str, str, Callable[[Ma
         (
             "IMMEDIATE_STOP",
             "Einstieg wurde nahezu sofort ausgestoppt",
-            lambda row: _f(row.get("holding_minutes")) <= stop_minutes,
+            lambda row: (
+                _f(row.get("holding_minutes")) <= stop_minutes
+                and _f(row.get("r")) < 0
+                and (
+                    "stop" in str(row.get("reason") or "").lower()
+                    or _f(row.get("r")) <= -0.50
+                )
+            ),
         ),
         (
             "EXTREME_CHASE",
@@ -120,10 +127,15 @@ def _rapid_rules(config: Mapping[str, Any]) -> list[tuple[str, str, Callable[[Ma
         ),
         (
             "LATE_ENTRY",
-            "Einstieg war bereits alt oder weit verbraucht",
+            "E-Einstieg war bereits alt oder weit verbraucht",
             lambda row: (
-                _f(row["features"].get("setup_age_minutes")) > 2.0
-                or _f(row["features"].get("setup_consumed_fraction")) > 0.58
+                str(row["features"].get("setup") or "") == "E"
+                and (
+                    _f(row["features"].get("setup_age_minutes"))
+                    > float(config.get("paper_early_max_age_minutes", 1))
+                    or _f(row["features"].get("setup_consumed_fraction"))
+                    > float(config.get("paper_early_max_consumed_fraction", 0.55))
+                )
             ),
         ),
         (
@@ -240,10 +252,11 @@ def review_paper_parameters(
 
     review_state = _load_json(review_state_path)
     if review_state.get("version") != STATE_VERSION:
-        review_state = {"version": STATE_VERSION, "active_keys": []}
-    previous_active = {str(value) for value in (review_state.get("active_keys") or []) if value}
+        review_state = {"version": STATE_VERSION, "active_keys": [], "reported_keys": []}
+    reported_keys = {str(value) for value in (review_state.get("reported_keys") or []) if value}
     current_active = {finding.key for finding in findings}
-    new_findings = [finding for finding in findings if finding.key not in previous_active]
+    new_findings = [finding for finding in findings if finding.key not in reported_keys]
+    reported_keys.update(finding.key for finding in new_findings)
 
     _save_json(
         review_state_path,
@@ -251,6 +264,7 @@ def review_paper_parameters(
             "version": STATE_VERSION,
             "completed_trades": len(trades),
             "active_keys": sorted(current_active),
+            "reported_keys": sorted(reported_keys),
             "findings": [asdict(item) for item in findings],
         },
     )
@@ -259,6 +273,10 @@ def review_paper_parameters(
         "findings": [asdict(item) for item in findings],
         "new_findings": [asdict(item) for item in new_findings],
         "alert": bool(new_findings),
+        "alert_level": (
+            "statistical" if any(item.statistically_confirmed for item in new_findings)
+            else "rapid" if new_findings else "none"
+        ),
         "logs": [
             "[PARAM] Optimierungshinweis (keine automatische Änderung): " + item.evidence
             for item in new_findings

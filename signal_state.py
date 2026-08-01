@@ -285,4 +285,4 @@ def update_signal_states(
         "qualified_exits": sum(item.qualified_exit for item in result.values()),
         "fallback_eligible": sum(item.fallback_eligible for item in result.values()),
     }
-# Package revision: v3.9.0-extremity-reclaim-r1
+# Package revision: v3.9.1-multihorizon-timing-r1

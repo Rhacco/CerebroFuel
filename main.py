@@ -1,4 +1,4 @@
-"""Crypto Signal Monitor v3.9.0 — verified events, early swings and paper review."""
+"""Crypto Signal Monitor v3.9.1 — verified events, early swings and paper review."""
 from __future__ import annotations
 
 import argparse
@@ -82,7 +82,11 @@ def main() -> int:
         for line in parameter_review.get("logs", []):
             paper_result.setdefault("logs", []).append(str(line))
         if parameter_review.get("alert"):
-            alert_line = "Parameter-Fehler/Optimierung gefunden!"
+            alert_line = (
+                "Parameter-Optimierung bestätigt!"
+                if parameter_review.get("alert_level") == "statistical"
+                else "Früher Diagnosehinweis!"
+            )
             report += "\n" + alert_line
             semantic_report += "\n" + alert_line
         payload["report"] = report
@@ -146,7 +150,7 @@ def main() -> int:
             send_discord(
                 webhook,
                 report,
-                username=str(config.get("discord_username", "CF v3.9.0")),
+                username=str(config.get("discord_username", "CF v3.9.1")),
                 avatar_url=str(config.get("discord_avatar_url", "")).strip(),
             )
             mark_report_sent(
@@ -169,4 +173,4 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 
-# Package revision: v3.9.0-extremity-reclaim-r1
+# Package revision: v3.9.1-multihorizon-timing-r1

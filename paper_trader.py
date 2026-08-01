@@ -1,4 +1,4 @@
-"""Deterministic, multi-candidate paper-trading engine for CF v3.9.0."""
+"""Deterministic, multi-candidate paper-trading engine for CF v3.9.1."""
 from __future__ import annotations
 
 import json
@@ -10,8 +10,8 @@ from typing import Any, Iterable, Mapping
 
 
 STATE_SCHEMA = 1
-APP_VERSION = "3.9.0"
-COMPATIBLE_APP_VERSIONS = {APP_VERSION}
+APP_VERSION = "3.9.1"
+COMPATIBLE_APP_VERSIONS = {APP_VERSION, "3.9.0"}
 ENTRY_STATES = {"BUY": 1, "SELL": -1, "STRONG_LONG": 1, "STRONG_SHORT": -1}
 IMMEDIATE_STATES = {"BUY", "SELL"}
 PROBE_STATES = {"STRONG_LONG", "STRONG_SHORT"}
@@ -251,6 +251,20 @@ class PaperTrader:
             for key in score_keys
         ):
             raise ValueError("Paper-Qualitätsschwellen müssen zwischen null und 100 liegen")
+        early_age = int(self.config.get("paper_early_max_age_minutes", 1))
+        early_used = float(self.config.get("paper_early_max_consumed_fraction", 0.55))
+        max_stop = float(self.config.get("paper_max_technical_stop_pct", 1.20))
+        if not 0 <= early_age <= int(self.config.get("early_max_age_minutes", 2)):
+            raise ValueError("paper_early_max_age_minutes ist ungültig")
+        if not 0 < early_used <= float(self.config.get("early_max_consumed_fraction", 0.66)):
+            raise ValueError("paper_early_max_consumed_fraction ist ungültig")
+        if not 0.10 <= max_stop <= 3.0:
+            raise ValueError("paper_max_technical_stop_pct ist ungültig")
+        same_direction = int(self.config.get("paper_max_same_direction_positions", 2))
+        if not 1 <= same_direction <= positions:
+            raise ValueError("paper_max_same_direction_positions ist ungültig")
+        if float(self.config.get("paper_max_directional_notional_pct", 0.0)) <= 0:
+            raise ValueError("paper_max_directional_notional_pct muss positiv sein")
 
     def _initial_state(self) -> dict[str, Any]:
         capital = round(float(self.config.get("paper_starting_capital_usd", 100.0)), 8)
@@ -299,6 +313,8 @@ class PaperTrader:
             or invalid_position
         ):
             raise RuntimeError("Paper-State ist inkompatibel oder beschädigt")
+        if payload.get("app_version") == "3.9.0":
+            return self._initial_state()
         if payload.get("app_version") != APP_VERSION:
             payload["app_version"] = APP_VERSION
             payload["checkpoint_requested"] = True
@@ -411,13 +427,21 @@ class PaperTrader:
         noise = max(0.015, _f(getattr(signal, "noise_pct", 0.015), 0.015))
         cost = max(0.0, _f(signal.cost_pct))
         if signal.selected_setup == "EARLY":
-            return min(0.48, max(0.14, noise * 3.1, cost * 2.8))
-        if signal.selected_setup == "REVERSAL":
-            raw = max(0.18, noise * 3.2, cost * 2.8, min(0.42, _f(signal.reversal.move_pct) * 0.22))
-            return min(0.58, raw)
-        if signal.selected_setup == "TREND":
-            return min(0.52, max(0.16, noise * 3.6, cost * 2.7))
-        return min(0.56, max(0.18, noise * 3.9, cost * 2.8))
+            base = max(0.14, noise * 3.1, cost * 2.8)
+        elif signal.selected_setup == "REVERSAL":
+            base = max(
+                0.18,
+                noise * 3.2,
+                cost * 2.8,
+                min(0.52, _f(signal.reversal.move_pct) * 0.22),
+            )
+        elif signal.selected_setup == "TREND":
+            base = max(0.16, noise * 3.6, cost * 2.7)
+        else:
+            base = max(0.18, noise * 3.9, cost * 2.8)
+        technical = max(0.0, _f(getattr(signal, "technical_stop_pct", 0.0)))
+        maximum = float(self.config.get("paper_max_technical_stop_pct", 1.20))
+        return min(maximum, max(base, technical))
 
     def _quality(self, signal: Any) -> float:
         setup = _setup(signal)
@@ -486,6 +510,9 @@ class PaperTrader:
         direction = ENTRY_STATES.get(signal.state)
         if direction is None:
             return "kein starkes Einstiegssignal"
+        technical_stop = max(0.0, _f(getattr(signal, "technical_stop_pct", 0.0)))
+        if technical_stop > float(self.config.get("paper_max_technical_stop_pct", 1.20)):
+            return "technisches Invalidationsniveau ist zu weit entfernt"
         if signal.selected_setup == "REVERSAL":
             setup = _setup(signal)
             if (
@@ -543,10 +570,10 @@ class PaperTrader:
             if setup.age_minutes is None or setup.age_minutes < 1:
                 return "W wartet auf eine geschlossene Bestätigungskerze"
         if signal.selected_setup == "EARLY":
-            if setup.age_minutes is not None and setup.age_minutes > int(self.config.get("early_max_age_minutes", 2)):
-                return "frühe Chance bereits zu alt"
-            if setup.recovery_fraction > float(self.config.get("early_max_consumed_fraction", 0.66)):
-                return "Bewegungsweg bereits zu weit verbraucht"
+            if setup.age_minutes is not None and setup.age_minutes > int(self.config.get("paper_early_max_age_minutes", 1)):
+                return "frühe Chance für Paper-Einstieg bereits zu alt"
+            if setup.recovery_fraction > float(self.config.get("paper_early_max_consumed_fraction", 0.55)):
+                return "Bewegungsweg für Paper-Einstieg bereits zu weit verbraucht"
         return None
 
     def _target_margin(self, signal: Any, rank: int) -> float:
@@ -683,6 +710,34 @@ class PaperTrader:
             self._log(f"SKIP {signal.alias} {_direction_letter(direction)}: Orderbuchtiefe reicht nicht")
             return None
         entry, base = fill
+        technical_price = _f(getattr(signal, "technical_stop_price", 0.0))
+        if technical_price > 0:
+            if direction > 0 and technical_price < entry:
+                stop_pct = max(stop_pct, (entry - technical_price) / entry * 100.0)
+            elif direction < 0 and technical_price > entry:
+                stop_pct = max(stop_pct, (technical_price - entry) / entry * 100.0)
+        maximum_technical = float(self.config.get("paper_max_technical_stop_pct", 1.20))
+        if stop_pct > maximum_technical + 1e-9:
+            self._log(
+                f"SKIP {signal.alias} {_direction_letter(direction)}: "
+                "technisches Invalidationsniveau liegt zu weit entfernt"
+            )
+            return None
+        maintenance = max(
+            0.0,
+            _f(getattr(signal, "maintenance_margin_pct", 0.0)) / 100.0,
+        )
+        safety = (
+            stop_pct / 100.0
+            + float(self.config.get("paper_liquidation_buffer_pct", 0.25)) / 100.0
+            + maintenance
+        )
+        if safety > 0 and leverage > math.floor(1.0 / safety):
+            self._log(
+                f"SKIP {signal.alias} {_direction_letter(direction)}: "
+                "Hebel passt nicht zum technischen Stop"
+            )
+            return None
         taker_fee_pct = max(0.0, _f(getattr(signal, "taker_fee_pct", 0.0)))
         actual_roundtrip_cost = _roundtrip_cost_pct(
             book,
@@ -795,6 +850,13 @@ class PaperTrader:
                 "extremity_available": bool(getattr(signal, "extremity_available", False)),
                 "extremity_score": float(getattr(signal, "extremity_score", 0.0)),
                 "extremity_confidence": float(getattr(signal, "extremity_confidence", 0.0)),
+                "extremity_intraday": float(getattr(signal, "extremity_intraday", 0.0)),
+                "extremity_swing": float(getattr(signal, "extremity_swing", 0.0)),
+                "extremity_return_1d": getattr(signal, "extremity_return_1d", None),
+                "extremity_return_3d": getattr(signal, "extremity_return_3d", None),
+                "extremity_return_7d": getattr(signal, "extremity_return_7d", None),
+                "technical_stop_price": getattr(signal, "technical_stop_price", None),
+                "technical_stop_pct": getattr(signal, "technical_stop_pct", None),
                 "reversal_structural_reclaim": bool(getattr(_setup(signal), "structural_reclaim", False)),
                 "reversal_relative_confirmed": bool(getattr(_setup(signal), "relative_confirmed", True)),
                 "reversal_relative_opposition": bool(getattr(_setup(signal), "relative_opposition", False)),
@@ -1321,7 +1383,7 @@ class PaperTrader:
         for symbol, position in list((self.state.get("positions") or {}).items()):
             reason: str | None = None
             if symbol not in allowed_symbols:
-                reason = "Symbol nicht mehr im v3.9.0-Kandidatenpool"
+                reason = "Symbol nicht mehr im v3.9.1-Kandidatenpool"
             elif str(position.get("setup")) == "P":
                 reason = "P-Setup seit v3.7.1 deaktiviert"
             if reason is None:
@@ -1458,7 +1520,7 @@ class PaperTrader:
                 f"{top}"
             )
         equity, free, margin = self._equity()
-        # Paper actions are deliberately log-only in v3.9.0.
+        # Paper actions are deliberately log-only in v3.9.1.
         action_line = None
         self._log(
             f"KONTO Balance {_money(_f(self.state.get('balance_usd')), compact=False)} | "
