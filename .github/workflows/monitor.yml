@@ -1,5 +1,5 @@
-name: Crypto Signal Monitor v3.8.5
-# Package revision: v3.8.5-w-clarity-r1
+name: Crypto Signal Monitor v3.9.0
+# Package revision: v3.9.0-extremity-reclaim-r1
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: crypto-signal-monitor-v385
+  group: crypto-signal-monitor-v390
   cancel-in-progress: false
 
 jobs:
@@ -38,8 +38,9 @@ jobs:
             output/event_cache.json
             output/event_display_state.json
             output/parameter_review.json
-          key: runtime-state-v385-${{ github.run_id }}
+          key: runtime-state-v390-${{ github.run_id }}
           restore-keys: |
+            runtime-state-v390-
             runtime-state-v385-
             runtime-state-v384-
             runtime-state-v383-
@@ -74,4 +75,4 @@ jobs:
             output/event_cache.json
             output/event_display_state.json
             output/parameter_review.json
-          key: runtime-state-v385-${{ github.run_id }}
+          key: runtime-state-v390-${{ github.run_id }}

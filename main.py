@@ -1,4 +1,4 @@
-"""Crypto Signal Monitor v3.8.5 — verified events, early swings and paper review."""
+"""Crypto Signal Monitor v3.9.0 — verified events, early swings and paper review."""
 from __future__ import annotations
 
 import argparse
@@ -109,6 +109,10 @@ def main() -> int:
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     print(report)
+    for signal in monitor.last_signals:
+        if signal.state == "INVALID_DATA":
+            reason = "; ".join(signal.reasons) or "unbekannter Datenfehler"
+            print(f"[DATA] {signal.symbol}: {reason}")
     if paper_result:
         for line in paper_result["logs"]:
             print(line)
@@ -142,7 +146,7 @@ def main() -> int:
             send_discord(
                 webhook,
                 report,
-                username=str(config.get("discord_username", "CF v3.8.5")),
+                username=str(config.get("discord_username", "CF v3.9.0")),
                 avatar_url=str(config.get("discord_avatar_url", "")).strip(),
             )
             mark_report_sent(
@@ -165,4 +169,4 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 
-# Package revision: v3.8.5-w-clarity-r1
+# Package revision: v3.9.0-extremity-reclaim-r1

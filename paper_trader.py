@@ -1,4 +1,4 @@
-"""Deterministic, multi-candidate paper-trading engine for CF v3.8.5."""
+"""Deterministic, multi-candidate paper-trading engine for CF v3.9.0."""
 from __future__ import annotations
 
 import json
@@ -10,8 +10,8 @@ from typing import Any, Iterable, Mapping
 
 
 STATE_SCHEMA = 1
-APP_VERSION = "3.8.5"
-COMPATIBLE_APP_VERSIONS = {"3.7", "3.7.1", "3.8.0", "3.8.1", "3.8.2", "3.8.3", "3.8.4", APP_VERSION}
+APP_VERSION = "3.9.0"
+COMPATIBLE_APP_VERSIONS = {APP_VERSION}
 ENTRY_STATES = {"BUY": 1, "SELL": -1, "STRONG_LONG": 1, "STRONG_SHORT": -1}
 IMMEDIATE_STATES = {"BUY", "SELL"}
 PROBE_STATES = {"STRONG_LONG", "STRONG_SHORT"}
@@ -453,6 +453,13 @@ class PaperTrader:
             quality_cap = min(quality_cap, 25 if signal.state in IMMEDIATE_STATES else 15)
         elif signal.selected_setup == "TREND":
             quality_cap = min(quality_cap, 30)
+        extremity = float(getattr(signal, "extremity_score", 0.0))
+        direction = ENTRY_STATES.get(signal.state, 0)
+        chasing_extreme = extremity * direction
+        if chasing_extreme >= 60.0:
+            quality_cap = min(quality_cap, 10)
+        elif chasing_extreme >= 45.0:
+            quality_cap = min(quality_cap, 15)
         btc_context = 58.0 if signal.btc_context is None else float(signal.btc_context)
         if btc_context < 40:
             quality_cap = min(quality_cap, 10)
@@ -479,6 +486,18 @@ class PaperTrader:
         direction = ENTRY_STATES.get(signal.state)
         if direction is None:
             return "kein starkes Einstiegssignal"
+        if signal.selected_setup == "REVERSAL":
+            setup = _setup(signal)
+            if (
+                setup.phase != "ready"
+                or not bool(getattr(setup, "structural_reclaim", False))
+                or not bool(getattr(setup, "relative_confirmed", True))
+                or bool(getattr(setup, "new_extreme_after_event", False))
+            ):
+                return "W? noch nicht strukturell bestätigt"
+        extremity = float(getattr(signal, "extremity_score", 0.0))
+        if bool(getattr(signal, "extremity_available", False)) and extremity * direction >= 72.0:
+            return "Einstieg würde einer extrem überdehnten Bewegung hinterherlaufen"
         if signal.data_quality < float(self.config.get("paper_min_data_quality", 62)):
             return "zu wenige belastbare Datenfenster"
         if float(getattr(signal, "tape_quality", 0.0)) < float(self.config.get("paper_min_tape_quality", 72)):
@@ -773,7 +792,16 @@ class PaperTrader:
                 "relative_30d": getattr(signal, "relative_30d", None),
                 "rebound_participation": getattr(signal, "rebound_participation", None),
                 "relative_drift_60m": getattr(signal, "relative_drift_60m", None),
+                "extremity_available": bool(getattr(signal, "extremity_available", False)),
+                "extremity_score": float(getattr(signal, "extremity_score", 0.0)),
+                "extremity_confidence": float(getattr(signal, "extremity_confidence", 0.0)),
+                "reversal_structural_reclaim": bool(getattr(_setup(signal), "structural_reclaim", False)),
+                "reversal_relative_confirmed": bool(getattr(_setup(signal), "relative_confirmed", True)),
+                "reversal_relative_opposition": bool(getattr(_setup(signal), "relative_opposition", False)),
+                "reversal_new_extreme": bool(getattr(_setup(signal), "new_extreme_after_event", False)),
                 "data_quality": float(signal.data_quality),
+                "direction": int(direction),
+                "stop_pct": float(stop_pct),
                 "leverage": int(leverage),
                 "margin_usd": float(margin),
                 "risk_usd": float(actual_risk),
@@ -1293,7 +1321,7 @@ class PaperTrader:
         for symbol, position in list((self.state.get("positions") or {}).items()):
             reason: str | None = None
             if symbol not in allowed_symbols:
-                reason = "Symbol nicht mehr im v3.8.5-Kandidatenpool"
+                reason = "Symbol nicht mehr im v3.9.0-Kandidatenpool"
             elif str(position.get("setup")) == "P":
                 reason = "P-Setup seit v3.7.1 deaktiviert"
             if reason is None:
@@ -1430,7 +1458,7 @@ class PaperTrader:
                 f"{top}"
             )
         equity, free, margin = self._equity()
-        # Paper actions are deliberately log-only in v3.8.5.
+        # Paper actions are deliberately log-only in v3.9.0.
         action_line = None
         self._log(
             f"KONTO Balance {_money(_f(self.state.get('balance_usd')), compact=False)} | "

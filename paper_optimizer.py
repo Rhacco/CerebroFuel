@@ -1,19 +1,20 @@
-"""Evidence-based review of paper-trading entry parameters for CF v3.8.5.
+"""Fast diagnostic plus evidence-based paper review for CF v3.9.0.
 
-The reviewer never changes live parameters. It only flags a potential problem
-when enough completed paper trades show a large, repeatable underperformance of
-one recorded entry condition versus the remaining sample.
+No finding changes trading parameters automatically.  The rapid audit can flag
+one objectively poor entry after only one to three closed trades, but labels it
+as an early diagnostic rather than statistical proof.  Broader parameter claims
+still require a larger comparison sample.
 """
 from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from statistics import mean
 from typing import Any, Callable, Iterable, Mapping
 
-STATE_VERSION = "paper-optimizer-v383-r1"
+STATE_VERSION = "paper-optimizer-v390-r1"
 
 
 def _f(value: Any, default: float = 0.0) -> float:
@@ -35,7 +36,10 @@ def _load_json(path: Path) -> dict[str, Any]:
 def _save_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    tmp.write_text(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
     tmp.replace(path)
 
 
@@ -44,15 +48,10 @@ class Finding:
     key: str
     label: str
     samples: int
-    comparison_samples: int
-    win_rate: float
-    comparison_win_rate: float
     average_r: float
-    comparison_average_r: float
-    symbols: int
-    first_half_average_r: float
-    second_half_average_r: float
     evidence: str
+    level: str
+    statistically_confirmed: bool = False
 
 
 def _completed_trades(paper_state: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -80,41 +79,153 @@ def _completed_trades(paper_state: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "features": dict(features),
                 "reason": str(action.get("reason") or ""),
                 "timestamp": str(entry.get("timestamp") or ""),
+                "holding_minutes": _f(details.get("holding_minutes")),
             }
         )
-    return rows
+    return sorted(rows, key=lambda row: str(row.get("timestamp") or ""))
 
 
 def _stats(rows: Iterable[Mapping[str, Any]]) -> tuple[int, float, float]:
     data = list(rows)
     if not data:
         return 0, 0.0, 0.0
-    return len(data), sum(bool(row.get("win")) for row in data) / len(data), mean(_f(row.get("r")) for row in data)
+    return (
+        len(data),
+        sum(bool(row.get("win")) for row in data) / len(data),
+        mean(_f(row.get("r")) for row in data),
+    )
+
+
+def _rapid_rules(config: Mapping[str, Any]) -> list[tuple[str, str, Callable[[Mapping[str, Any]], bool]]]:
+    stop_minutes = float(config.get("paper_optimizer_rapid_stop_minutes", 4.0))
+    return [
+        (
+            "IMMEDIATE_STOP",
+            "Einstieg wurde nahezu sofort ausgestoppt",
+            lambda row: _f(row.get("holding_minutes")) <= stop_minutes,
+        ),
+        (
+            "EXTREME_CHASE",
+            "Einstieg lief einer bereits extrem überdehnten Bewegung hinterher",
+            lambda row: (
+                bool(row["features"].get("extremity_available", False))
+                and _f(row["features"].get("extremity_score"))
+                * int(_f(row["features"].get("direction"))) >= 55.0
+            ),
+        ),
+        (
+            "RELATIVE_OPPOSITION",
+            "W-Einstieg widersprach der relativen Marktteilnahme",
+            lambda row: bool(row["features"].get("reversal_relative_opposition", False)),
+        ),
+        (
+            "LATE_ENTRY",
+            "Einstieg war bereits alt oder weit verbraucht",
+            lambda row: (
+                _f(row["features"].get("setup_age_minutes")) > 2.0
+                or _f(row["features"].get("setup_consumed_fraction")) > 0.58
+            ),
+        ),
+        (
+            "COST_HEAVY",
+            "Ausführungskosten waren im Verhältnis zum Stop zu hoch",
+            lambda row: (
+                _f(row["features"].get("stop_pct")) > 0
+                and _f(row["features"].get("cost_pct"))
+                / _f(row["features"].get("stop_pct")) >= 0.35
+            ),
+        ),
+    ]
+
+
+def _rapid_findings(trades: list[dict[str, Any]], config: Mapping[str, Any]) -> list[Finding]:
+    if not bool(config.get("paper_optimizer_rapid_enabled", True)) or not trades:
+        return []
+    max_rows = max(1, min(3, int(config.get("paper_optimizer_rapid_max_trades", 3))))
+    recent = trades[-max_rows:]
+    loss_threshold = float(config.get("paper_optimizer_rapid_loss_r", -0.65))
+    findings: list[Finding] = []
+    for key, label, predicate in _rapid_rules(config):
+        affected = [row for row in recent if predicate(row)]
+        if not affected:
+            continue
+        average_r = mean(_f(row.get("r")) for row in affected)
+        severe_single = len(affected) == 1 and average_r <= min(loss_threshold, -0.80)
+        repeated = len(affected) >= 2 and average_r <= max(loss_threshold, -0.35)
+        if not (severe_single or repeated):
+            continue
+        symbols = ",".join(sorted({str(row.get("symbol") or "?") for row in affected}))
+        evidence = (
+            f"{label}: n={len(affected)} ({symbols}), ØR {average_r:+.2f}; "
+            "früher Diagnosehinweis, keine statistische Bestätigung"
+        )
+        findings.append(
+            Finding(
+                key="RAPID_" + key,
+                label=label,
+                samples=len(affected),
+                average_r=round(average_r, 4),
+                evidence=evidence,
+                level="rapid",
+                statistically_confirmed=False,
+            )
+        )
+    return findings
 
 
 def _feature_rules() -> list[tuple[str, str, Callable[[Mapping[str, Any]], bool]]]:
     return [
         ("LOW_DATA", "niedrige Datenqualität", lambda f: _f(f.get("data_quality"), 100) < 75),
-        ("LOW_READINESS", "Readiness unter 68", lambda f: _f(f.get("readiness"), 100) < 68),
-        ("LOW_CONFIDENCE", "Confidence unter 64", lambda f: _f(f.get("confidence"), 100) < 64),
-        ("LOW_BTC", "niedriger BTC-Kontext", lambda f: _f(f.get("btc_context"), 58) < 45),
-        ("LOW_VOLUME", "schwache Volumenbestätigung", lambda f: _f(f.get("volume_confirmation")) < 52),
-        ("LOW_TAPE", "niedrige Tape-Qualität", lambda f: _f(f.get("tape_quality")) < 74),
-        ("LOW_EXEC", "niedriger Execution-Score", lambda f: _f(f.get("execution_score")) < 62),
+        ("LOW_READINESS", "Readiness unter 66", lambda f: _f(f.get("readiness"), 100) < 66),
+        ("LOW_CONFIDENCE", "Confidence unter 62", lambda f: _f(f.get("confidence"), 100) < 62),
+        ("LOW_BTC", "niedriger BTC-Kontext", lambda f: _f(f.get("btc_context"), 58) < 42),
+        ("LOW_VOLUME", "schwache Volumenbestätigung", lambda f: _f(f.get("volume_confirmation")) < 50),
+        ("LOW_TAPE", "niedrige Tape-Qualität", lambda f: _f(f.get("tape_quality")) < 70),
         ("HIGH_COST", "hohe Roundtrip-Kosten", lambda f: _f(f.get("cost_pct")) > 0.065),
-        ("FUNDING_MISSING", "fehlendes Funding", lambda f: bool(f.get("funding_missing", False))),
-        ("EVENT_RISK", "erhöhtes Ereignisrisiko", lambda f: _f(f.get("event_risk")) >= 45),
         ("REGIME_AGAINST", "7/14/30D-Regime gegen Einstieg", lambda f: bool(f.get("regime_available", False)) and _f(f.get("regime_modifier")) <= -4),
-        ("REGIME_WEAK", "schwach bestätigtes Mehrwochen-Regime", lambda f: bool(f.get("regime_available", False)) and _f(f.get("regime_consistency")) < 0.67),
-        ("LOW_REBOUND_PARTICIPATION", "schwache Teilnahme an BTC-Erholung", lambda f: f.get("rebound_participation") is not None and _f(f.get("rebound_participation"), 1.0) < 0.35),
-        ("HIGH_LEVERAGE", "Hebel ab 25x", lambda f: _f(f.get("leverage")) >= 25),
-        ("PROBE", "Probe-Einstieg", lambda f: bool(f.get("probe_entry", False))),
-        ("PHASE_STRONG", "noch nicht vollständig bereite Strong-Phase", lambda f: str(f.get("setup_phase")) == "strong"),
-        ("HIGH_CONSUMED", "bereits weit verbrauchter Bewegungsweg", lambda f: _f(f.get("setup_consumed_fraction")) > 0.55),
+        ("EXTREME_CHASE", "Einstieg in Richtung einer Überdehnung", lambda f: bool(f.get("extremity_available", False)) and _f(f.get("extremity_score")) * int(_f(f.get("direction"))) >= 45),
         ("SETUP_T", "T-Setup", lambda f: str(f.get("setup")) == "T"),
         ("SETUP_E", "E-Setup", lambda f: str(f.get("setup")) == "E"),
         ("SETUP_W", "W-Setup", lambda f: str(f.get("setup")) == "W"),
     ]
+
+
+def _statistical_findings(trades: list[dict[str, Any]], config: Mapping[str, Any]) -> list[Finding]:
+    minimum_total = max(8, int(config.get("paper_optimizer_min_total_trades", 8)))
+    minimum_bucket = max(3, int(config.get("paper_optimizer_min_bucket_trades", 3)))
+    minimum_gap_r = max(0.15, float(config.get("paper_optimizer_min_r_gap", 0.35)))
+    maximum_bucket_win_rate = min(0.5, float(config.get("paper_optimizer_max_bucket_win_rate", 0.38)))
+    if len(trades) < minimum_total:
+        return []
+    findings: list[Finding] = []
+    for key, label, predicate in _feature_rules():
+        bucket = [row for row in trades if predicate(row["features"])]
+        other = [row for row in trades if not predicate(row["features"])]
+        n, win, avg_r = _stats(bucket)
+        other_n, other_win, other_avg_r = _stats(other)
+        if n < minimum_bucket or other_n < minimum_bucket:
+            continue
+        symbol_count = len({str(row.get("symbol") or "") for row in bucket if row.get("symbol")})
+        if symbol_count < 2 or win > maximum_bucket_win_rate or avg_r >= -0.05:
+            continue
+        if other_avg_r - avg_r < minimum_gap_r:
+            continue
+        evidence = (
+            f"{label}: n={n}/{symbol_count} Coins, Treffer {win:.0%}, ØR {avg_r:+.2f}; "
+            f"Vergleich n={other_n}, Treffer {other_win:.0%}, ØR {other_avg_r:+.2f}"
+        )
+        findings.append(
+            Finding(
+                key="STAT_" + key,
+                label=label,
+                samples=n,
+                average_r=round(avg_r, 4),
+                evidence=evidence,
+                level="statistical",
+                statistically_confirmed=True,
+            )
+        )
+    return findings
 
 
 def review_paper_parameters(
@@ -125,72 +236,13 @@ def review_paper_parameters(
 ) -> dict[str, Any]:
     paper_state = _load_json(paper_state_path)
     trades = _completed_trades(paper_state)
-    minimum_total = max(12, int(config.get("paper_optimizer_min_total_trades", 16)))
-    minimum_bucket = max(5, int(config.get("paper_optimizer_min_bucket_trades", 6)))
-    minimum_gap_r = max(0.15, float(config.get("paper_optimizer_min_r_gap", 0.35)))
-    maximum_bucket_win_rate = min(0.5, float(config.get("paper_optimizer_max_bucket_win_rate", 0.38)))
-
-    findings: list[Finding] = []
-    if len(trades) >= minimum_total:
-        for key, label, predicate in _feature_rules():
-            bucket = [row for row in trades if predicate(row["features"])]
-            other = [row for row in trades if not predicate(row["features"])]
-            n, win, avg_r = _stats(bucket)
-            other_n, other_win, other_avg_r = _stats(other)
-            if n < minimum_bucket or other_n < minimum_bucket:
-                continue
-            symbol_count = len({str(row.get("symbol") or "") for row in bucket if row.get("symbol")})
-            if symbol_count < 2:
-                continue
-            ordered_bucket = sorted(bucket, key=lambda row: str(row.get("timestamp") or ""))
-            midpoint = len(ordered_bucket) // 2
-            first_half = ordered_bucket[:midpoint]
-            second_half = ordered_bucket[midpoint:]
-            if min(len(first_half), len(second_half)) < 3:
-                continue
-            _, _, first_avg_r = _stats(first_half)
-            _, _, second_avg_r = _stats(second_half)
-            if first_avg_r >= 0 or second_avg_r >= 0:
-                continue
-            if win > maximum_bucket_win_rate:
-                continue
-            if avg_r >= -0.05:
-                continue
-            if other_avg_r - avg_r < minimum_gap_r:
-                continue
-            evidence = (
-                f"{label}: n={n}/{symbol_count} Coins, Treffer {win:.0%}, ØR {avg_r:+.2f}, "
-                f"Hälften {first_avg_r:+.2f}/{second_avg_r:+.2f}; "
-                f"Vergleich n={other_n}, Treffer {other_win:.0%}, ØR {other_avg_r:+.2f}"
-            )
-            findings.append(
-                Finding(
-                    key=key,
-                    label=label,
-                    samples=n,
-                    comparison_samples=other_n,
-                    win_rate=round(win, 4),
-                    comparison_win_rate=round(other_win, 4),
-                    average_r=round(avg_r, 4),
-                    comparison_average_r=round(other_avg_r, 4),
-                    symbols=symbol_count,
-                    first_half_average_r=round(first_avg_r, 4),
-                    second_half_average_r=round(second_avg_r, 4),
-                    evidence=evidence,
-                )
-            )
+    findings = _rapid_findings(trades, config) + _statistical_findings(trades, config)
 
     review_state = _load_json(review_state_path)
     if review_state.get("version") != STATE_VERSION:
         review_state = {"version": STATE_VERSION, "active_keys": []}
-    previous_active = {
-        str(value) for value in (review_state.get("active_keys") or []) if value
-    }
+    previous_active = {str(value) for value in (review_state.get("active_keys") or []) if value}
     current_active = {finding.key for finding in findings}
-    # Discord is alerted once when a statistically supported problem first
-    # becomes active. Updated sample counts remain available in JSON, but do
-    # not generate a fresh alert every time another trade closes. If a finding
-    # later resolves and then reappears, it can alert again.
     new_findings = [finding for finding in findings if finding.key not in previous_active]
 
     _save_json(
@@ -208,7 +260,7 @@ def review_paper_parameters(
         "new_findings": [asdict(item) for item in new_findings],
         "alert": bool(new_findings),
         "logs": [
-            f"[PARAM] statistischer Optimierungshinweis (keine automatische Änderung): {item.evidence}"
+            "[PARAM] Optimierungshinweis (keine automatische Änderung): " + item.evidence
             for item in new_findings
         ],
     }

@@ -1,4 +1,4 @@
-"""Lighter-native early-swing/T/W signal engine for CF v3.8.5."""
+"""Lighter-native early-swing/T/W signal engine for CF v3.9.0."""
 from __future__ import annotations
 
 import json
@@ -16,9 +16,10 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from regime_context import calculate_regimes
+from extremity_context import calculate_extremity, extremity_code, extremity_color
 
-APP_VERSION = "3.8.5"
-PACKAGE_REVISION = "v3.8.5-w-clarity-r1"
+APP_VERSION = "3.9.0"
+PACKAGE_REVISION = "v3.9.0-extremity-reclaim-r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 TREND_WINDOWS = (5, 15, 60)
@@ -26,16 +27,6 @@ TREND_WINDOWS = (5, 15, 60)
 WINDOWS = DISPLAY_WINDOWS
 GLOBAL_BTC_EVENT_KINDS = {"FOMC", "CPI", "NFP", "PPI", "GDP", "PCE", "EXPIRY", "ETF"}
 
-SUMMARY_COLORS = {
-    "BUY": "🟢",
-    "SELL": "🔴",
-    "STRONG_LONG": "🟢",
-    "STRONG_SHORT": "🔴",
-    "WATCH_LONG": "🔵",
-    "WATCH_SHORT": "🟠",
-    "NO_TRADE": "🟡",
-    "INVALID_DATA": "⚫",
-}
 STATE_TIER = {
     "BUY": 4,
     "SELL": 4,
@@ -113,6 +104,12 @@ class Setup:
     recovery_fraction: float = 0.0
     peak_score: float = 0.0
     expected_edge_pct: float = 0.0
+    structural_reclaim: bool = False
+    relative_confirmed: bool = True
+    relative_participation: float | None = None
+    relative_opposition: bool = False
+    new_extreme_after_event: bool = False
+    reclaim_level: float | None = None
     reason: str = ""
 
 
@@ -150,6 +147,14 @@ class Signal:
     taker_fee_pct: float = 0.0
     candidate_tier: str = "core"
     candidate_penalty: float = 0.0
+    extremity_available: bool = False
+    extremity_score: float = 0.0
+    extremity_confidence: float = 0.0
+    extremity_momentum: float = 0.0
+    extremity_vwap: float = 0.0
+    extremity_range: float = 0.0
+    extremity_funding: float = 0.0
+    extremity_regime_adjustment: float = 0.0
     regime_available: bool = False
     regime_score: float = 0.0
     regime_consistency: float = 0.0
@@ -859,12 +864,14 @@ def _reversal_candidate(
     noise: float,
     baseline_volume: float,
     minimum_move_pct: float,
+    config: Mapping[str, Any],
 ) -> Setup:
     highs = [_f(row.get("h")) for row in rows]
     lows = [_f(row.get("l")) for row in rows]
+    closes = [_f(row.get("c")) for row in rows]
     volumes = [_f(row.get("V")) for row in rows]
-    last_close = _f(rows[-1].get("c"))
-    best: tuple[float, float, int, int, float] | None = None
+    last_close = closes[-1]
+    best: tuple[float, float, int, int, float, float] | None = None
 
     for event_index in range(3, len(rows)):
         before = range(max(0, event_index - 7), event_index)
@@ -878,20 +885,21 @@ def _reversal_candidate(
             shock = _pct(anchor, extreme)
         duration = max(1, event_index - anchor_index)
         shock_z = shock / max(noise * math.sqrt(duration), 1e-9)
-        # A reversal belongs to the largest actual shock. Using z-score alone
-        # lets a smaller later candle reset the event age merely because its
-        # duration is shorter.
+        # The largest actual shock owns the W event. A smaller later counter-
+        # candle cannot reset age or reverse the interpretation.
         if shock > 0 and (
-            best is None
-            or (shock, shock_z) > (best[0], best[1])
+            best is None or (shock, shock_z) > (best[0], best[1])
         ):
-            best = (shock, shock_z, event_index, anchor_index, extreme)
+            best = (shock, shock_z, event_index, anchor_index, extreme, anchor)
 
     if best is None:
         return Setup("REVERSAL")
-    shock, shock_z, event_index, anchor_index, extreme = best
+    shock, shock_z, event_index, anchor_index, extreme, anchor = best
     age = len(rows) - 1 - event_index
-    dynamic_minimum = max(minimum_move_pct, noise * math.sqrt(max(1, event_index - anchor_index)) * 2.65)
+    dynamic_minimum = max(
+        minimum_move_pct,
+        noise * math.sqrt(max(1, event_index - anchor_index)) * 2.65,
+    )
     if shock < dynamic_minimum or shock_z < 2.65:
         return Setup(
             "REVERSAL",
@@ -902,14 +910,23 @@ def _reversal_candidate(
             reason=f"shock only {shock:.3f}%/{shock_z:.2f}z",
         )
 
+    event_close = closes[event_index]
+    post_rows = rows[event_index + 1:]
+    post_closes = closes[event_index + 1:]
     rebound = _pct(extreme, last_close) * (1 if direction > 0 else -1)
     rebound_fraction = rebound / max(shock, 1e-9)
-    recent_returns = _last_returns(rows, 3)
-    directional_returns = [_directional(value, direction) for value in recent_returns]
-    confirmation_count = sum(value > 0 for value in directional_returns)
-    last_confirms = bool(directional_returns and directional_returns[-1] > 0)
-    # Attribute volume to the actual shock candle. Including adjacent candles
-    # lets the rebound borrow the shock's volume and can flip W the wrong way.
+
+    post_returns: list[float] = []
+    previous = event_close
+    for close in post_closes:
+        post_returns.append(_directional(_pct(previous, close), direction))
+        previous = close
+    recent_directional = post_returns[-3:]
+    confirmation_count = sum(value > max(noise * 0.08, 0.005) for value in recent_directional)
+    last_confirms = bool(recent_directional and recent_directional[-1] > max(noise * 0.05, 0.003))
+
+    # Attribute volume only to the actual shock candle. Quote volume has no
+    # buyer/seller sign, so it may confirm importance but never direction.
     event_volume = volumes[event_index]
     volume_ratio = event_volume / baseline_volume if baseline_volume > 0 else 0.0
     volume_score = _clamp((volume_ratio - 0.60) * 90.0) if baseline_volume > 0 else 0.0
@@ -943,12 +960,42 @@ def _reversal_candidate(
         + recency_score * 0.10
     )
 
-    stalled = (
-        age > 0
-        and len(directional_returns) >= 2
-        and sum(directional_returns[-2:]) < -max(noise * 0.8, shock * 0.12)
+    reclaim_fraction_required = float(
+        config.get("reversal_structural_reclaim_fraction", 0.24)
     )
-    event_close = _f(rows[event_index].get("c"))
+    reclaim_distance = abs(anchor - extreme) * reclaim_fraction_required
+    reclaim_level = (
+        extreme + reclaim_distance
+        if direction > 0
+        else extreme - reclaim_distance
+    )
+    close_reclaimed = (
+        last_close >= max(event_close, reclaim_level)
+        if direction > 0
+        else last_close <= min(event_close, reclaim_level)
+    )
+    tolerance_pct = max(
+        0.002,
+        noise * float(config.get("reversal_new_extreme_tolerance_noise", 0.18)),
+    )
+    if direction > 0:
+        new_extreme = any(
+            _f(row.get("l")) < extreme * (1.0 - tolerance_pct / 100.0)
+            for row in post_rows
+        )
+    else:
+        new_extreme = any(
+            _f(row.get("h")) > extreme * (1.0 + tolerance_pct / 100.0)
+            for row in post_rows
+        )
+    structural_reclaim = bool(
+        age >= int(config.get("reversal_min_post_event_closes", 1))
+        and close_reclaimed
+        and rebound_fraction >= reclaim_fraction_required
+        and last_confirms
+        and not new_extreme
+    )
+
     event_rebound = _pct(extreme, event_close) * (1 if direction > 0 else -1)
     event_rejection = event_rebound / max(shock, 1e-9)
     exceptional_rejection = (
@@ -958,35 +1005,35 @@ def _reversal_candidate(
         and 0.30 <= rebound_fraction <= 0.84
         and event_rejection >= 0.30
     )
-    rejection_followthrough = (
-        1 <= age <= 2
-        and event_rejection >= 0.30
+    followthrough = (
+        1 <= age <= 3
         and last_confirms
         and confirmation_count >= 1
-        and volume_ratio >= 2.0
+        and volume_ratio >= 1.6
+        and event_strength >= 6.8
         and 0.12 <= rebound_fraction <= 0.88
     )
-    ordinary_confirmation = (
-        1 <= age <= 3
-        and 0.13 <= rebound_fraction <= 0.82
-        and last_confirms
-        and confirmation_count >= 2
-        and volume_ratio >= 2.00
-        and event_strength >= 8.00
+    stalled = (
+        age > 0
+        and len(recent_directional) >= 2
+        and sum(recent_directional[-2:]) < -max(noise * 0.8, shock * 0.12)
     )
     late = age > 4 or rebound_fraction > 0.92 or stalled
-    # A same-candle rejection is useful attention context, but it is not yet a
-    # confirmed reversal. At least one later closed candle must follow through
-    # before W becomes ready.
-    ready = rejection_followthrough or ordinary_confirmation
-    if late:
+
+    if new_extreme:
+        phase, exit_hint, score = "invalidated", True, min(score, 24.0)
+    elif late:
         phase, exit_hint, score = "late", True, min(score, 35.0)
-    elif ready:
+    elif structural_reclaim and followthrough:
         phase, exit_hint = "ready", False
-    elif exceptional_rejection:
+    elif exceptional_rejection or followthrough:
+        # Visible as W?: a real rejection/follow-through exists, but the
+        # structurally important reclaim has not yet happened.
         phase, exit_hint = "strong", False
+        score = min(score, 78.0)
     else:
         phase, exit_hint, score = "forming", False, min(score, 69.0)
+
     return Setup(
         "REVERSAL",
         direction=direction,
@@ -1001,26 +1048,31 @@ def _reversal_candidate(
         move_pct=shock,
         rejection_fraction=event_rejection,
         recovery_fraction=rebound_fraction,
+        structural_reclaim=structural_reclaim,
+        relative_confirmed=True,
+        new_extreme_after_event=new_extreme,
+        reclaim_level=reclaim_level,
         reason=(
             f"shock={shock:.3f}%/{shock_z:.2f}z "
             f"rebound={rebound_fraction:.2f} reject={event_rejection:.2f} "
+            f"reclaim={int(structural_reclaim)} newExtreme={int(new_extreme)} "
             f"volume={volume_ratio:.2f}"
         ),
     )
-
 
 def _assess_reversal(
     candles: list[Mapping[str, Any]],
     noise: float,
     minimum_move_pct: float,
+    config: Mapping[str, Any],
 ) -> Setup:
     rows = _series(candles, 12)
     if not rows:
         return Setup("REVERSAL", reason="insufficient contiguous history")
     baseline_volume = _baseline_volume(candles)
     candidates = [
-        _reversal_candidate(rows, 1, noise, baseline_volume, minimum_move_pct),
-        _reversal_candidate(rows, -1, noise, baseline_volume, minimum_move_pct),
+        _reversal_candidate(rows, 1, noise, baseline_volume, minimum_move_pct, config),
+        _reversal_candidate(rows, -1, noise, baseline_volume, minimum_move_pct, config),
     ]
     # The dominant shock owns the direction for its short lifetime. This keeps
     # the counter-move from being reinterpreted as a fresh opposite shock.
@@ -1081,10 +1133,17 @@ def _detail_head(signal: Signal) -> str:
 
 
 def _setup_code(signal: Signal) -> str:
+    if signal.selected_setup == "REVERSAL":
+        setup = signal.reversal
+        return "W" if (
+            setup.phase == "ready"
+            and setup.structural_reclaim
+            and setup.relative_confirmed
+            and not setup.new_extreme_after_event
+        ) else "W?"
     return {
         "EARLY": "E",
         "TREND": "T",
-        "REVERSAL": "W",
     }.get(signal.selected_setup, "+" if signal.direction >= 0 else "-")
 
 
@@ -1219,6 +1278,11 @@ class LighterMonitor:
             raise ValueError("early_min_efficiency muss zwischen null und eins liegen")
         if not 0 <= int(self.config.get("early_max_age_minutes", 2)) <= 4:
             raise ValueError("early_max_age_minutes muss zwischen null und vier liegen")
+        extremity_warning = float(self.config.get("extremity_chase_warning", 55.0))
+        extremity_block = float(self.config.get("extremity_chase_block", 72.0))
+        extremity_penalty = float(self.config.get("extremity_chase_penalty", 8.0))
+        if not 0 < extremity_warning < extremity_block <= 100 or not 0 <= extremity_penalty <= 20:
+            raise ValueError("Extremity-Schwellen sind nicht logisch geordnet")
         if not 1 <= int(self.config.get("early_min_volume_consistency", 2)) <= 4:
             raise ValueError("early_min_volume_consistency muss zwischen eins und vier liegen")
         minimum_reversal = float(self.config.get("hard_reversal_min_move_pct", 0.20))
@@ -1235,6 +1299,9 @@ class LighterMonitor:
         reversal_opposed = int(
             self.config.get("reversal_immediate_max_opposed_windows", 1)
         )
+        reclaim_fraction = float(self.config.get("reversal_structural_reclaim_fraction", 0.24))
+        new_extreme_tolerance = float(self.config.get("reversal_new_extreme_tolerance_noise", 0.18))
+        post_event_closes = int(self.config.get("reversal_min_post_event_closes", 1))
         if (
             not 0 < minimum_reversal <= immediate_reversal <= late_override
             or not 0 <= rejection <= 1
@@ -1242,6 +1309,9 @@ class LighterMonitor:
             or not 1 <= reversal_confirmations <= 3
             or not 1 <= reversal_agreement <= len(DISPLAY_WINDOWS)
             or not 0 <= reversal_opposed < len(DISPLAY_WINDOWS)
+            or not 0.10 <= reclaim_fraction <= 0.60
+            or not 0 <= new_extreme_tolerance <= 1.0
+            or not 1 <= post_event_closes <= 3
         ):
             raise ValueError("Wende-Schwellen sind nicht logisch geordnet")
         positive_keys = (
@@ -1363,6 +1433,7 @@ class LighterMonitor:
             candles,
             noise,
             float(self.config.get("hard_reversal_min_move_pct", 0.20)),
+            self.config,
         )
         setups = (signal.early, signal.trend, signal.reversal)
         selected = max(
@@ -1649,6 +1720,9 @@ class LighterMonitor:
                 )
                 and selected.age_minutes is not None
                 and selected.age_minutes >= 1
+                and selected.structural_reclaim
+                and selected.relative_confirmed
+                and not selected.new_extreme_after_event
                 and (
                     selected.recovery_fraction <= recovery_limit
                     or late_recovery_override
@@ -1887,6 +1961,43 @@ class LighterMonitor:
             item.opportunity = _clamp(item.opportunity + modifier * 0.55)
             item.confidence = _clamp(item.confidence + modifier * 0.75)
             item.trade_readiness = _clamp(item.trade_readiness + modifier)
+
+            # A W against a clearly stronger reference-market move remains W?
+            # even if the local candle pattern reclaimed its first level. This
+            # directly covers relief bounces that lag BTC/ETH and then roll over.
+            if item.selected_setup == "REVERSAL" and item.reversal.phase in {"ready", "strong"}:
+                direction = 1 if item.direction >= 0 else -1
+                drift_threshold = float(
+                    regime_config.get("reversal_relative_drift_warning_pct", 0.30)
+                )
+                participation_threshold = float(
+                    regime_config.get("reversal_min_rebound_participation", 0.45)
+                )
+                drift_opposition = (
+                    result.relative_drift_60m is not None
+                    and _directional(float(result.relative_drift_60m), direction) < -drift_threshold
+                )
+                participation_opposition = (
+                    direction > 0
+                    and result.rebound_participation is not None
+                    and float(result.rebound_participation) < participation_threshold
+                )
+                item.reversal.relative_participation = result.rebound_participation
+                item.reversal.relative_opposition = bool(
+                    drift_opposition or participation_opposition
+                )
+                item.reversal.relative_confirmed = not item.reversal.relative_opposition
+                if item.reversal.relative_opposition:
+                    penalty = float(
+                        regime_config.get("reversal_relative_opposition_penalty", 8.0)
+                    )
+                    item.trade_readiness = _clamp(item.trade_readiness - penalty)
+                    item.confidence = _clamp(item.confidence - penalty * 0.55)
+                    item.opportunity = _clamp(item.opportunity - penalty * 0.40)
+                    if item.state in {"BUY", "SELL", "STRONG_LONG", "STRONG_SHORT"}:
+                        item.state = "WATCH_LONG" if direction > 0 else "WATCH_SHORT"
+                    item.reasons.append("W bleibt W?: relative Marktteilnahme zu schwach")
+
             if modifier <= warning_threshold:
                 item.reasons.append(f"7/14/30D-Regime widerspricht ({modifier:+.1f})")
             elif modifier >= abs(warning_threshold):
@@ -1903,6 +2014,63 @@ class LighterMonitor:
                 item.reasons.append("frühes E durch Gegenregime blockiert")
             downgrade(item)
         return {symbol: result.to_dict() for symbol, result in results.items()}
+
+    def _apply_extremity_context(
+        self,
+        signals: list[Signal],
+        snapshots: Mapping[str, Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        hard_funding = float(self.config.get("funding_hard_hourly_pct", 0.05))
+        for item in signals:
+            rows = list((snapshots.get(item.symbol) or {}).get("candles") or [])
+            result = calculate_extremity(
+                candles=rows,
+                funding_hourly_pct=item.funding_hourly_pct,
+                tape_quality=item.tape_quality,
+                volume_confirmation=item.volume_confirmation,
+                regime_score=item.regime_score if item.regime_available else None,
+                funding_hard_hourly_pct=hard_funding,
+            )
+            item.extremity_available = result.available
+            item.extremity_score = result.score
+            item.extremity_confidence = result.confidence
+            item.extremity_momentum = result.momentum
+            item.extremity_vwap = result.vwap_deviation
+            item.extremity_range = result.range_position
+            item.extremity_funding = result.funding_crowding
+            item.extremity_regime_adjustment = result.regime_adjustment
+
+            # Extremity is a state warning, never a reversal signal. It only
+            # reduces confidence when the selected trade chases an already
+            # stretched move in the same direction.
+            if result.available and item.state not in {"INVALID_DATA", "NO_TRADE"}:
+                direction = _direction(item.direction)
+                chase = result.score * direction
+                warning = float(self.config.get("extremity_chase_warning", 55.0))
+                block = float(self.config.get("extremity_chase_block", 72.0))
+                penalty = float(self.config.get("extremity_chase_penalty", 8.0))
+                if chase >= warning:
+                    applied = penalty if chase >= block else penalty * 0.5
+                    item.trade_readiness = _clamp(item.trade_readiness - applied)
+                    item.confidence = _clamp(item.confidence - applied * 0.55)
+                    item.opportunity = _clamp(item.opportunity - applied * 0.40)
+                    item.attention_score = _clamp(item.attention_score - applied * 0.35)
+                    item.reasons.append(
+                        f"Bewegung bereits gleichgerichtet überdehnt ({chase:.0f})"
+                    )
+                    if chase >= block:
+                        if item.state == "BUY":
+                            item.state = "STRONG_LONG"
+                        elif item.state == "SELL":
+                            item.state = "STRONG_SHORT"
+                        elif item.state == "STRONG_LONG":
+                            item.state = "WATCH_LONG"
+                        elif item.state == "STRONG_SHORT":
+                            item.state = "WATCH_SHORT"
+
+            payload[item.symbol] = result.to_dict()
+        return payload
 
     def _apply_event_context(
         self,
@@ -2050,13 +2218,19 @@ class LighterMonitor:
         by_symbol = {item.symbol: item for item in signals}
         configured_order = [
             str(value).upper()
-            for value in self.config.get("summary_order", ["HYPE", "SOL", "ETH", "BTC"])
+            for value in self.config.get(
+                "summary_order", ["UNI", "HYPE", "SOL", "ETH", "BTC"]
+            )
         ]
-        summary = [by_symbol[symbol] for symbol in configured_order if symbol in by_symbol and symbol in requested]
+        summary = [
+            by_symbol[symbol]
+            for symbol in configured_order
+            if symbol in by_symbol and symbol in requested
+        ]
         for symbol in requested:
             if symbol in by_symbol and by_symbol[symbol] not in summary:
                 summary.append(by_symbol[symbol])
-        summary = summary[:int(self.config.get("summary_coin_count", 4))]
+        summary = summary[:int(self.config.get("summary_coin_count", 5))]
 
         def summary_line(compact_clock: bool = False) -> str:
             tokens: list[str] = []
@@ -2064,7 +2238,12 @@ class LighterMonitor:
                 event = item.event_display_code
                 if compact_clock:
                     event = re.sub(r"@(\d{2}):\d{2}$", r"@\1", event)
-                tokens.append(f"{item.alias}{SUMMARY_COLORS[item.state]}{event}")
+                color = (
+                    "⚫"
+                    if item.state == "INVALID_DATA"
+                    else extremity_color(item.extremity_score, item.extremity_available)
+                )
+                tokens.append(f"{item.alias}{color}{event}")
             return " ".join(tokens)
 
         header = summary_line(False)
@@ -2086,21 +2265,54 @@ class LighterMonitor:
                 or item.attention_score >= watch_threshold
             )
         ]
-        screamers.sort(key=lambda item: (-item.attention_score, -item.trade_readiness))
-        # BTC is the permanent reference and is never displaced from details.
-        details = ([btc] if btc is not None else [])
-        details.extend(
-            item for item in screamers
-            if item not in details and item.attention_score >= threshold
+        screamers.sort(
+            key=lambda item: (
+                -STATE_TIER.get(item.state, 0),
+                -item.attention_score,
+                -item.trade_readiness,
+            )
         )
-        details = details[:maximum_details]
+        # Strongest current signals get the first places; BTC remains the final
+        # permanent reference and cannot be pushed out completely.
+        details: list[Signal] = []
+        reserve_btc = 1 if btc is not None else 0
+        for item in screamers:
+            if item.attention_score < threshold:
+                continue
+            if len(details) >= maximum_details - reserve_btc:
+                break
+            details.append(item)
+        if btc is not None and btc not in details:
+            details.append(btc)
         if not details and ranked:
             details = ranked[:1]
+        details = details[:maximum_details]
 
         cost_limit = float(self.config.get("max_roundtrip_cost_pct", 0.10))
         funding_watch = float(self.config.get("funding_watch_hourly_pct", 0.015))
         tape_min = float(self.config.get("minimum_tape_quality", 68))
+        regime_warning = float(
+            (self.config.get("regime") or {}).get("warning_threshold_points", -4.0)
+        )
+
+        def invalid_code(item: Signal) -> str:
+            reason = " ".join(item.reasons).lower()
+            if "veraltet" in reason or "stale" in reason:
+                return "STALE!"
+            if "candle gap" in reason or "kerzenlücke" in reason:
+                return "GAP!"
+            if "/orderbookorders" in reason or "orderbuch" in reason:
+                return "BOOK!"
+            if "/candles" in reason or "kerzen" in reason:
+                return "CND!"
+            return "DATA!"
+
         for item in details:
+            if item.state == "INVALID_DATA":
+                line = f"⚫? {item.alias}00 {invalid_code(item)}"
+                lines.append(line)
+                continue
+
             windows = "".join(
                 f"{minutes}{_window_color(item.windows.get(minutes, Window(minutes)))}"
                 for minutes in DISPLAY_WINDOWS
@@ -2114,21 +2326,34 @@ class LighterMonitor:
                 warnings.append("K!")
             if item.symbol != "BTC" and item.btc_context is not None and item.btc_context < 40:
                 warnings.append("B!")
-            regime_warning = float((self.config.get("regime") or {}).get("warning_threshold_points", -4.0))
             if item.regime_available and item.regime_modifier <= regime_warning:
                 warnings.append("R!")
+            if item.selected_setup == "REVERSAL" and item.reversal.relative_opposition:
+                warnings.append("RS!")
             if item.funding_hourly_pct is None:
                 warnings.append("F!")
             else:
-                against = _directional(item.funding_hourly_pct, _direction(item.direction))
+                against = _directional(
+                    item.funding_hourly_pct,
+                    _direction(item.direction),
+                )
                 if against > funding_watch:
                     warnings.append("F!")
-            warning_text = (" " + "".join(warnings)) if warnings else ""
-            line = (
-                f"{_detail_head(item)} {windows} "
-                f"{_setup_code(item)}{round(item.trade_readiness):02d}{_setup_age_code(item)} {item.alias}"
-                f"{warning_text}"
+            warning_text = "".join(warnings)
+            setup_token = f"{_setup_code(item)}{_setup_age_code(item)}"
+            extreme_token = extremity_code(
+                item.extremity_score,
+                item.extremity_available,
             )
+            tail = " ".join(
+                value for value in (
+                    f"{item.alias}{round(item.trade_readiness):02d}",
+                    setup_token,
+                    extreme_token,
+                    warning_text,
+                ) if value
+            )
+            line = f"{_detail_head(item)} {windows} {tail}"
             lines.append(line)
 
         max_len = int(self.config.get("discord_max_codepoints_per_line", 58))
@@ -2214,6 +2439,7 @@ class LighterMonitor:
 
         self._apply_btc_context(signals)
         regime_payload = self._apply_regime_context(signals, snapshots, daily_candles, now)
+        extremity_payload = self._apply_extremity_context(signals, snapshots)
         self._apply_event_context(signals, event_marks, event_display_codes)
         self.last_signals = self._rank(signals)
         self.last_snapshots = snapshots
@@ -2239,6 +2465,7 @@ class LighterMonitor:
             "semantic_report": semantic_report,
             "signals": [asdict(item) for item in self.last_signals],
             "regime": regime_payload,
+            "extremity": extremity_payload,
             "event_marks": {
                 symbol: (asdict(mark) if hasattr(mark, "__dataclass_fields__") else dict(mark))
                 for symbol, mark in (event_marks or {}).items()
@@ -2262,4 +2489,4 @@ class LighterMonitor:
         return candles, book, daily
 
 
-# Package revision: v3.8.5-w-clarity-r1
+# Package revision: v3.9.0-extremity-reclaim-r1

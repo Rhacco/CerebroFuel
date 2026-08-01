@@ -585,4 +585,4 @@ def update_and_score(
         "state_points": sum(len(item.get("points", [])) for item in coins.values()),
         "windows": list(WINDOWS),
     }
-# Package revision: v3.8.5-w-clarity-r1
+# Package revision: v3.9.0-extremity-reclaim-r1
