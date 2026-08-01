@@ -1,10 +1,11 @@
-"""Restore and checkpoint the v3.8.3 paper state through the GitHub API."""
+"""Restore, migrate and checkpoint the v3.8.4 paper state through GitHub."""
 from __future__ import annotations
 
 import argparse
 import base64
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -16,8 +17,17 @@ from urllib.request import Request, urlopen
 API = "https://api.github.com"
 BRANCH = "paper-state"
 REMOTE_FILE = "paper_state.json"
-APP_VERSION = "3.8.3"
-COMPATIBLE_APP_VERSIONS = {"3.7", "3.7.1", "3.8.0", "3.8.1", APP_VERSION}
+APP_VERSION = "3.8.4"
+STATE_SCHEMA = 1
+COMPATIBLE_APP_VERSIONS = {
+    "3.7",
+    "3.7.1",
+    "3.8.0",
+    "3.8.1",
+    "3.8.2",
+    "3.8.3",
+    APP_VERSION,
+}
 
 
 class GitHubStateStore:
@@ -51,7 +61,7 @@ class GitHubStateStore:
                 "Accept": "application/vnd.github+json",
                 "Authorization": f"Bearer {self.token}",
                 "Content-Type": "application/json",
-                "User-Agent": "cf-paper-state/3.8.3",
+                "User-Agent": "cf-paper-state/3.8.4",
                 "X-GitHub-Api-Version": "2022-11-28",
             },
         )
@@ -91,18 +101,67 @@ class GitHubStateStore:
         )
 
 
-def _read_state(path: Path) -> dict[str, Any]:
+def _normalized_version(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if raw.startswith("v"):
+        raw = raw[1:]
+    raw = raw.split("+", 1)[0]
+    parts = raw.split("-")
+    if len(parts) > 1 and parts[0] and parts[0][0].isdigit():
+        raw = parts[0]
+    return raw
+
+
+def _migrate_state(raw: Any) -> tuple[dict[str, Any], bool]:
+    if not isinstance(raw, dict):
+        raise RuntimeError("Paper-State ist kein JSON-Objekt")
     try:
-        state = json.loads(path.read_text(encoding="utf-8"))
+        schema = int(raw.get("schema", -1))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Paper-State-Schema ist ungültig") from exc
+    if schema != STATE_SCHEMA:
+        raise RuntimeError(f"Paper-State-Schema {schema} wird nicht unterstützt")
+
+    source_version = _normalized_version(raw.get("app_version"))
+    if source_version not in COMPATIBLE_APP_VERSIONS:
+        raise RuntimeError(
+            f"Paper-State-Version {raw.get('app_version')!r} wird nicht unterstützt"
+        )
+    if not isinstance(raw.get("positions", {}), dict):
+        raise RuntimeError("Paper-State-Positionen sind ungültig")
+    try:
+        balance = float(raw.get("balance_usd", -1.0))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Paper-State-Kontostand ist ungültig") from exc
+    if balance < 0:
+        raise RuntimeError("Paper-State-Kontostand ist negativ")
+
+    state = dict(raw)
+    changed = source_version != APP_VERSION or state.get("app_version") != APP_VERSION
+    state["schema"] = STATE_SCHEMA
+    state["app_version"] = APP_VERSION
+    state.setdefault("starting_balance_usd", max(balance, 0.0))
+    state.setdefault("balance_usd", balance)
+    state.setdefault("positions", {})
+    state.setdefault("observations", {})
+    state.setdefault("cooldowns", {})
+    state.setdefault("ledger", [])
+    state.setdefault("run_count", 0)
+    state.setdefault("last_run_at", None)
+    state.setdefault("last_decision_key", None)
+    state.setdefault("last_checkpoint_at", None)
+    state.setdefault("checkpoint_requested", changed)
+    if changed:
+        state["checkpoint_requested"] = True
+    return state, changed
+
+
+def _read_state(path: Path) -> tuple[dict[str, Any], bool]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"Paper-State ist nicht lesbar: {exc}") from exc
-    if (
-        not isinstance(state, dict)
-        or state.get("app_version") not in COMPATIBLE_APP_VERSIONS
-        or int(state.get("schema", -1)) != 1
-    ):
-        raise RuntimeError("Paper-State ist inkompatibel")
-    return state
+    return _migrate_state(raw)
 
 
 def _write_state(path: Path, state: dict[str, Any]) -> None:
@@ -115,11 +174,37 @@ def _write_state(path: Path, state: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
+def _quarantine(path: Path, reason: Exception) -> None:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    target = path.with_name(f"{path.stem}.incompatible-{stamp}{path.suffix}")
+    try:
+        path.replace(target)
+        print(
+            f"Warnung: lokaler Paper-State wurde als {target.name} gesichert ({reason}).",
+            file=sys.stderr,
+        )
+    except OSError:
+        path.unlink(missing_ok=True)
+        print(
+            f"Warnung: inkompatibler lokaler Paper-State wurde verworfen ({reason}).",
+            file=sys.stderr,
+        )
+
+
 def restore(path: Path, store: GitHubStateStore) -> int:
     if path.exists():
-        _read_state(path)
-        print("Paper-State aus dem Laufzeit-Cache geladen.")
-        return 0
+        try:
+            state, changed = _read_state(path)
+        except RuntimeError as exc:
+            _quarantine(path, exc)
+        else:
+            if changed:
+                _write_state(path, state)
+                print("Paper-State aus dem Laufzeit-Cache migriert und geladen.")
+            else:
+                print("Paper-State aus dem Laufzeit-Cache geladen.")
+            return 0
+
     if not store.available:
         print("Kein GitHub-State konfiguriert; neuer lokaler Paper-Stand.")
         return 0
@@ -129,12 +214,20 @@ def restore(path: Path, store: GitHubStateStore) -> int:
         return 0
     try:
         content = base64.b64decode(str(remote["content"])).decode("utf-8")
-        state = json.loads(content)
-    except (KeyError, ValueError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"Remote Paper-State ist beschädigt: {exc}") from exc
+        raw = json.loads(content)
+        state, changed = _migrate_state(raw)
+    except (KeyError, ValueError, UnicodeDecodeError, json.JSONDecodeError, RuntimeError) as exc:
+        print(
+            f"Warnung: Remote Paper-State ist nicht nutzbar; neuer Stand wird aufgebaut ({exc}).",
+            file=sys.stderr,
+        )
+        return 0
     _write_state(path, state)
-    _read_state(path)
-    print("Paper-State aus dem dauerhaften Checkpoint geladen.")
+    print(
+        "Paper-State aus dem dauerhaften Checkpoint migriert und geladen."
+        if changed
+        else "Paper-State aus dem dauerhaften Checkpoint geladen."
+    )
     return 0
 
 
@@ -144,7 +237,9 @@ def checkpoint(
     interval_hours: float,
     force: bool,
 ) -> int:
-    state = _read_state(path)
+    state, changed = _read_state(path)
+    if changed:
+        _write_state(path, state)
     if not store.available:
         print("Kein GitHub-State konfiguriert; Checkpoint lokal belassen.")
         return 0
@@ -171,6 +266,7 @@ def checkpoint(
     store.ensure_branch()
     current = store.remote_file()
     uploaded_state = dict(state)
+    uploaded_state["app_version"] = APP_VERSION
     uploaded_state["last_checkpoint_at"] = now.isoformat()
     uploaded_state["checkpoint_requested"] = False
     encoded = base64.b64encode(
@@ -221,4 +317,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

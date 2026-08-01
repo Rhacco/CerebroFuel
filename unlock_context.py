@@ -65,4 +65,4 @@ def unlock_context(display: str, config: Mapping[str, Any], *, now: datetime | N
         "stale_days": stale_days,
         "stale": stale,
     }
-# Package revision: v3.8.3-regime-r1
+# Package revision: v3.8.4-state-fix-r1

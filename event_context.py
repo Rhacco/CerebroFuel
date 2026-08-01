@@ -1,4 +1,4 @@
-"""Verified critical-event context for CF v3.8.3.
+"""Verified critical-event context for CF v3.8.4.
 
 Automatic facts come only from official public schedules/status pages. Project-
 specific events such as token unlocks are accepted only from a local or remote
@@ -26,7 +26,7 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 CACHE_VERSION = "event-cache-v382-r2"
-USER_AGENT = "crypto-signal-monitor/3.8.3"
+USER_AGENT = "crypto-signal-monitor/3.8.4"
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4,
     "may": 5, "june": 6, "july": 7, "august": 8,
@@ -950,4 +950,4 @@ def load_critical_events(
     return EventSnapshot(marks, all_events, diagnostics, _iso(now) or "")
 
 
-# Package revision: v3.8.3-regime-r1
+# Package revision: v3.8.4-state-fix-r1

@@ -1,4 +1,4 @@
-"""Lighter-native early-swing/T/W signal engine for CF v3.8.3."""
+"""Lighter-native early-swing/T/W signal engine for CF v3.8.4."""
 from __future__ import annotations
 
 import json
@@ -17,8 +17,8 @@ from zoneinfo import ZoneInfo
 
 from regime_context import calculate_regimes
 
-APP_VERSION = "3.8.3"
-PACKAGE_REVISION = "v3.8.3-regime-r1"
+APP_VERSION = "3.8.4"
+PACKAGE_REVISION = "v3.8.4-state-fix-r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 TREND_WINDOWS = (5, 15, 60)
@@ -2201,4 +2201,4 @@ class LighterMonitor:
         return candles, book, daily
 
 
-# Package revision: v3.8.3-regime-r1
+# Package revision: v3.8.4-state-fix-r1

@@ -1,4 +1,4 @@
-"""Bounded 7/14/30-day regime context for CF v3.8.3.
+"""Bounded 7/14/30-day regime context for CF v3.8.4.
 
 The regime layer never creates a trade direction. It only adjusts an already
 existing short-term signal by at most a configured number of score points.
@@ -293,4 +293,4 @@ def calculate_regimes(
     return results
 
 
-# Package revision: v3.8.3-regime-r1
+# Package revision: v3.8.4-state-fix-r1
