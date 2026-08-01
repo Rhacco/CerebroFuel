@@ -2,12 +2,10 @@
   "app_version": "3.9.2",
   "balance_usd": 99.9949242333,
   "checkpoint_requested": false,
-  "cooldowns": {
-    "ETH": 1785622081
-  },
-  "last_checkpoint_at": "2026-08-01T22:05:03.228758+00:00",
-  "last_decision_key": "1785621840000",
-  "last_run_at": "2026-08-01T22:05:01.698960+00:00",
+  "cooldowns": {},
+  "last_checkpoint_at": "2026-08-01T22:30:02.462550+00:00",
+  "last_decision_key": "1785623340000",
+  "last_run_at": "2026-08-01T22:30:01.194140+00:00",
   "ledger": [
     {
       "action": {
@@ -504,42 +502,167 @@
         "trade_net_pnl_usd": 0.01402584022011779
       },
       "timestamp": "2026-08-01T22:05:01.698960+00:00"
+    },
+    {
+      "action": {
+        "alias": "ETH",
+        "direction": 1,
+        "discord_visible": false,
+        "full_close": false,
+        "is_add": false,
+        "kind": "OPEN",
+        "leverage": 15,
+        "margin_usd": 1.0,
+        "priority": 78.79439130866278,
+        "realized_pnl_usd": 0.0,
+        "reason": "E 87.0/88.1, Stop 0.140%",
+        "symbol": "ETH"
+      },
+      "balance_usd": 99.99492423,
+      "details": {
+        "base_size": 0.0081151704997322,
+        "confidence": 88.13728462311849,
+        "entry_fee_usd": 0.0,
+        "entry_price": 1848.3899999999999,
+        "entry_roundtrip_cost_pct": 0.0005410113666360201,
+        "entry_state": "STRONG_LONG",
+        "notional_usd": 15.0,
+        "rank": 1,
+        "readiness": 86.97338148136605,
+        "setup": "E",
+        "stop_price": 1845.802254,
+        "target_one_price": 1851.3659078999997,
+        "target_two_price": 1853.8242665999999
+      },
+      "timestamp": "2026-08-01T22:30:01.194140+00:00"
     }
   ],
   "observations": {
     "BTC": {
-      "candle_ms": 1785621840000,
+      "candle_ms": 1785623340000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "WATCH_SHORT"
+      "state": "WATCH_LONG"
     },
     "ETH": {
-      "candle_ms": 1785621840000,
+      "candle_ms": 1785623340000,
+      "entry_direction": 1,
+      "entry_streak": 1,
+      "state": "STRONG_LONG"
+    },
+    "HYPE": {
+      "candle_ms": 1785623340000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
-    "HYPE": {
-      "candle_ms": 1785621840000,
-      "entry_direction": 0,
-      "entry_streak": 0,
-      "state": "WATCH_SHORT"
-    },
     "SOL": {
-      "candle_ms": 1785621840000,
+      "candle_ms": 1785623340000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "WATCH_SHORT"
+      "state": "WATCH_LONG"
     },
     "UNI": {
-      "candle_ms": 1785621840000,
+      "candle_ms": 1785623340000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     }
   },
-  "positions": {},
-  "run_count": 74,
+  "positions": {
+    "ETH": {
+      "alias": "ETH",
+      "base_size": 0.00811517049973,
+      "degrade_streak": 0,
+      "direction": 1,
+      "entry_confidence": 88.13728462311849,
+      "entry_features": {
+        "btc_context": 100.0,
+        "chase_warning": false,
+        "confidence": 88.13728462311849,
+        "cost_pct": 0.0005410113666360201,
+        "data_quality": 100.0,
+        "direction": 1,
+        "early_approach_confirmed": false,
+        "early_boundary_distance_pct": 0.0,
+        "early_clean_boundary_test": true,
+        "early_preview_only": false,
+        "event_kind": "EXPIRY",
+        "event_risk": 20.0,
+        "execution_score": 99.45898863335003,
+        "extremity_available": true,
+        "extremity_confidence": 89.618,
+        "extremity_intraday": 50.5691,
+        "extremity_return_1d": -0.7396,
+        "extremity_return_3d": -3.2431,
+        "extremity_return_7d": -1.3996,
+        "extremity_score": 16.2164,
+        "extremity_swing": -41.8138,
+        "funding_hourly_pct": 0.0096,
+        "funding_missing": false,
+        "leverage": 15,
+        "liquidity_score": 84.43740436715925,
+        "margin_usd": 1.0,
+        "probe_entry": true,
+        "rank": 1,
+        "readiness": 86.97338148136605,
+        "rebound_participation": null,
+        "regime_available": true,
+        "regime_consistency": 1.0,
+        "regime_modifier": 2.5381,
+        "regime_score": 28.0238,
+        "relative_14d": 2.2919,
+        "relative_30d": 6.6293,
+        "relative_7d": 0.9731,
+        "relative_drift_60m": 0.2401,
+        "return_14d": -0.762,
+        "return_30d": 8.6896,
+        "return_7d": -1.3996,
+        "reversal_new_extreme": false,
+        "reversal_relative_confirmed": true,
+        "reversal_relative_opposition": false,
+        "reversal_structural_reclaim": false,
+        "risk_usd": 0.021081151704995405,
+        "setup": "E",
+        "setup_age_minutes": 0,
+        "setup_consumed_fraction": 0.046880190448666856,
+        "setup_phase": "strong",
+        "setup_score": 80.0,
+        "stop_pct": 0.14,
+        "symbol": "ETH",
+        "tape_quality": 92.40665531792229,
+        "technical_stop_pct": 0.04532301934683236,
+        "technical_stop_price": 1847.1024577962821,
+        "volume_confirmation": 68.46917744744576
+      },
+      "entry_fee_remaining_usd": 0.0,
+      "entry_price": 1848.3899999999999,
+      "entry_rank": 1,
+      "entry_readiness": 86.97338148136605,
+      "entry_roundtrip_cost_pct": 0.0005410113666360201,
+      "entry_state": "STRONG_LONG",
+      "funding_accrued_usd": 0.0,
+      "funding_updated_at": "2026-08-01T22:30:01.194140+00:00",
+      "last_candle_ms": 1785623340000,
+      "leverage": 15,
+      "margin_usd": 1.0,
+      "notional_usd": 15.0,
+      "opened_at": "2026-08-01T22:30:01.194140+00:00",
+      "probe_entry": true,
+      "realized_pnl_usd": 0.0,
+      "risk_usd": 0.021081151704995405,
+      "scale_count": 0,
+      "setup": "E",
+      "stop_pct": 0.14,
+      "stop_price": 1845.802254,
+      "symbol": "ETH",
+      "taker_fee_pct": 0.0,
+      "target_one_price": 1851.3659078999997,
+      "target_one_taken": false,
+      "target_two_price": 1853.8242665999999
+    }
+  },
+  "run_count": 99,
   "schema": 1,
   "starting_balance_usd": 100.0
 }
