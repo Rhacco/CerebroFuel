@@ -1,4 +1,4 @@
-"""Lighter-native early-swing/T/W signal engine for CF v3.9.1."""
+"""Lighter-native early-swing/T/W signal engine for CF v3.9.2."""
 from __future__ import annotations
 
 import json
@@ -18,8 +18,8 @@ from zoneinfo import ZoneInfo
 from regime_context import calculate_regimes
 from extremity_context import calculate_extremity, extremity_code, extremity_color
 
-APP_VERSION = "3.9.1"
-PACKAGE_REVISION = "v3.9.1-multihorizon-timing-r1"
+APP_VERSION = "3.9.2"
+PACKAGE_REVISION = "v3.9.2-early-build-timing-r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 TREND_WINDOWS = (5, 15, 60)
@@ -111,6 +111,10 @@ class Setup:
     new_extreme_after_event: bool = False
     reclaim_level: float | None = None
     invalidation_price: float | None = None
+    boundary_distance_pct: float = 0.0
+    approach_confirmed: bool = False
+    clean_boundary_test: bool = False
+    preview_only: bool = False
     reason: str = ""
 
 
@@ -188,6 +192,8 @@ class Signal:
     event_source_name: str = ""
     event_source_url: str = ""
     event_starts_at: str | None = None
+    chase_warning: bool = False
+    chase_blocked: bool = False
     windows: dict[int, Window] = field(default_factory=dict)
     early: Setup = field(default_factory=lambda: Setup("EARLY"))
     trend: Setup = field(default_factory=lambda: Setup("TREND"))
@@ -473,10 +479,14 @@ def _assess_early(
     candles: list[Mapping[str, Any]],
     noise: float,
     *,
+    current_price: float | None,
     max_age_minutes: int,
     max_consumed_fraction: float,
     minimum_efficiency: float,
     minimum_volume_consistency: int,
+    approach_noise_multiple: float,
+    probe_noise_multiple: float,
+    probe_max_consumed_fraction: float,
 ) -> Setup:
     """Find a fresh expansion from compression before most of the expected move is consumed."""
     rows = _series(candles, 90)
@@ -511,6 +521,10 @@ def _assess_early(
     volumes = [_f(row.get("V")) for row in trigger]
     returns = [_pct(left, right) for left, right in zip(closes, closes[1:])]
     target_move = max(0.16, pre_range * 0.82, noise * math.sqrt(20.0) * 3.6)
+    live_price = _f(current_price) if current_price is not None else closes[-1]
+    live_gap = abs(_pct(closes[-1], live_price)) if live_price > 0 else 999.0
+    if live_gap > max(0.60, target_move * 2.0):
+        live_price = closes[-1]
     candidates: list[Setup] = []
     for direction in (1, -1):
         boundary = pre_high if direction > 0 else pre_low
@@ -522,7 +536,10 @@ def _assess_early(
         path = sum(abs(value) for value in returns)
         efficiency = max(0.0, move_6) / max(path, 1e-9)
         extension = _directional(_pct(boundary, closes[-1]), direction)
+        live_extension = _directional(_pct(boundary, live_price), direction)
         breakout_floor = max(0.022, noise * 0.42)
+        approach_band = max(0.075, noise * approach_noise_multiple)
+        probe_band = max(0.020, noise * probe_noise_multiple)
         crossings: list[int] = []
         for index, close in enumerate(closes):
             current = _directional(_pct(boundary, close), direction)
@@ -571,7 +588,33 @@ def _assess_early(
             + room_score * 0.08
         )
         positive_candles = sum(value > 0 for value in directional_returns[-4:])
-        near_boundary = extension >= -max(0.045, noise * 0.90)
+        closed_near = -approach_band <= extension < breakout_floor
+        live_near = -approach_band <= live_extension < breakout_floor
+        approach_progress = (
+            move_3 >= momentum_floor * 0.28
+            and efficiency >= minimum_efficiency * 0.55
+            and recent_ratio >= 0.92
+            and consistency >= 1
+            and positive_candles >= 2
+            and compression_score >= 48.0
+            and acceleration >= -noise * 0.45
+        )
+        approach_confirmed = bool((closed_near or live_near) and approach_progress)
+        clean_test = (
+            (age is None or age <= 1)
+            and extension >= -probe_band
+            and extension <= max(breakout_floor * 2.2, target_move * probe_max_consumed_fraction)
+            and consumed <= probe_max_consumed_fraction
+            and move_3 >= momentum_floor * 0.55
+            and move_6 >= momentum_floor * 0.90
+            and efficiency >= minimum_efficiency * 0.72
+            and recent_ratio >= 1.02
+            and consistency >= max(2, minimum_volume_consistency - 1)
+            and positive_candles >= 3
+            and compression_score >= 50.0
+            and spike_share <= 0.62
+            and expected_edge >= target_move * 0.45
+        )
         late = (
             extension > 0
             and (
@@ -597,18 +640,21 @@ def _assess_early(
             and spike_share <= 0.62
         )
         forming = (
-            near_boundary
-            and move_3 >= momentum_floor * 0.62
-            and efficiency >= minimum_efficiency * 0.72
-            and consistency >= max(1, minimum_volume_consistency - 1)
-            and score >= 55.0
+            event_index is None
+            and extension < breakout_floor
+            and live_extension < breakout_floor
+            and approach_confirmed
+            and score >= 52.0
+            and expected_edge >= target_move * 0.38
         )
         if late:
             phase, exit_hint, score = "late", True, min(score, 39.0)
         elif ready:
             phase, exit_hint = "ready", False
+        elif clean_test:
+            phase, exit_hint, score = "strong", False, min(max(score, 64.0), 80.0)
         elif forming:
-            phase, exit_hint, score = "forming", False, min(score, 73.0)
+            phase, exit_hint, score = "forming", False, min(max(score, 55.0), 72.0)
         else:
             phase, exit_hint, score = "none", False, min(score, 48.0)
         candidates.append(Setup(
@@ -633,10 +679,16 @@ def _assess_early(
             invalidation_price=boundary * (
                 1.0 - direction * max(0.015, noise * 0.65) / 100.0
             ),
+            boundary_distance_pct=max(0.0, -max(extension, live_extension)),
+            approach_confirmed=approach_confirmed,
+            clean_boundary_test=clean_test,
+            preview_only=bool(phase == "forming" and live_near and not closed_near),
             reason=(
                 f"compression={compression_score:.1f} move3={move_3:.3f}% "
                 f"eff={efficiency:.2f} volume={recent_ratio:.2f}/{consistency} "
-                f"age={age} used={consumed:.2f} edge={expected_edge:.3f}%"
+                f"age={age} used={consumed:.2f} edge={expected_edge:.3f}% "
+                f"dist={max(0.0, -max(extension, live_extension)):.3f}% "
+                f"test={int(clean_test)} preview={int(live_near and not closed_near)}"
             ),
         ))
     return max(candidates, key=lambda item: (*_setup_priority(item), item.event_strength))
@@ -1181,6 +1233,8 @@ def _selected_setup(signal: Signal) -> Setup:
 
 
 def _action_code(signal: Signal) -> str:
+    if signal.chase_warning:
+        return "WAIT"
     return {
         "BUY": "NOW",
         "SELL": "NOW",
@@ -1316,6 +1370,15 @@ class LighterMonitor:
             raise ValueError("early_immediate_max_age_minutes ist ungültig")
         if not 0 < immediate_used <= float(self.config.get("early_max_consumed_fraction", 0.66)):
             raise ValueError("early_immediate_max_consumed_fraction ist ungültig")
+        approach_multiple = float(self.config.get("early_approach_noise_multiple", 2.0))
+        probe_multiple = float(self.config.get("early_probe_noise_multiple", 0.60))
+        probe_used = float(self.config.get("early_probe_max_consumed_fraction", 0.35))
+        if not 0.8 <= approach_multiple <= 4.0:
+            raise ValueError("early_approach_noise_multiple ist ungültig")
+        if not 0.2 <= probe_multiple < approach_multiple:
+            raise ValueError("early_probe_noise_multiple ist ungültig")
+        if not 0.10 <= probe_used < immediate_used:
+            raise ValueError("early_probe_max_consumed_fraction ist ungültig")
         extremity_warning = float(self.config.get("extremity_chase_warning", 55.0))
         extremity_block = float(self.config.get("extremity_chase_block", 72.0))
         extremity_penalty = float(self.config.get("extremity_chase_penalty", 8.0))
@@ -1468,10 +1531,14 @@ class LighterMonitor:
         signal.early = _assess_early(
             candles,
             noise,
+            current_price=reference_price,
             max_age_minutes=int(self.config.get("early_max_age_minutes", 2)),
             max_consumed_fraction=float(self.config.get("early_max_consumed_fraction", 0.66)),
             minimum_efficiency=float(self.config.get("early_min_efficiency", 0.52)),
             minimum_volume_consistency=int(self.config.get("early_min_volume_consistency", 2)),
+            approach_noise_multiple=float(self.config.get("early_approach_noise_multiple", 2.0)),
+            probe_noise_multiple=float(self.config.get("early_probe_noise_multiple", 0.60)),
+            probe_max_consumed_fraction=float(self.config.get("early_probe_max_consumed_fraction", 0.35)),
         )
         signal.trend = _assess_trend(candles, signal.windows, noise, self.config)
         signal.reversal = _assess_reversal(
@@ -2138,24 +2205,31 @@ class LighterMonitor:
                     )
                     exact_age = int(self.config.get("early_immediate_max_age_minutes", 1))
                     exact_used = float(self.config.get("early_immediate_max_consumed_fraction", 0.50))
-                    not_exact = (
+                    has_broken = bool(setup.age_minutes is not None or setup.move_pct > 0)
+                    stretch_chase = chase >= block or (chase >= warning and has_broken)
+                    timing_chase = bool(
                         (setup.age_minutes is not None and setup.age_minutes > exact_age)
                         or setup.recovery_fraction > exact_used
                     )
-                    if chase >= block:
-                        item.trade_readiness = _clamp(item.trade_readiness - penalty)
-                        item.confidence = _clamp(item.confidence - penalty * 0.55)
-                        item.opportunity = _clamp(item.opportunity - penalty * 0.45)
-                        cap_immediate(item, to_watch=True)
-                        item.reasons.append("E bereits stark ausgereizt; nicht hinterherlaufen")
-                    elif chase >= warning and not aligned60:
-                        item.trade_readiness = _clamp(item.trade_readiness - penalty * 0.65)
-                        item.confidence = _clamp(item.confidence - penalty * 0.35)
+                    item.chase_warning = bool(stretch_chase or timing_chase)
+                    item.chase_blocked = bool(
+                        chase >= block
+                        or setup.recovery_fraction > float(self.config.get("early_max_consumed_fraction", 0.66))
+                    )
+                    if item.chase_warning:
+                        applied = penalty if item.chase_blocked else penalty * 0.65
+                        item.trade_readiness = _clamp(item.trade_readiness - applied)
+                        item.confidence = _clamp(item.confidence - applied * 0.55)
+                        item.opportunity = _clamp(item.opportunity - applied * 0.45)
+                        item.state = "NO_TRADE"
+                        item.reasons.append(
+                            "E bereits gelaufen; WAIT statt Hinterherlaufen"
+                            if has_broken else
+                            "E zu stark überdehnt; WAIT"
+                        )
+                    elif item.state in {"BUY", "SELL"} and not aligned60 and chase >= warning * 0.75:
                         cap_immediate(item)
-                        item.reasons.append("E überdehnt ohne bestätigendes 60m-Fenster")
-                    elif not_exact:
-                        cap_immediate(item)
-                        item.reasons.append("E nicht mehr im exakten Sofortfenster")
+                        item.reasons.append("E NOW ohne 60m-Bestätigung begrenzt")
 
                 elif item.selected_setup == "REVERSAL":
                     exhaustion = -result.score * direction
@@ -2441,14 +2515,8 @@ class LighterMonitor:
             if item.selected_setup == "REVERSAL" and item.reversal.relative_opposition:
                 warnings.append("RS!")
             setup = _selected_setup(item)
-            if item.selected_setup == "EARLY":
-                directional_extreme = item.extremity_score * _direction(item.direction)
-                if (
-                    directional_extreme >= float(self.config.get("early_chase_warning", 35.0))
-                    or (setup.age_minutes is not None and setup.age_minutes > int(self.config.get("early_immediate_max_age_minutes", 1)))
-                    or setup.recovery_fraction > float(self.config.get("early_immediate_max_consumed_fraction", 0.50))
-                ):
-                    warnings.append("CH!")
+            if item.selected_setup == "EARLY" and item.chase_warning:
+                warnings.append("CH!")
             if item.funding_hourly_pct is None:
                 warnings.append("F!")
             else:
@@ -2609,4 +2677,4 @@ class LighterMonitor:
         return candles, book, daily
 
 
-# Package revision: v3.9.1-multihorizon-timing-r1
+# Package revision: v3.9.2-early-build-timing-r1

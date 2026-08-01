@@ -1,4 +1,4 @@
-"""Deterministic, multi-candidate paper-trading engine for CF v3.9.1."""
+"""Deterministic, multi-candidate paper-trading engine for CF v3.9.2."""
 from __future__ import annotations
 
 import json
@@ -10,8 +10,8 @@ from typing import Any, Iterable, Mapping
 
 
 STATE_SCHEMA = 1
-APP_VERSION = "3.9.1"
-COMPATIBLE_APP_VERSIONS = {APP_VERSION, "3.9.0"}
+APP_VERSION = "3.9.2"
+COMPATIBLE_APP_VERSIONS = {APP_VERSION, "3.9.1", "3.9.0"}
 ENTRY_STATES = {"BUY": 1, "SELL": -1, "STRONG_LONG": 1, "STRONG_SHORT": -1}
 IMMEDIATE_STATES = {"BUY", "SELL"}
 PROBE_STATES = {"STRONG_LONG", "STRONG_SHORT"}
@@ -510,6 +510,8 @@ class PaperTrader:
         direction = ENTRY_STATES.get(signal.state)
         if direction is None:
             return "kein starkes Einstiegssignal"
+        if bool(getattr(signal, "chase_warning", False)):
+            return "CH!-Warnung blockiert Hinterherlaufen"
         technical_stop = max(0.0, _f(getattr(signal, "technical_stop_pct", 0.0)))
         if technical_stop > float(self.config.get("paper_max_technical_stop_pct", 1.20)):
             return "technisches Invalidationsniveau ist zu weit entfernt"
@@ -823,6 +825,11 @@ class PaperTrader:
                 "setup_score": float(_setup(signal).score),
                 "setup_age_minutes": _setup(signal).age_minutes,
                 "setup_consumed_fraction": float(_setup(signal).recovery_fraction),
+                "early_boundary_distance_pct": float(getattr(_setup(signal), "boundary_distance_pct", 0.0)),
+                "early_approach_confirmed": bool(getattr(_setup(signal), "approach_confirmed", False)),
+                "early_clean_boundary_test": bool(getattr(_setup(signal), "clean_boundary_test", False)),
+                "early_preview_only": bool(getattr(_setup(signal), "preview_only", False)),
+                "chase_warning": bool(getattr(signal, "chase_warning", False)),
                 "readiness": float(signal.trade_readiness),
                 "confidence": float(signal.confidence),
                 "execution_score": float(signal.execution_score),
@@ -1383,7 +1390,7 @@ class PaperTrader:
         for symbol, position in list((self.state.get("positions") or {}).items()):
             reason: str | None = None
             if symbol not in allowed_symbols:
-                reason = "Symbol nicht mehr im v3.9.1-Kandidatenpool"
+                reason = "Symbol nicht mehr im v3.9.2-Kandidatenpool"
             elif str(position.get("setup")) == "P":
                 reason = "P-Setup seit v3.7.1 deaktiviert"
             if reason is None:
@@ -1520,7 +1527,7 @@ class PaperTrader:
                 f"{top}"
             )
         equity, free, margin = self._equity()
-        # Paper actions are deliberately log-only in v3.9.1.
+        # Paper actions are deliberately log-only in v3.9.2.
         action_line = None
         self._log(
             f"KONTO Balance {_money(_f(self.state.get('balance_usd')), compact=False)} | "

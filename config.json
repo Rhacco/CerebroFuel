@@ -1,6 +1,6 @@
 {
-  "schema_version": "3.9.1",
-  "package_revision": "v3.9.1-multihorizon-timing-r1",
+  "schema_version": "3.9.2",
+  "package_revision": "v3.9.2-early-build-timing-r1",
   "lighter_base_url": "https://mainnet.zklighter.elliot.ai/api/v1",
   "timezone": "Europe/Berlin",
   "candidate_symbols": [
@@ -90,7 +90,7 @@
   "paper_stop_cooldown_minutes": 12,
   "paper_action_line_max_codepoints": 34,
   "paper_ledger_limit": 500,
-  "discord_username": "CF v3.9.1",
+  "discord_username": "CF v3.9.2",
   "discord_avatar_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Cryptocurrency_Logo.svg/330px-Cryptocurrency_Logo.svg.png",
   "test_candidate_symbols": [],
   "candidate_trade_penalty_points": {},
@@ -217,12 +217,15 @@
   "extremity_chase_block": 72,
   "extremity_chase_penalty": 8,
   "early_immediate_max_age_minutes": 1,
-  "early_immediate_max_consumed_fraction": 0.5,
+  "early_immediate_max_consumed_fraction": 0.42,
   "early_chase_warning": 35,
   "early_chase_block": 50,
   "early_chase_penalty": 10,
   "reversal_now_min_extremity": 18,
   "paper_early_max_age_minutes": 1,
   "paper_early_max_consumed_fraction": 0.55,
-  "paper_max_technical_stop_pct": 1.2
+  "paper_max_technical_stop_pct": 1.2,
+  "early_approach_noise_multiple": 2.0,
+  "early_probe_noise_multiple": 0.6,
+  "early_probe_max_consumed_fraction": 0.35
 }

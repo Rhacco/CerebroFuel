@@ -1,4 +1,4 @@
-"""Multi-horizon extension and crowding score for CF v3.9.1.
+"""Multi-horizon extension and crowding score for CF v3.9.2.
 
 Positive values mean unusually extended upward; negative values mean unusually
 extended downward.  The score combines intraday displacement with 1/3/7-day
@@ -278,4 +278,4 @@ def extremity_code(score: float, available: bool = True) -> str:
     return f"X{rounded:+03d}"
 
 
-# Package revision: v3.9.1-multihorizon-timing-r1
+# Package revision: v3.9.2-early-build-timing-r1

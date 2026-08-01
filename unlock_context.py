@@ -65,4 +65,4 @@ def unlock_context(display: str, config: Mapping[str, Any], *, now: datetime | N
         "stale_days": stale_days,
         "stale": stale,
     }
-# Package revision: v3.9.1-multihorizon-timing-r1
+# Package revision: v3.9.2-early-build-timing-r1
