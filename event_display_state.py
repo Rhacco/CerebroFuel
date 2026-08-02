@@ -1,4 +1,4 @@
-"""Hourly display throttling for future events in CF v3.9.3.
+"""Hourly display throttling for future events in CF v4.0.0.
 
 Future-day events are shown once in the first successful Discord report of each
 local clock hour. Events scheduled for today, active incidents, and date-only
@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
-STATE_VERSION = "event-display-v393-r2"
+STATE_VERSION = "event-display-v400-r1"
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,5 @@
-name: Crypto Signal Monitor v3.9.3
-# Package revision: v3.9.3-lighter-top3-r1
+name: Crypto Signal Monitor v4.0.0
+# Package revision: v4.0.0-fresh-incident-r1
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: crypto-signal-monitor-v393
+  group: crypto-signal-monitor-v400
   cancel-in-progress: false
 
 jobs:
@@ -36,19 +36,13 @@ jobs:
             output/paper_state.json
             output/event_cache.json
             output/event_display_state.json
+            output/incident_state.json
             output/parameter_review.json
-          key: runtime-state-v393-${{ github.run_id }}
+          key: runtime-state-v400-${{ github.run_id }}
+          # actions/cache accepts at most ten keys total, including `key`.
+          # Keep this fresh v4 state independent and use one restore prefix.
           restore-keys: |
-            runtime-state-v393-
-            runtime-state-v392-
-            runtime-state-v391-
-            runtime-state-v390-
-            runtime-state-v385-
-            runtime-state-v384-
-            runtime-state-v383-
-            runtime-state-v382-
-            runtime-state-v381-
-            paper-state-v371-
+            runtime-state-v400-
       - name: Paper-State wiederherstellen
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -75,5 +69,6 @@ jobs:
             output/paper_state.json
             output/event_cache.json
             output/event_display_state.json
+            output/incident_state.json
             output/parameter_review.json
-          key: runtime-state-v393-${{ github.run_id }}
+          key: runtime-state-v400-${{ github.run_id }}

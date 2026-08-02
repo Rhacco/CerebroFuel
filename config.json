@@ -1,6 +1,6 @@
 {
-  "schema_version": "3.9.3",
-  "package_revision": "v3.9.3-lighter-top3-r1",
+  "schema_version": "4.0.0",
+  "package_revision": "v4.0.0-fresh-incident-r1",
   "lighter_base_url": "https://mainnet.zklighter.elliot.ai/api/v1",
   "timezone": "Europe/Berlin",
   "candidate_symbols": [
@@ -14,9 +14,11 @@
     "NEAR",
     "ONDO",
     "1000PEPE",
+    "1000BONK",
     "BTC"
   ],
   "aliases": {
+    "1000BONK": "BNK",
     "1000PEPE": "PEP",
     "AAVE": "AAV",
     "BTC": "BTC",
@@ -28,6 +30,12 @@
     "PUMP": "PMP",
     "SUI": "SUI",
     "ZEC": "ZEC"
+  },
+  "event_symbol_aliases": {
+    "BONK": "1000BONK",
+    "KBONK": "1000BONK",
+    "PEPE": "1000PEPE",
+    "KPEPE": "1000PEPE"
   },
   "summary_coin_count": 4,
   "summary_anchor_symbol": "BTC",
@@ -107,11 +115,12 @@
   "paper_stop_cooldown_minutes": 12,
   "paper_action_line_max_codepoints": 34,
   "paper_ledger_limit": 500,
-  "discord_username": "CF v3.9.3",
+  "discord_username": "CF v4.0.0",
   "discord_avatar_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Cryptocurrency_Logo.svg/330px-Cryptocurrency_Logo.svg.png",
   "test_candidate_symbols": [
     "ONDO",
-    "1000PEPE"
+    "1000PEPE",
+    "1000BONK"
   ],
   "candidate_trade_penalty_points": {},
   "test_candidate_minimum_readiness": 80,
@@ -167,15 +176,59 @@
       "statuspage.io",
       "github.com",
       "raw.githubusercontent.com",
-      "hyperfoundation.org"
+      "hyperfoundation.org",
+      "realms.today",
+      "solana.com",
+      "securityalliance.org",
+      "certik.com",
+      "halborn.com",
+      "slowmist.com",
+      "x.com"
     ],
     "status_refresh_minutes": 5,
     "derivatives_refresh_minutes": 60,
-    "verified_feed_refresh_minutes": 60,
+    "verified_feed_refresh_minutes": 1,
+    "verified_feed_cache_max_stale_minutes": 10,
     "deribit_expiry_min_notional_usd": {
       "BTC": 500000000
     },
     "deribit_expiry_min_share_pct": 8.0
+  },
+  "incident_detection": {
+    "enabled": true,
+    "priority_minutes": 10,
+    "anchor_override_minutes": 25,
+    "state_retention_minutes": 120,
+    "reset_cooldown_minutes": 5,
+    "acute_kinds": [
+      "SECURITY",
+      "NETWORK"
+    ],
+    "external_min_priority": 98,
+    "external_min_risk": 90,
+    "market_shock_code": "SHK!",
+    "minimum_history_minutes": 90,
+    "baseline_exclude_minutes": 10,
+    "minimum_baseline_coverage": 0.05,
+    "sparse_coverage_threshold": 0.25,
+    "sparse_volume_multiplier_cap": 3.0,
+    "volume_ratio_thresholds": {
+      "1": 10.0,
+      "5": 5.0,
+      "10": 4.0
+    },
+    "price_floor_pct": {
+      "1": 0.75,
+      "5": 1.25,
+      "10": 1.8
+    },
+    "noise_multipliers": {
+      "1": 7.0,
+      "5": 5.0,
+      "10": 4.0
+    },
+    "relative_fraction": 0.65,
+    "one_minute_multiplier": 1.35
   },
   "paper_probe_max_leverage": 20,
   "paper_missing_funding_leverage_cap": 20,

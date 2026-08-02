@@ -1,4 +1,4 @@
-"""Lighter-native early-swing/T/W signal engine for CF v3.9.3."""
+"""Lighter-native early-swing/T/W signal engine for CF v4.0.0."""
 from __future__ import annotations
 
 import json
@@ -9,15 +9,17 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Iterable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from regime_context import calculate_regimes
 from extremity_context import calculate_extremity, extremity_code, extremity_color
+from incident_context import IncidentSnapshot, detect_spontaneous_incidents
 
-APP_VERSION = "3.9.3"
-PACKAGE_REVISION = "v3.9.3-lighter-top3-r1"
+APP_VERSION = "4.0.0"
+PACKAGE_REVISION = "v4.0.0-fresh-incident-r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 TREND_WINDOWS = (5, 15, 60)
@@ -1309,6 +1311,7 @@ class LighterMonitor:
         )
         self.last_signals: list[Signal] = []
         self.last_snapshots: dict[str, dict[str, Any]] = {}
+        self.last_incidents: IncidentSnapshot | None = None
         self.generated_at = datetime.now(timezone.utc)
 
     def _validate_config(self) -> None:
@@ -2332,15 +2335,26 @@ class LighterMonitor:
                 and bool(field(mark, "active", False))
                 for mark in applicable
             )
+            active_emergency = any(
+                str(field(mark, "kind", "") or "")
+                in {"SECURITY", "MARKET_SHOCK"}
+                and bool(field(mark, "active", False))
+                for mark in applicable
+            )
             reason_codes = []
             for mark in applicable:
                 code = str(field(mark, "code", "") or "")
                 if code and code not in reason_codes:
                     reason_codes.append(code)
             reason_code = "+".join(reason_codes) or "Ereignis"
-            if active_network:
+            if active_network or active_emergency:
                 item.state = "NO_TRADE"
-                item.reasons.append(f"{reason_code} aktive Netzwerkstörung")
+                incident_reason = (
+                    "aktive Netzwerkstörung"
+                    if active_network
+                    else "akutes Coin-Risiko"
+                )
+                item.reasons.append(f"{reason_code} {incident_reason}")
             elif item.event_block_new:
                 if item.state == "BUY":
                     item.state = "STRONG_LONG"
@@ -2412,20 +2426,37 @@ class LighterMonitor:
             item.alias,
         )
 
-    def _summary_items(self, signals: list[Signal]) -> list[Signal]:
-        """Select the three most extreme alts, then pin BTC on the right."""
+    def _summary_items(
+        self,
+        signals: list[Signal],
+        anchor_override_symbol: str | None = None,
+    ) -> list[Signal]:
+        """Select three extreme alts and place BTC or an acute coin on the right."""
         requested = {
             str(value).upper()
             for value in self.config.get("candidate_symbols", [])
         }
-        anchor_symbol = str(self.config.get("summary_anchor_symbol", "BTC")).upper()
+        base_anchor_symbol = str(
+            self.config.get("summary_anchor_symbol", "BTC")
+        ).upper()
+        override_symbol = str(anchor_override_symbol or "").upper()
+        active_anchor_symbol = (
+            override_symbol
+            if override_symbol in requested
+            and any(item.symbol == override_symbol for item in signals)
+            else base_anchor_symbol
+        )
         count = int(self.config.get("summary_coin_count", 4))
-        anchor = next((item for item in signals if item.symbol == anchor_symbol), None)
+        anchor = next(
+            (item for item in signals if item.symbol == active_anchor_symbol),
+            None,
+        )
         alt_slots = max(0, count - (1 if anchor is not None else 0))
         alternatives = [
             item
             for item in signals
-            if item.symbol in requested and item.symbol != anchor_symbol
+            if item.symbol in requested
+            and item.symbol not in {base_anchor_symbol, active_anchor_symbol}
         ]
         selected = sorted(
             alternatives,
@@ -2437,10 +2468,22 @@ class LighterMonitor:
             selected.append(anchor)
         return selected[:count]
 
-    def _format(self, signals: list[Signal], now: datetime) -> str:
+    def _format(
+        self,
+        signals: list[Signal],
+        now: datetime,
+        *,
+        incident_priority_symbol: str | None = None,
+        incident_anchor_symbol: str | None = None,
+    ) -> str:
         ranked = self._rank(signals)
-        summary = self._summary_items(signals)
-        anchor_symbol = str(self.config.get("summary_anchor_symbol", "BTC")).upper()
+        summary = self._summary_items(signals, incident_anchor_symbol)
+        base_anchor_symbol = str(
+            self.config.get("summary_anchor_symbol", "BTC")
+        ).upper()
+        protected_anchor_symbol = (
+            summary[-1].symbol if summary else base_anchor_symbol
+        )
         event_codes = {
             item.symbol: str(item.event_display_code or "")
             for item in summary
@@ -2469,16 +2512,17 @@ class LighterMonitor:
         if len(header) > max_len:
             # Hide lower-priority alt event labels from left to right only when
             # an unexpected label would break the established compact width.
-            # BTC's macro label is retained for as long as possible.
+            # The active right-hand anchor (normally BTC, temporarily an acute
+            # coin) keeps its label until every lower-priority label is gone.
             for item in summary:
-                if item.symbol == anchor_symbol:
+                if item.symbol == protected_anchor_symbol:
                     continue
                 event_codes[item.symbol] = ""
                 header = summary_line(compact_clock)
                 if len(header) <= max_len:
                     break
         if len(header) > max_len:
-            event_codes[anchor_symbol] = ""
+            event_codes[protected_anchor_symbol] = ""
             header = summary_line(compact_clock)
         if len(header) > max_len:
             raise RuntimeError("Discord-Top-Zeilenlimit überschritten")
@@ -2504,11 +2548,20 @@ class LighterMonitor:
                 -item.trade_readiness,
             )
         )
-        # Strongest current signals get the first places; BTC remains the final
-        # permanent reference and cannot be pushed out completely.
+        # During the first ten incident minutes the affected coin owns the
+        # first detail row. BTC remains the final reference row when available.
         details: list[Signal] = []
-        reserve_btc = 1 if btc is not None else 0
+        priority_symbol = str(incident_priority_symbol or "").upper()
+        priority_item = next(
+            (item for item in ranked if item.symbol == priority_symbol),
+            None,
+        )
+        if priority_item is not None:
+            details.append(priority_item)
+        reserve_btc = 1 if btc is not None and btc not in details else 0
         for item in screamers:
+            if item in details:
+                continue
             if item.attention_score < threshold:
                 continue
             if len(details) >= maximum_details - reserve_btc:
@@ -2550,6 +2603,8 @@ class LighterMonitor:
                 for minutes in DISPLAY_WINDOWS
             )
             warnings: list[str] = []
+            if item.event_block_new and item.event_code:
+                warnings.append(item.event_code)
             if item.tape_quality < tape_min or item.volume_confirmation < 38:
                 warnings.append("V!")
             if item.liquidity_score < 58:
@@ -2601,6 +2656,7 @@ class LighterMonitor:
         *,
         event_marks: Mapping[str, Any] | None = None,
         event_display_codes: Mapping[str, str] | None = None,
+        incident_state_path: Path | None = None,
         now: datetime | None = None,
     ) -> tuple[str, dict[str, Any]]:
         now = now or datetime.now(timezone.utc)
@@ -2674,10 +2730,41 @@ class LighterMonitor:
         self._apply_btc_context(signals)
         regime_payload = self._apply_regime_context(signals, snapshots, daily_candles, now)
         extremity_payload = self._apply_extremity_context(signals, snapshots, daily_candles)
-        self._apply_event_context(signals, event_marks, event_display_codes)
+        incident_snapshot = detect_spontaneous_incidents(
+            self.config,
+            signals=signals,
+            snapshots=snapshots,
+            event_marks=event_marks,
+            now=now,
+            state_path=incident_state_path,
+        )
+        merged_marks = dict(event_marks or {})
+        merged_marks.update(incident_snapshot.marks)
+        if event_display_codes is None:
+            merged_display_codes: dict[str, str] = {
+                str(symbol): str(
+                    mark.get("code", "")
+                    if isinstance(mark, Mapping)
+                    else getattr(mark, "code", "")
+                )
+                for symbol, mark in merged_marks.items()
+            }
+        else:
+            merged_display_codes = {
+                str(symbol): str(code)
+                for symbol, code in event_display_codes.items()
+            }
+        merged_display_codes.update(incident_snapshot.display_codes)
+        self._apply_event_context(signals, merged_marks, merged_display_codes)
+        self.last_incidents = incident_snapshot
         self.last_signals = self._rank(signals)
         self.last_snapshots = snapshots
-        report = self._format(signals, now)
+        report = self._format(
+            signals,
+            now,
+            incident_priority_symbol=incident_snapshot.priority_symbol,
+            incident_anchor_symbol=incident_snapshot.anchor_symbol,
+        )
         minimum_lines = int(self.config.get("minimum_detail_count", 1)) + 1
         maximum_lines = int(self.config.get("maximum_detail_count", 4)) + 1
         if not minimum_lines <= len(report.splitlines()) <= maximum_lines:
@@ -2690,9 +2777,10 @@ class LighterMonitor:
             "signals": [asdict(item) for item in self.last_signals],
             "regime": regime_payload,
             "extremity": extremity_payload,
+            "incidents": incident_snapshot.to_dict(),
             "event_marks": {
                 symbol: (asdict(mark) if hasattr(mark, "__dataclass_fields__") else dict(mark))
-                for symbol, mark in (event_marks or {}).items()
+                for symbol, mark in merged_marks.items()
             },
         }
         return report, payload
@@ -2713,4 +2801,4 @@ class LighterMonitor:
         return candles, book, daily
 
 
-# Package revision: v3.9.3-lighter-top3-r1
+# Package revision: v4.0.0-fresh-incident-r1

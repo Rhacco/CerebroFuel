@@ -55,7 +55,7 @@ def send_discord(
         request = Request(
             webhook_url,
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json", "User-Agent": "cf/3.9.3"},
+            headers={"Content-Type": "application/json", "User-Agent": "cf/4.0.0"},
             method="POST",
         )
         try:
@@ -68,4 +68,4 @@ def send_discord(
         if index + 1 < len(chunks):
             time.sleep(0.5)
 
-# Package revision: v3.9.3-lighter-top3-r1
+# Package revision: v4.0.0-fresh-incident-r1

@@ -1,4 +1,4 @@
-"""Crypto Signal Monitor v3.9.3 — Lighter top pool and fresh Discord posts."""
+"""Crypto Signal Monitor v4.0.0 — Lighter pool with incident protection."""
 from __future__ import annotations
 
 import argparse
@@ -55,6 +55,7 @@ def main() -> int:
     report, payload = monitor.run(
         event_marks=event_snapshot.marks,
         event_display_codes=event_plan.codes,
+        incident_state_path=output / "incident_state.json",
         now=generated_at,
     )
     payload["events"] = event_snapshot.to_dict()
@@ -116,6 +117,9 @@ def main() -> int:
             print(line)
     for diagnostic in event_snapshot.diagnostics:
         print(f"EVENT: {diagnostic}")
+    if monitor.last_incidents:
+        for diagnostic in monitor.last_incidents.diagnostics:
+            print(f"INCIDENT: {diagnostic}")
 
     should_send = (
         not args.no_send
@@ -128,7 +132,7 @@ def main() -> int:
         send_discord(
             webhook,
             report,
-            username=str(config.get("discord_username", "CF v3.9.3")),
+            username=str(config.get("discord_username", "CF v4.0.0")),
             avatar_url=str(config.get("discord_avatar_url", "")).strip(),
         )
         mark_event_displayed(
@@ -143,4 +147,4 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 
-# Package revision: v3.9.3-lighter-top3-r1
+# Package revision: v4.0.0-fresh-incident-r1

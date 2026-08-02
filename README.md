@@ -1,19 +1,21 @@
-# Crypto Signal Monitor v3.9.3
+# Crypto Signal Monitor v4.0.0
 
-Lighter-Pool: `HYPE ENA AAVE PUMP ZEC JUP SUI NEAR ONDO 1000PEPE BTC`. `ONDO` und `1000PEPE` bleiben bis Readiness `80` und Confidence `76` bedingte Paper-Kandidaten.
+Pool: `HYPE ENA AAVE PUMP ZEC JUP SUI NEAR ONDO 1000PEPE 1000BONK BTC`. `ONDO`, `1000PEPE` und `1000BONK` bleiben bis Readiness `80` und Confidence `76` bedingte Paper-Kandidaten; Live-Liquidität bleibt eine harte Sperre.
 
 ## Discord
 
-Zeile 1 zeigt nur die drei auffälligsten Altcoins nach absoluter Gesamtdehnung, innerhalb der Auswahl aufsteigend; BTC steht immer rechts. Verifizierte Coin- und BTC-Ereigniscodes werden angehängt und bei Platznot automatisch gekürzt. Das gemeinsame Limit bleibt 68 Zeichen.
+Zeile 1 enthält drei dynamische Altcoins plus BTC rechts, maximal 68 Zeichen. Ein akuter Coin darf BTC dort insgesamt 25 Minuten ersetzen. In den ersten 10 Minuten steht derselbe Coin zusätzlich an erster Stelle der Detailzeilen. Jeder Lauf sendet einen neuen Post.
 
-Farben: `🔴/🟠` überkauft · `🟡` neutral · `🔵/🟢` überverkauft · `⚫` Daten fehlen. Die Farbe ist keine Trade-Richtung.
+## Akute Ereignisse
 
-Jeder aktivierte Lauf sendet einen neuen Discord-Post. Vorherige Nachrichten werden weder gesucht noch geändert oder gelöscht.
+- `SEC!`/`NET!`: bestätigtes aktives Sicherheits- oder Netzwerkereignis aus dem verifizierten Feed.
+- `SHK!`: strenger coinspezifischer 1/5/10-Minuten-Schock aus Lighter-Kurs, Quote-Volumen und BTC-Abweichung; die Ursache ist ausdrücklich unbestätigt.
+- Beide sperren neue Paper-Einstiege. Ein fortdauernder Schock bleibt gesperrt, verlängert aber das 25-Minuten-BTC-Ersatzfenster nicht endlos.
+
+Der optionale Feed läuft über `CRYPTO_EVENTS_URL` oder `CRYPTO_EVENTS_JSON`, wird minütlich geprüft und nach 10 Minuten ohne erfolgreiche Aktualisierung verworfen. Feed-Symbole `BONK/KBONK` und `PEPE/KPEPE` werden intern auf Lighters `1000BONK` und `1000PEPE` abgebildet. Ohne Feed erkennt die App Marktreaktionen als `SHK!`, aber keinen Exploit-Grund.
 
 ## Signale
 
-`NEAR` Aufbau, noch warten · `TRY` erste belastbare Probe · `NOW` frisches bestätigtes Sofortfenster · `WAIT` kein Einstieg. `E` Expansion · `T` Trendfortsetzung · `W?` Wendeversuch · `W` bestätigte Wende.
+`NEAR` Aufbau · `TRY` belastbare Probe · `NOW` frisches Sofortfenster · `WAIT` kein Einstieg. Ereignisse erzeugen nie selbst Long oder Short.
 
-Warnungen: `RS!` relative Schwäche · `V!` Tape/Volumen · `L!` Liquidität/OI · `K!` Kosten · `B!` BTC-Kontext · `R!` Regime · `F!` Funding · `CH!` zu spät · `DATA!/CND!/BOOK!/GAP!/STALE!` Datenfehler.
-
-Ereignisse machen nur Risiko sichtbar und erzeugen nie selbst Long oder Short.
+v4 nutzt ausschließlich den neuen `runtime-state-v400`-Cache und den separaten `paper-state-v400`-Checkpoint. Der Workflow verwendet einen Primärschlüssel plus genau einen Restore-Präfix und bleibt damit dauerhaft unter dem GitHub-Limit von zehn Gesamtschlüsseln.

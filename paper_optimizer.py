@@ -1,4 +1,4 @@
-"""Fast diagnostic plus evidence-based paper review for CF v3.9.3.
+"""Fast diagnostic plus evidence-based paper review for CF v4.0.0.
 
 No finding changes trading parameters automatically.  The rapid audit can flag
 one objectively poor entry after only one to three closed trades, but labels it
@@ -14,12 +14,8 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Callable, Iterable, Mapping
 
-STATE_VERSION = "paper-optimizer-v393-r2"
-COMPATIBLE_STATE_VERSIONS = {
-    STATE_VERSION,
-    "paper-optimizer-v393-r1",
-    "paper-optimizer-v392-r1",
-}
+STATE_VERSION = "paper-optimizer-v400-r1"
+COMPATIBLE_STATE_VERSIONS = {STATE_VERSION}
 
 
 def _f(value: Any, default: float = 0.0) -> float:

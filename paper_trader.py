@@ -1,4 +1,4 @@
-"""Deterministic, multi-candidate paper-trading engine for CF v3.9.3."""
+"""Deterministic, multi-candidate paper-trading engine for CF v4.0.0."""
 from __future__ import annotations
 
 import json
@@ -10,7 +10,7 @@ from typing import Any, Iterable, Mapping
 
 
 STATE_SCHEMA = 1
-APP_VERSION = "3.9.3"
+APP_VERSION = "4.0.0"
 COMPATIBLE_APP_VERSIONS = {APP_VERSION, "3.9.2", "3.9.1", "3.9.0"}
 ENTRY_STATES = {"BUY": 1, "SELL": -1, "STRONG_LONG": 1, "STRONG_SHORT": -1}
 IMMEDIATE_STATES = {"BUY", "SELL"}
@@ -1399,7 +1399,7 @@ class PaperTrader:
         for symbol, position in list((self.state.get("positions") or {}).items()):
             reason: str | None = None
             if symbol not in allowed_symbols:
-                reason = "Symbol nicht mehr im v3.9.3-Kandidatenpool"
+                reason = "Symbol nicht mehr im v4.0.0-Kandidatenpool"
             elif str(position.get("setup")) == "P":
                 reason = "P-Setup seit v3.7.1 deaktiviert"
             if reason is None:
@@ -1536,7 +1536,7 @@ class PaperTrader:
                 f"{top}"
             )
         equity, free, margin = self._equity()
-        # Paper actions are deliberately log-only in v3.9.3.
+        # Paper actions are deliberately log-only in v4.0.0.
         action_line = None
         self._log(
             f"KONTO Balance {_money(_f(self.state.get('balance_usd')), compact=False)} | "

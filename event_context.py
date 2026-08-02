@@ -1,4 +1,4 @@
-"""Verified critical-event context for CF v3.9.3.
+"""Verified scheduled and externally confirmed event context for CF v4.0.0.
 
 Automatic facts come only from official public schedules/status pages. Project-
 specific events such as token unlocks are accepted only from a local or remote
@@ -24,8 +24,8 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-CACHE_VERSION = "event-cache-v393-r2"
-USER_AGENT = "crypto-signal-monitor/3.9.3"
+CACHE_VERSION = "event-cache-v400-r1"
+USER_AGENT = "crypto-signal-monitor/4.0.0"
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4,
     "may": 5, "june": 6, "july": 7, "august": 8,
@@ -47,6 +47,7 @@ KIND_CODES = {
     "SUPPLY": "SUP",
     "NEWS": "N",
     "NETWORK": "NET",
+    "SECURITY": "SEC",
 }
 DEFAULT_PRIORITIES = {
     "NETWORK": 100,
@@ -64,6 +65,7 @@ DEFAULT_PRIORITIES = {
     "EXPIRY": 80,
     "PPI": 72,
     "NEWS": 70,
+    "SECURITY": 100,
 }
 
 
@@ -180,8 +182,13 @@ def _save_json(path: Path, value: Mapping[str, Any]) -> None:
     tmp.replace(path)
 
 
-def _event_from_dict(raw: Mapping[str, Any]) -> CriticalEvent | None:
+def _event_from_dict(
+    raw: Mapping[str, Any],
+    symbol_aliases: Mapping[str, str] | None = None,
+) -> CriticalEvent | None:
     symbol = str(raw.get("symbol") or "").upper().strip()
+    if symbol_aliases:
+        symbol = str(symbol_aliases.get(symbol, symbol)).upper().strip()
     kind = str(raw.get("kind") or raw.get("type") or "").upper().strip()
     title = str(raw.get("title") or kind).strip()
     source_url = str(raw.get("source_url") or "").strip()
@@ -528,7 +535,12 @@ def _host_allowed(url: str, allowlist: Iterable[str]) -> bool:
     return any(host == allowed or host.endswith("." + allowed) for allowed in allowlist)
 
 
-def _verified_feed_events(raw: Any, allowlist: Iterable[str], symbols: set[str]) -> list[CriticalEvent]:
+def _verified_feed_events(
+    raw: Any,
+    allowlist: Iterable[str],
+    symbols: set[str],
+    symbol_aliases: Mapping[str, str],
+) -> list[CriticalEvent]:
     rows = raw.get("events") if isinstance(raw, Mapping) else raw
     if not isinstance(rows, list):
         return []
@@ -536,7 +548,7 @@ def _verified_feed_events(raw: Any, allowlist: Iterable[str], symbols: set[str])
     for item in rows:
         if not isinstance(item, Mapping) or item.get("verified") is not True:
             continue
-        event = _event_from_dict(item)
+        event = _event_from_dict(item, symbol_aliases)
         if event is None or event.symbol not in symbols:
             continue
         if not _host_allowed(event.source_url, allowlist):
@@ -560,7 +572,7 @@ def _dedupe(events: Iterable[CriticalEvent]) -> list[CriticalEvent]:
 def _display_horizon_days(kind: str, config: Mapping[str, Any]) -> int:
     if kind == "UNLOCK":
         return max(1, int(config.get("unlock_display_days", 14)))
-    if kind in {"UPGRADE", "MAINTENANCE", "GOVERNANCE", "SUPPLY", "ETF", "EXPIRY", "NEWS"}:
+    if kind in {"UPGRADE", "MAINTENANCE", "GOVERNANCE", "SUPPLY", "ETF", "EXPIRY", "NEWS", "SECURITY"}:
         return max(1, int(config.get("coin_event_display_days", 7)))
     return max(1, int(config.get("macro_display_days", 7)))
 
@@ -725,6 +737,11 @@ def load_critical_events(
         return EventSnapshot({}, [], [], _iso(now) or "")
 
     symbols = {str(value).upper() for value in config.get("candidate_symbols", [])}
+    symbol_aliases = {
+        str(key).upper().strip(): str(value).upper().strip()
+        for key, value in (config.get("event_symbol_aliases") or {}).items()
+        if str(key).strip() and str(value).strip()
+    }
     timeout = max(3.0, min(20.0, float(section.get("timeout_seconds", 8.0))))
     timezone_name = str(config.get("timezone", "Europe/Berlin"))
     diagnostics: list[str] = []
@@ -911,21 +928,41 @@ def load_critical_events(
     }
     feed_events: list[CriticalEvent] = []
     if local_feed_path is not None:
-        feed_events.extend(_verified_feed_events(_load_json(local_feed_path), allowlist, symbols))
+        feed_events.extend(
+            _verified_feed_events(
+                _load_json(local_feed_path),
+                allowlist,
+                symbols,
+                symbol_aliases,
+            )
+        )
     inline = os.getenv("CRYPTO_EVENTS_JSON", "").strip()
     if inline:
         try:
-            feed_events.extend(_verified_feed_events(json.loads(inline), allowlist, symbols))
+            feed_events.extend(
+                _verified_feed_events(
+                    json.loads(inline),
+                    allowlist,
+                    symbols,
+                    symbol_aliases,
+                )
+            )
         except (ValueError, TypeError, json.JSONDecodeError):
             diagnostics.append("CRYPTO_EVENTS_JSON ist ungültig")
 
-    # Remote verified feeds (unlocks, ETF decisions, upgrades, governance and
-    # supply events) refresh hourly. Local/inline facts are evaluated every run.
+    # The remote verified feed also carries acute security incidents, so it is
+    # checked every minute by default. A failed incident feed is retained only
+    # briefly; stale "active" alerts must never live for the general 48-hour
+    # calendar cache window.
     feed_url = os.getenv("CRYPTO_EVENTS_URL", "").strip() or str(section.get("verified_feed_url", "")).strip()
     remote_feed_events = cached_events("remote_feed_events")
     remote_feed_fetched_at = int(cached.get("remote_feed_fetched_at") or 0)
     remote_feed_checked_at = int(cached.get("remote_feed_checked_at") or 0)
-    feed_refresh = max(15, int(section.get("verified_feed_refresh_minutes", 60))) * 60
+    feed_refresh = max(1, int(section.get("verified_feed_refresh_minutes", 1))) * 60
+    feed_max_stale = max(
+        1,
+        int(section.get("verified_feed_cache_max_stale_minutes", 10)),
+    ) * 60
     if feed_url:
         if not _host_allowed(feed_url, allowlist):
             diagnostics.append("Ereignisfeed-Domain nicht freigegeben")
@@ -934,12 +971,17 @@ def load_critical_events(
             cached["remote_feed_checked_at"] = now_s
             try:
                 raw = json.loads(_request_text(feed_url, timeout=timeout))
-                remote_feed_events = _verified_feed_events(raw, allowlist, symbols)
+                remote_feed_events = _verified_feed_events(
+                    raw,
+                    allowlist,
+                    symbols,
+                    symbol_aliases,
+                )
                 cached["remote_feed_fetched_at"] = now_s
                 cached["remote_feed_events"] = [asdict(event) for event in remote_feed_events]
             except Exception as exc:
                 diagnostics.append(f"Verifizierter Ereignisfeed nicht aktualisiert: {exc}")
-                if remote_feed_fetched_at and now_s - remote_feed_fetched_at > max_stale:
+                if remote_feed_fetched_at and now_s - remote_feed_fetched_at > feed_max_stale:
                     remote_feed_events = []
     else:
         remote_feed_events = []
@@ -960,4 +1002,4 @@ def load_critical_events(
     return EventSnapshot(marks, all_events, diagnostics, _iso(now) or "")
 
 
-# Package revision: v3.9.3-lighter-top3-r1
+# Package revision: v4.0.0-fresh-incident-r1
