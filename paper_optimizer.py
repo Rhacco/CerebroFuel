@@ -1,4 +1,4 @@
-"""Fast diagnostic plus evidence-based paper review for CF v3.9.2.
+"""Fast diagnostic plus evidence-based paper review for CF v3.9.3.
 
 No finding changes trading parameters automatically.  The rapid audit can flag
 one objectively poor entry after only one to three closed trades, but labels it
@@ -14,7 +14,8 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Callable, Iterable, Mapping
 
-STATE_VERSION = "paper-optimizer-v392-r1"
+STATE_VERSION = "paper-optimizer-v393-r1"
+COMPATIBLE_STATE_VERSIONS = {STATE_VERSION, "paper-optimizer-v392-r1"}
 
 
 def _f(value: Any, default: float = 0.0) -> float:
@@ -251,8 +252,10 @@ def review_paper_parameters(
     findings = _rapid_findings(trades, config) + _statistical_findings(trades, config)
 
     review_state = _load_json(review_state_path)
-    if review_state.get("version") != STATE_VERSION:
+    if review_state.get("version") not in COMPATIBLE_STATE_VERSIONS:
         review_state = {"version": STATE_VERSION, "active_keys": [], "reported_keys": []}
+    else:
+        review_state["version"] = STATE_VERSION
     reported_keys = {str(value) for value in (review_state.get("reported_keys") or []) if value}
     current_active = {finding.key for finding in findings}
     new_findings = [finding for finding in findings if finding.key not in reported_keys]

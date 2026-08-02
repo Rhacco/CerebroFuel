@@ -1,4 +1,4 @@
-"""Verified critical-event context for CF v3.9.2.
+"""Verified critical-event context for CF v3.9.3.
 
 Automatic facts come only from official public schedules/status pages. Project-
 specific events such as token unlocks are accepted only from a local or remote
@@ -10,13 +10,12 @@ from __future__ import annotations
 
 import calendar
 import json
-import math
 import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -25,8 +24,8 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-CACHE_VERSION = "event-cache-v382-r2"
-USER_AGENT = "crypto-signal-monitor/3.9.2"
+CACHE_VERSION = "event-cache-v393-r1"
+USER_AGENT = "crypto-signal-monitor/3.9.3"
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4,
     "may": 5, "june": 6, "july": 7, "august": 8,
@@ -842,8 +841,6 @@ def load_critical_events(
     status_events = cached_events("status_events")
     if now_s - status_checked_at >= status_refresh or status_checked_at <= 0:
         status_sources = [
-            ("SOL", "Solana Status", "https://status.solana.com/api/v2/incidents/unresolved.json", False),
-            ("SOL", "Solana Status", "https://status.solana.com/api/v2/scheduled-maintenances/upcoming.json", True),
             ("HYPE", "Hyperliquid Status", "https://hyperliquid.statuspage.io/api/v2/incidents/unresolved.json", False),
             ("HYPE", "Hyperliquid Status", "https://hyperliquid.statuspage.io/api/v2/scheduled-maintenances/upcoming.json", True),
         ]
@@ -872,7 +869,7 @@ def load_critical_events(
         elif status_fetched_at and now_s - status_fetched_at > 7200:
             status_events = []
 
-    # Large BTC/ETH option expiries are derived hourly from Deribit's official
+    # Large BTC option expiries are derived hourly from Deribit's official
     # public open-interest endpoint. A label appears only when both the absolute
     # notional and share-of-total thresholds are met.
     derivatives_refresh = max(15, int(section.get("derivatives_refresh_minutes", 60))) * 60
@@ -880,7 +877,7 @@ def load_critical_events(
     derivatives_checked_at = int(cached.get("derivatives_checked_at") or 0)
     derivative_events = cached_events("derivative_events")
     if now_s - derivatives_checked_at >= derivatives_refresh or derivatives_checked_at <= 0:
-        currencies = [symbol for symbol in ("BTC", "ETH") if symbol in symbols]
+        currencies = ["BTC"] if "BTC" in symbols else []
         fresh_derivatives: list[CriticalEvent] = []
         successful_derivatives = 0
         with ThreadPoolExecutor(max_workers=2) as pool:
@@ -963,4 +960,4 @@ def load_critical_events(
     return EventSnapshot(marks, all_events, diagnostics, _iso(now) or "")
 
 
-# Package revision: v3.9.2-early-build-timing-r1
+# Package revision: v3.9.3-lighter-top-pool-r1

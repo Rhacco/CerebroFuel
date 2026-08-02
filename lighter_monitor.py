@@ -1,4 +1,4 @@
-"""Lighter-native early-swing/T/W signal engine for CF v3.9.2."""
+"""Lighter-native early-swing/T/W signal engine for CF v3.9.3."""
 from __future__ import annotations
 
 import json
@@ -13,13 +13,12 @@ from typing import Any, Iterable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
-from zoneinfo import ZoneInfo
 
 from regime_context import calculate_regimes
 from extremity_context import calculate_extremity, extremity_code, extremity_color
 
-APP_VERSION = "3.9.2"
-PACKAGE_REVISION = "v3.9.2-early-build-timing-r1"
+APP_VERSION = "3.9.3"
+PACKAGE_REVISION = "v3.9.3-lighter-top-pool-r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 TREND_WINDOWS = (5, 15, 60)
@@ -1325,13 +1324,20 @@ class LighterMonitor:
         if invalid_aliases:
             raise ValueError(f"Coin-Kürzel müssen drei Zeichen haben: {invalid_aliases}")
         summary_count = int(self.config.get("summary_coin_count", 5))
+        summary_anchor = str(self.config.get("summary_anchor_symbol", "BTC")).upper()
         minimum_details = int(self.config.get("minimum_detail_count", 1))
         maximum_details = int(self.config.get("maximum_detail_count", 4))
         if not 1 <= summary_count <= len(symbols):
             raise ValueError("summary_coin_count liegt außerhalb der Kandidatenzahl")
+        if summary_anchor not in symbols:
+            raise ValueError("summary_anchor_symbol muss im Kandidatenpool liegen")
         if not 1 <= minimum_details <= maximum_details <= 4:
             raise ValueError("Detailzeilen müssen zwischen eins und vier liegen")
-        if int(self.config.get("discord_max_codepoints_per_line", 34)) < summary_count * 4 + 3:
+        detail_limit = int(self.config.get("discord_max_codepoints_per_line", 34))
+        header_limit = int(self.config.get("discord_header_max_codepoints", detail_limit))
+        if not 34 <= detail_limit <= 2_000:
+            raise ValueError("Discord-Detailzeilenlimit ist ungueltig")
+        if not summary_count * 5 - 1 <= header_limit <= 2_000:
             raise ValueError("Discord-Zeilenlimit ist für die Top-Zeile zu klein")
         watch = float(self.config.get("watch_trade_readiness", 56))
         strong = float(self.config.get("strong_trade_readiness", 64))
@@ -2085,7 +2091,7 @@ class LighterMonitor:
 
             # A W against a clearly stronger reference-market move remains W?
             # even if the local candle pattern reclaimed its first level. This
-            # directly covers relief bounces that lag BTC/ETH and then roll over.
+            # directly covers relief bounces that lag BTC/the broad pool and roll over.
             if item.selected_setup == "REVERSAL" and item.reversal.phase in {"ready", "strong"}:
                 direction = 1 if item.direction >= 0 else -1
                 drift_threshold = float(
@@ -2146,7 +2152,6 @@ class LighterMonitor:
         hard_funding = float(self.config.get("funding_hard_hourly_pct", 0.05))
 
         def cap_immediate(item: Signal, *, to_watch: bool = False) -> None:
-            direction = _direction(item.direction)
             if to_watch:
                 if item.state in {"BUY", "STRONG_LONG"}:
                     item.state = "WATCH_LONG"
@@ -2289,7 +2294,7 @@ class LighterMonitor:
 
             # The coin-specific event owns the label/metadata. A confirmed BTC
             # macro event is additionally applied as market-wide risk without
-            # duplicating its label on ETH/SOL/HYPE.
+            # duplicating its label on every altcoin.
             primary = own_mark or global_mark
             item.event_code = str(field(primary, "code", "") or "")
             display_default = item.event_code if own_mark is not None and not display_codes_provided else ""
@@ -2393,28 +2398,55 @@ class LighterMonitor:
             and signal.attention_score >= float(self.config.get("detail_attention_threshold", 72))
         )
 
-    def _format(self, signals: list[Signal], now: datetime) -> str:
-        ranked = self._rank(signals)
-        requested = [
+    @staticmethod
+    def _summary_sort_key(item: Signal) -> tuple[float, float, float, float, str]:
+        """Order the header from quiet to extreme, independently of direction.
+
+        Positive extremity is overbought and negative extremity is oversold.  The
+        magnitude therefore represents the user's shared meaning of
+        "auffaellig" for both sides.  Readiness and attention only break ties;
+        unavailable data stays at the quiet, left-hand edge.
+        """
+        available = bool(item.extremity_available and item.state != "INVALID_DATA")
+        return (
+            1.0 if available else 0.0,
+            abs(float(item.extremity_score)) if available else 0.0,
+            float(item.trade_readiness) if available else 0.0,
+            float(item.attention_score) if available else 0.0,
+            item.alias,
+        )
+
+    def _summary_items(self, signals: list[Signal]) -> list[Signal]:
+        """Select the most relevant alts, sort ascending, then pin BTC right."""
+        requested = {
             str(value).upper()
             for value in self.config.get("candidate_symbols", [])
+        }
+        anchor_symbol = str(self.config.get("summary_anchor_symbol", "BTC")).upper()
+        count = int(self.config.get("summary_coin_count", len(requested)))
+        anchor = next(
+            (item for item in signals if item.symbol == anchor_symbol),
+            None,
+        )
+        alt_slots = max(0, count - (1 if anchor is not None else 0))
+        alternatives = [
+            item
+            for item in signals
+            if item.symbol in requested and item.symbol != anchor_symbol
         ]
-        by_symbol = {item.symbol: item for item in signals}
-        configured_order = [
-            str(value).upper()
-            for value in self.config.get(
-                "summary_order", ["UNI", "HYPE", "SOL", "ETH", "BTC"]
-            )
-        ]
-        summary = [
-            by_symbol[symbol]
-            for symbol in configured_order
-            if symbol in by_symbol and symbol in requested
-        ]
-        for symbol in requested:
-            if symbol in by_symbol and by_symbol[symbol] not in summary:
-                summary.append(by_symbol[symbol])
-        summary = summary[:int(self.config.get("summary_coin_count", 5))]
+        selected = sorted(
+            alternatives,
+            key=self._summary_sort_key,
+            reverse=True,
+        )[:alt_slots]
+        selected.sort(key=self._summary_sort_key)
+        if anchor is not None:
+            selected.append(anchor)
+        return selected[:count]
+
+    def _format(self, signals: list[Signal], now: datetime) -> str:
+        ranked = self._rank(signals)
+        summary = self._summary_items(signals)
 
         def summary_line(compact_clock: bool = False) -> str:
             tokens: list[str] = []
@@ -2431,9 +2463,16 @@ class LighterMonitor:
             return " ".join(tokens)
 
         header = summary_line(False)
-        max_len = int(self.config.get("discord_max_codepoints_per_line", 58))
-        if len(header) > max_len:
+        header_limit = int(
+            self.config.get(
+                "discord_header_max_codepoints",
+                self.config.get("discord_max_codepoints_per_line", 58),
+            )
+        )
+        if len(header) > header_limit:
             header = summary_line(True)
+        if len(header) > header_limit:
+            raise RuntimeError("Discord-Top-Zeilenlimit überschritten")
         lines = [header]
 
         maximum_details = int(self.config.get("maximum_detail_count", 4))
@@ -2514,7 +2553,6 @@ class LighterMonitor:
                 warnings.append("R!")
             if item.selected_setup == "REVERSAL" and item.reversal.relative_opposition:
                 warnings.append("RS!")
-            setup = _selected_setup(item)
             if item.selected_setup == "EARLY" and item.chase_warning:
                 warnings.append("CH!")
             if item.funding_hourly_pct is None:
@@ -2545,7 +2583,7 @@ class LighterMonitor:
             lines.append(line)
 
         max_len = int(self.config.get("discord_max_codepoints_per_line", 58))
-        if any(len(line) > max_len for line in lines):
+        if any(len(line) > max_len for line in lines[1:]):
             raise RuntimeError("Discord-Zeilenlimit überschritten")
         return "\n".join(lines)
 
@@ -2677,4 +2715,4 @@ class LighterMonitor:
         return candles, book, daily
 
 
-# Package revision: v3.9.2-early-build-timing-r1
+# Package revision: v3.9.3-lighter-top-pool-r1

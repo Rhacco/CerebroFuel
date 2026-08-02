@@ -1,4 +1,4 @@
-"""Crypto Signal Monitor v3.9.2 — verified events, early swings and paper review."""
+"""Crypto Signal Monitor v3.9.3 — Lighter top pool and managed Discord report."""
 from __future__ import annotations
 
 import argparse
@@ -150,8 +150,9 @@ def main() -> int:
             send_discord(
                 webhook,
                 report,
-                username=str(config.get("discord_username", "CF v3.9.2")),
+                username=str(config.get("discord_username", "CF v3.9.3")),
                 avatar_url=str(config.get("discord_avatar_url", "")).strip(),
+                state_path=output / "discord_message_state.json",
             )
             mark_report_sent(
                 path=notification_path,
@@ -173,4 +174,4 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 
-# Package revision: v3.9.2-early-build-timing-r1
+# Package revision: v3.9.3-lighter-top-pool-r1

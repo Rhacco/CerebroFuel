@@ -1,4 +1,4 @@
-"""Deterministic, multi-candidate paper-trading engine for CF v3.9.2."""
+"""Deterministic, multi-candidate paper-trading engine for CF v3.9.3."""
 from __future__ import annotations
 
 import json
@@ -10,8 +10,8 @@ from typing import Any, Iterable, Mapping
 
 
 STATE_SCHEMA = 1
-APP_VERSION = "3.9.2"
-COMPATIBLE_APP_VERSIONS = {APP_VERSION, "3.9.1", "3.9.0"}
+APP_VERSION = "3.9.3"
+COMPATIBLE_APP_VERSIONS = {APP_VERSION, "3.9.2", "3.9.1", "3.9.0"}
 ENTRY_STATES = {"BUY": 1, "SELL": -1, "STRONG_LONG": 1, "STRONG_SHORT": -1}
 IMMEDIATE_STATES = {"BUY", "SELL"}
 PROBE_STATES = {"STRONG_LONG", "STRONG_SHORT"}
@@ -550,6 +550,15 @@ class PaperTrader:
         else:
             minimum_readiness = float(self.config.get("paper_entry_min_readiness", 72))
             minimum_confidence = float(self.config.get("paper_entry_min_confidence", 68))
+        if str(getattr(signal, "candidate_tier", "core")) == "test":
+            minimum_readiness = max(
+                minimum_readiness,
+                float(self.config.get("test_candidate_minimum_readiness", 84)),
+            )
+            minimum_confidence = max(
+                minimum_confidence,
+                float(self.config.get("test_candidate_minimum_confidence", 80)),
+            )
         if additional:
             minimum_readiness = max(minimum_readiness, float(self.config.get("paper_additional_min_readiness", 70)))
             minimum_confidence = max(minimum_confidence, float(self.config.get("paper_additional_min_confidence", 66)))
@@ -1390,7 +1399,7 @@ class PaperTrader:
         for symbol, position in list((self.state.get("positions") or {}).items()):
             reason: str | None = None
             if symbol not in allowed_symbols:
-                reason = "Symbol nicht mehr im v3.9.2-Kandidatenpool"
+                reason = "Symbol nicht mehr im v3.9.3-Kandidatenpool"
             elif str(position.get("setup")) == "P":
                 reason = "P-Setup seit v3.7.1 deaktiviert"
             if reason is None:
@@ -1527,7 +1536,7 @@ class PaperTrader:
                 f"{top}"
             )
         equity, free, margin = self._equity()
-        # Paper actions are deliberately log-only in v3.9.2.
+        # Paper actions are deliberately log-only in v3.9.3.
         action_line = None
         self._log(
             f"KONTO Balance {_money(_f(self.state.get('balance_usd')), compact=False)} | "
