@@ -1,5 +1,5 @@
 name: Crypto Signal Monitor v3.9.3
-# Package revision: v3.9.3-lighter-top-pool-r1
+# Package revision: v3.9.3-lighter-top3-r1
 
 on:
   workflow_dispatch:
@@ -34,15 +34,21 @@ jobs:
         with:
           path: |
             output/paper_state.json
-            output/notification_state.json
             output/event_cache.json
             output/event_display_state.json
             output/parameter_review.json
-            output/discord_message_state.json
           key: runtime-state-v393-${{ github.run_id }}
           restore-keys: |
             runtime-state-v393-
             runtime-state-v392-
+            runtime-state-v391-
+            runtime-state-v390-
+            runtime-state-v385-
+            runtime-state-v384-
+            runtime-state-v383-
+            runtime-state-v382-
+            runtime-state-v381-
+            paper-state-v371-
       - name: Paper-State wiederherstellen
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -67,9 +73,7 @@ jobs:
         with:
           path: |
             output/paper_state.json
-            output/notification_state.json
             output/event_cache.json
             output/event_display_state.json
             output/parameter_review.json
-            output/discord_message_state.json
           key: runtime-state-v393-${{ github.run_id }}

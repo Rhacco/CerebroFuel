@@ -13,12 +13,11 @@ from typing import Any, Iterable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
-
 from regime_context import calculate_regimes
 from extremity_context import calculate_extremity, extremity_code, extremity_color
 
 APP_VERSION = "3.9.3"
-PACKAGE_REVISION = "v3.9.3-lighter-top-pool-r1"
+PACKAGE_REVISION = "v3.9.3-lighter-top3-r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 TREND_WINDOWS = (5, 15, 60)
@@ -1333,11 +1332,10 @@ class LighterMonitor:
             raise ValueError("summary_anchor_symbol muss im Kandidatenpool liegen")
         if not 1 <= minimum_details <= maximum_details <= 4:
             raise ValueError("Detailzeilen müssen zwischen eins und vier liegen")
-        detail_limit = int(self.config.get("discord_max_codepoints_per_line", 34))
-        header_limit = int(self.config.get("discord_header_max_codepoints", detail_limit))
-        if not 34 <= detail_limit <= 2_000:
-            raise ValueError("Discord-Detailzeilenlimit ist ungueltig")
-        if not summary_count * 5 - 1 <= header_limit <= 2_000:
+        line_limit = int(self.config.get("discord_max_codepoints_per_line", 34))
+        if not 34 <= line_limit <= 2_000:
+            raise ValueError("Discord-Zeilenlimit ist ungueltig")
+        if line_limit < summary_count * 5 - 1:
             raise ValueError("Discord-Zeilenlimit ist für die Top-Zeile zu klein")
         watch = float(self.config.get("watch_trade_readiness", 56))
         strong = float(self.config.get("strong_trade_readiness", 64))
@@ -2400,12 +2398,10 @@ class LighterMonitor:
 
     @staticmethod
     def _summary_sort_key(item: Signal) -> tuple[float, float, float, float, str]:
-        """Order the header from quiet to extreme, independently of direction.
+        """Sort from quiet to strongly overbought/oversold.
 
-        Positive extremity is overbought and negative extremity is oversold.  The
-        magnitude therefore represents the user's shared meaning of
-        "auffaellig" for both sides.  Readiness and attention only break ties;
-        unavailable data stays at the quiet, left-hand edge.
+        The absolute extremity is the primary measure. Readiness and attention
+        only break ties; unavailable rows remain behind valid candidates.
         """
         available = bool(item.extremity_available and item.state != "INVALID_DATA")
         return (
@@ -2417,17 +2413,14 @@ class LighterMonitor:
         )
 
     def _summary_items(self, signals: list[Signal]) -> list[Signal]:
-        """Select the most relevant alts, sort ascending, then pin BTC right."""
+        """Select the three most extreme alts, then pin BTC on the right."""
         requested = {
             str(value).upper()
             for value in self.config.get("candidate_symbols", [])
         }
         anchor_symbol = str(self.config.get("summary_anchor_symbol", "BTC")).upper()
-        count = int(self.config.get("summary_coin_count", len(requested)))
-        anchor = next(
-            (item for item in signals if item.symbol == anchor_symbol),
-            None,
-        )
+        count = int(self.config.get("summary_coin_count", 4))
+        anchor = next((item for item in signals if item.symbol == anchor_symbol), None)
         alt_slots = max(0, count - (1 if anchor is not None else 0))
         alternatives = [
             item
@@ -2447,11 +2440,16 @@ class LighterMonitor:
     def _format(self, signals: list[Signal], now: datetime) -> str:
         ranked = self._rank(signals)
         summary = self._summary_items(signals)
+        anchor_symbol = str(self.config.get("summary_anchor_symbol", "BTC")).upper()
+        event_codes = {
+            item.symbol: str(item.event_display_code or "")
+            for item in summary
+        }
 
         def summary_line(compact_clock: bool = False) -> str:
             tokens: list[str] = []
             for item in summary:
-                event = item.event_display_code
+                event = event_codes.get(item.symbol, "")
                 if compact_clock:
                     event = re.sub(r"@(\d{2}):\d{2}$", r"@\1", event)
                 color = (
@@ -2463,15 +2461,26 @@ class LighterMonitor:
             return " ".join(tokens)
 
         header = summary_line(False)
-        header_limit = int(
-            self.config.get(
-                "discord_header_max_codepoints",
-                self.config.get("discord_max_codepoints_per_line", 58),
-            )
-        )
-        if len(header) > header_limit:
-            header = summary_line(True)
-        if len(header) > header_limit:
+        max_len = int(self.config.get("discord_max_codepoints_per_line", 58))
+        compact_clock = False
+        if len(header) > max_len:
+            compact_clock = True
+            header = summary_line(compact_clock)
+        if len(header) > max_len:
+            # Hide lower-priority alt event labels from left to right only when
+            # an unexpected label would break the established compact width.
+            # BTC's macro label is retained for as long as possible.
+            for item in summary:
+                if item.symbol == anchor_symbol:
+                    continue
+                event_codes[item.symbol] = ""
+                header = summary_line(compact_clock)
+                if len(header) <= max_len:
+                    break
+        if len(header) > max_len:
+            event_codes[anchor_symbol] = ""
+            header = summary_line(compact_clock)
+        if len(header) > max_len:
             raise RuntimeError("Discord-Top-Zeilenlimit überschritten")
         lines = [header]
 
@@ -2583,7 +2592,7 @@ class LighterMonitor:
             lines.append(line)
 
         max_len = int(self.config.get("discord_max_codepoints_per_line", 58))
-        if any(len(line) > max_len for line in lines[1:]):
+        if any(len(line) > max_len for line in lines):
             raise RuntimeError("Discord-Zeilenlimit überschritten")
         return "\n".join(lines)
 
@@ -2592,7 +2601,6 @@ class LighterMonitor:
         *,
         event_marks: Mapping[str, Any] | None = None,
         event_display_codes: Mapping[str, str] | None = None,
-        semantic_event_codes: Mapping[str, str] | None = None,
         now: datetime | None = None,
     ) -> tuple[str, dict[str, Any]]:
         now = now or datetime.now(timezone.utc)
@@ -2670,15 +2678,6 @@ class LighterMonitor:
         self.last_signals = self._rank(signals)
         self.last_snapshots = snapshots
         report = self._format(signals, now)
-        if semantic_event_codes is not None:
-            previous_codes = {item.symbol: item.event_display_code for item in signals}
-            for item in signals:
-                item.event_display_code = str(semantic_event_codes.get(item.symbol, "") or "")
-            semantic_report = self._format(signals, now)
-            for item in signals:
-                item.event_display_code = previous_codes.get(item.symbol, "")
-        else:
-            semantic_report = report
         minimum_lines = int(self.config.get("minimum_detail_count", 1)) + 1
         maximum_lines = int(self.config.get("maximum_detail_count", 4)) + 1
         if not minimum_lines <= len(report.splitlines()) <= maximum_lines:
@@ -2688,7 +2687,6 @@ class LighterMonitor:
             "package_revision": PACKAGE_REVISION,
             "generated_at": now.isoformat(),
             "report": report,
-            "semantic_report": semantic_report,
             "signals": [asdict(item) for item in self.last_signals],
             "regime": regime_payload,
             "extremity": extremity_payload,
@@ -2715,4 +2713,4 @@ class LighterMonitor:
         return candles, book, daily
 
 
-# Package revision: v3.9.3-lighter-top-pool-r1
+# Package revision: v3.9.3-lighter-top3-r1

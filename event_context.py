@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-CACHE_VERSION = "event-cache-v393-r1"
+CACHE_VERSION = "event-cache-v393-r2"
 USER_AGENT = "crypto-signal-monitor/3.9.3"
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4,
@@ -960,4 +960,4 @@ def load_critical_events(
     return EventSnapshot(marks, all_events, diagnostics, _iso(now) or "")
 
 
-# Package revision: v3.9.3-lighter-top-pool-r1
+# Package revision: v3.9.3-lighter-top3-r1

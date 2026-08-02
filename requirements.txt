@@ -1,2 +1,2 @@
-# v3.9.3 active E/T/W runtime uses only the Python standard library.
-# Package revision: v3.9.3-lighter-top-pool-r1
+# v3.9.3 runtime uses only the Python standard library.
+# Package revision: v3.9.3-lighter-top3-r1

@@ -1,6 +1,6 @@
 {
   "schema_version": "3.9.3",
-  "package_revision": "v3.9.3-lighter-top-pool-r1",
+  "package_revision": "v3.9.3-lighter-top3-r1",
   "lighter_base_url": "https://mainnet.zklighter.elliot.ai/api/v1",
   "timezone": "Europe/Berlin",
   "candidate_symbols": [
@@ -29,7 +29,7 @@
     "SUI": "SUI",
     "ZEC": "ZEC"
   },
-  "summary_coin_count": 11,
+  "summary_coin_count": 4,
   "summary_anchor_symbol": "BTC",
   "minimum_detail_count": 1,
   "maximum_detail_count": 4,
@@ -72,7 +72,6 @@
   "parallel_requests": 4,
   "request_timeout_seconds": 15,
   "discord_max_codepoints_per_line": 68,
-  "discord_header_max_codepoints": 180,
   "paper_trading_enabled": true,
   "paper_starting_capital_usd": 100,
   "paper_max_positions": 3,
@@ -133,9 +132,6 @@
   "paper_probe_min_readiness": 56,
   "paper_probe_min_confidence": 54,
   "paper_early_max_hold_minutes": 18,
-  "notifications": {
-    "heartbeat_minutes": 15
-  },
   "trend_immediate_enabled": false,
   "trend_readiness_penalty": 5,
   "trend_confidence_penalty": 3,

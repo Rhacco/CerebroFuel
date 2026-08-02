@@ -14,8 +14,12 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Callable, Iterable, Mapping
 
-STATE_VERSION = "paper-optimizer-v393-r1"
-COMPATIBLE_STATE_VERSIONS = {STATE_VERSION, "paper-optimizer-v392-r1"}
+STATE_VERSION = "paper-optimizer-v393-r2"
+COMPATIBLE_STATE_VERSIONS = {
+    STATE_VERSION,
+    "paper-optimizer-v393-r1",
+    "paper-optimizer-v392-r1",
+}
 
 
 def _f(value: Any, default: float = 0.0) -> float:

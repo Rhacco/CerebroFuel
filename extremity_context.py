@@ -278,4 +278,4 @@ def extremity_code(score: float, available: bool = True) -> str:
     return f"X{rounded:+03d}"
 
 
-# Package revision: v3.9.3-lighter-top-pool-r1
+# Package revision: v3.9.3-lighter-top3-r1

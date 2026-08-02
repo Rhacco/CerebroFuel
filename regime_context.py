@@ -293,4 +293,4 @@ def calculate_regimes(
     return results
 
 
-# Package revision: v3.9.3-lighter-top-pool-r1
+# Package revision: v3.9.3-lighter-top3-r1

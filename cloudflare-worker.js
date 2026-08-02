@@ -82,4 +82,4 @@ async function triggerGitHubWithRetry(env, source) {
   throw new Error(`GitHub konnte nicht gestartet werden: ${lastError}`);
 }
 
-// Package revision: v3.9.3-lighter-top-pool-r1
+// Package revision: v3.9.3-lighter-top3-r1

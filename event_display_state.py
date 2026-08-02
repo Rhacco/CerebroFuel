@@ -13,19 +13,14 @@ from pathlib import Path
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
-STATE_VERSION = "event-display-v393-r1"
+STATE_VERSION = "event-display-v393-r2"
 
 
 @dataclass(frozen=True)
 class EventDisplayPlan:
     codes: dict[str, str]
-    semantic_codes: dict[str, str]
     due_keys: tuple[str, ...]
     hour_key: str
-
-    @property
-    def force_send(self) -> bool:
-        return bool(self.due_keys)
 
 
 def _value(mark: Any, name: str, default: Any = None) -> Any:
@@ -97,7 +92,6 @@ def plan_event_display(
     }
 
     codes: dict[str, str] = {}
-    semantic_codes: dict[str, str] = {}
     due: list[str] = []
     for symbol, mark in marks.items():
         code = str(_value(mark, "code", "") or "")
@@ -108,20 +102,14 @@ def plan_event_display(
         is_today = starts is not None and starts.astimezone(zone).date() <= today
         if active or is_today or starts is None:
             codes[str(symbol)] = code
-            semantic_codes[str(symbol)] = code
             continue
 
         fingerprint = _fingerprint(str(symbol), mark)
         if sent.get(fingerprint) != hour_key:
             codes[str(symbol)] = code
             due.append(fingerprint)
-        # Future-day reminder labels are deliberately excluded from the semantic
-        # digest. Their hourly appearance/disappearance must not create a second
-        # Discord message immediately after the reminder.
-
     return EventDisplayPlan(
         codes=codes,
-        semantic_codes=semantic_codes,
         due_keys=tuple(sorted(set(due))),
         hour_key=hour_key,
     )

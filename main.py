@@ -1,4 +1,4 @@
-"""Crypto Signal Monitor v3.9.3 — Lighter top pool and managed Discord report."""
+"""Crypto Signal Monitor v3.9.3 — Lighter top pool and fresh Discord posts."""
 from __future__ import annotations
 
 import argparse
@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 from discord_sender import send_discord
 from lighter_monitor import APP_VERSION, LighterMonitor
 from paper_trader import PaperTrader
-from notification_state import mark_report_sent, report_send_decision
 from event_context import load_critical_events
 from event_display_state import mark_event_displayed, plan_event_display
 from paper_optimizer import review_paper_parameters
@@ -22,7 +21,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=f"CF v{APP_VERSION}")
     parser.add_argument("--config", default=str(ROOT / "config.json"))
     parser.add_argument("--no-send", action="store_true")
-    parser.add_argument("--force-discord", action="store_true")
     parser.add_argument("--no-paper", action="store_true")
     parser.add_argument(
         "--paper-state",
@@ -57,11 +55,9 @@ def main() -> int:
     report, payload = monitor.run(
         event_marks=event_snapshot.marks,
         event_display_codes=event_plan.codes,
-        semantic_event_codes=event_plan.semantic_codes,
         now=generated_at,
     )
     payload["events"] = event_snapshot.to_dict()
-    semantic_report = str(payload.get("semantic_report") or report)
     paper_result = None
     if bool(config.get("paper_trading_enabled", True)) and not args.no_paper:
         paper_result = PaperTrader(
@@ -88,9 +84,7 @@ def main() -> int:
                 else "Früher Diagnosehinweis!"
             )
             report += "\n" + alert_line
-            semantic_report += "\n" + alert_line
         payload["report"] = report
-        payload["semantic_report"] = semantic_report
         with (output / "paper_decisions.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(
                 json.dumps(
@@ -128,50 +122,25 @@ def main() -> int:
         and os.getenv("SEND_DISCORD", "true").lower() not in {"0", "false", "no", "off"}
     )
     if should_send:
-        notification_path = output / "notification_state.json"
-        now_ms = int(monitor.generated_at.timestamp() * 1000)
-        parameter_force = bool(
-            paper_result
-            and isinstance(payload.get("parameter_review"), dict)
-            and payload["parameter_review"].get("alert")
+        webhook = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
+        if not webhook:
+            raise RuntimeError("DISCORD_WEBHOOK_URL fehlt")
+        send_discord(
+            webhook,
+            report,
+            username=str(config.get("discord_username", "CF v3.9.3")),
+            avatar_url=str(config.get("discord_avatar_url", "")).strip(),
         )
-        event_force = bool(event_plan.force_send)
-        send_now, send_reason, digest = report_send_decision(
-            path=notification_path,
-            report=semantic_report,
-            now_ms=now_ms,
-            config=config,
-            force=bool(args.force_discord or parameter_force or event_force),
+        mark_event_displayed(
+            state_path=event_display_path,
+            plan=event_plan,
+            now=generated_at,
         )
-        if send_now:
-            webhook = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
-            if not webhook:
-                raise RuntimeError("DISCORD_WEBHOOK_URL fehlt")
-            send_discord(
-                webhook,
-                report,
-                username=str(config.get("discord_username", "CF v3.9.3")),
-                avatar_url=str(config.get("discord_avatar_url", "")).strip(),
-                state_path=output / "discord_message_state.json",
-            )
-            mark_report_sent(
-                path=notification_path,
-                digest=digest,
-                now_ms=now_ms,
-                reason=send_reason,
-            )
-            mark_event_displayed(
-                state_path=event_display_path,
-                plan=event_plan,
-                now=generated_at,
-            )
-            print(f"Discord gesendet ({send_reason}).")
-        else:
-            print("Discord übersprungen (inhaltlich unverändert).")
+        print("Discord als neue Nachricht gesendet.")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
 
-# Package revision: v3.9.3-lighter-top-pool-r1
+# Package revision: v3.9.3-lighter-top3-r1
