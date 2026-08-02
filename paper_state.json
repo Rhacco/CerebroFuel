@@ -2,12 +2,10 @@
   "app_version": "3.9.2",
   "balance_usd": 99.9650911278,
   "checkpoint_requested": false,
-  "cooldowns": {
-    "SOL": 1785648595
-  },
-  "last_checkpoint_at": "2026-08-02T05:26:56.878084+00:00",
-  "last_decision_key": "1785648360000",
-  "last_run_at": "2026-08-02T05:26:55.281516+00:00",
+  "cooldowns": {},
+  "last_checkpoint_at": "2026-08-02T05:37:58.770167+00:00",
+  "last_decision_key": "1785649020000",
+  "last_run_at": "2026-08-02T05:37:57.128288+00:00",
   "ledger": [
     {
       "action": {
@@ -4568,42 +4566,167 @@
         "trade_net_pnl_usd": -0.011214267266571744
       },
       "timestamp": "2026-08-02T05:26:55.281516+00:00"
+    },
+    {
+      "action": {
+        "alias": "BTC",
+        "direction": -1,
+        "discord_visible": false,
+        "full_close": false,
+        "is_add": false,
+        "kind": "OPEN",
+        "leverage": 10,
+        "margin_usd": 1.0,
+        "priority": 77.72169879897386,
+        "realized_pnl_usd": 0.0,
+        "reason": "E 76.3/78.6, Stop 0.140%",
+        "symbol": "BTC"
+      },
+      "balance_usd": 99.96509113,
+      "details": {
+        "base_size": 0.00015764342004246913,
+        "confidence": 78.63542963582566,
+        "entry_fee_usd": 0.0,
+        "entry_price": 63434.3,
+        "entry_roundtrip_cost_pct": 0.00031528684008035024,
+        "entry_state": "STRONG_SHORT",
+        "notional_usd": 10.0,
+        "rank": 1,
+        "readiness": 76.26786388325436,
+        "setup": "E",
+        "stop_price": 63523.10802000001,
+        "target_one_price": 63332.170777,
+        "target_two_price": 63247.803158
+      },
+      "timestamp": "2026-08-02T05:37:57.128288+00:00"
     }
   ],
   "observations": {
     "BTC": {
-      "candle_ms": 1785648360000,
-      "entry_direction": 0,
-      "entry_streak": 0,
-      "state": "NO_TRADE"
+      "candle_ms": 1785649020000,
+      "entry_direction": -1,
+      "entry_streak": 1,
+      "state": "STRONG_SHORT"
     },
     "ETH": {
-      "candle_ms": 1785648360000,
-      "entry_direction": 0,
-      "entry_streak": 0,
-      "state": "NO_TRADE"
-    },
-    "HYPE": {
-      "candle_ms": 1785648360000,
-      "entry_direction": 0,
-      "entry_streak": 0,
-      "state": "NO_TRADE"
-    },
-    "SOL": {
-      "candle_ms": 1785648360000,
+      "candle_ms": 1785649020000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "WATCH_SHORT"
     },
+    "HYPE": {
+      "candle_ms": 1785649020000,
+      "entry_direction": 0,
+      "entry_streak": 0,
+      "state": "WATCH_SHORT"
+    },
+    "SOL": {
+      "candle_ms": 1785649020000,
+      "entry_direction": 0,
+      "entry_streak": 0,
+      "state": "NO_TRADE"
+    },
     "UNI": {
-      "candle_ms": 1785648360000,
+      "candle_ms": 1785649020000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     }
   },
-  "positions": {},
-  "run_count": 515,
+  "positions": {
+    "BTC": {
+      "alias": "BTC",
+      "base_size": 0.00015764342004,
+      "degrade_streak": 0,
+      "direction": -1,
+      "entry_confidence": 78.63542963582566,
+      "entry_features": {
+        "btc_context": 56.68894184582881,
+        "chase_warning": false,
+        "confidence": 78.63542963582566,
+        "cost_pct": 0.00031528684008035024,
+        "data_quality": 100.0,
+        "direction": -1,
+        "early_approach_confirmed": true,
+        "early_boundary_distance_pct": 0.009617112785087478,
+        "early_clean_boundary_test": true,
+        "early_preview_only": false,
+        "event_kind": "NFP",
+        "event_risk": 20.0,
+        "execution_score": 96.39086808548427,
+        "extremity_available": true,
+        "extremity_confidence": 89.9633,
+        "extremity_intraday": -28.6129,
+        "extremity_return_1d": 0.8984,
+        "extremity_return_3d": -0.7974,
+        "extremity_return_7d": -1.4166,
+        "extremity_score": -16.2008,
+        "extremity_swing": -4.4782,
+        "funding_hourly_pct": 0.0096,
+        "funding_missing": false,
+        "leverage": 10,
+        "liquidity_score": 87.4543970121119,
+        "margin_usd": 1.0,
+        "probe_entry": true,
+        "rank": 1,
+        "readiness": 76.26786388325436,
+        "rebound_participation": null,
+        "regime_available": true,
+        "regime_consistency": 0.6667,
+        "regime_modifier": 0.9543,
+        "regime_score": -11.9284,
+        "relative_14d": -2.1045,
+        "relative_30d": 3.0597,
+        "relative_7d": -1.4166,
+        "relative_drift_60m": null,
+        "return_14d": -2.1045,
+        "return_30d": 3.0597,
+        "return_7d": -1.4166,
+        "reversal_new_extreme": false,
+        "reversal_relative_confirmed": true,
+        "reversal_relative_opposition": false,
+        "reversal_structural_reclaim": false,
+        "risk_usd": 0.014031528684008034,
+        "setup": "E",
+        "setup_age_minutes": null,
+        "setup_consumed_fraction": 0.0,
+        "setup_phase": "strong",
+        "setup_score": 64.0,
+        "stop_pct": 0.14,
+        "symbol": "BTC",
+        "tape_quality": 94.05009627861303,
+        "technical_stop_pct": 0.005877146887778295,
+        "technical_stop_price": 63438.42815049682,
+        "volume_confirmation": 67.92313703122325
+      },
+      "entry_fee_remaining_usd": 0.0,
+      "entry_price": 63434.3,
+      "entry_rank": 1,
+      "entry_readiness": 76.26786388325436,
+      "entry_roundtrip_cost_pct": 0.00031528684008035024,
+      "entry_state": "STRONG_SHORT",
+      "funding_accrued_usd": 0.0,
+      "funding_updated_at": "2026-08-02T05:37:57.128288+00:00",
+      "last_candle_ms": 1785649020000,
+      "leverage": 10,
+      "margin_usd": 1.0,
+      "notional_usd": 10.0,
+      "opened_at": "2026-08-02T05:37:57.128288+00:00",
+      "probe_entry": true,
+      "realized_pnl_usd": 0.0,
+      "risk_usd": 0.014031528684008034,
+      "scale_count": 0,
+      "setup": "E",
+      "stop_pct": 0.14,
+      "stop_price": 63523.10802000001,
+      "symbol": "BTC",
+      "taker_fee_pct": 0.0,
+      "target_one_price": 63332.170777,
+      "target_one_taken": false,
+      "target_two_price": 63247.803158
+    }
+  },
+  "run_count": 526,
   "schema": 1,
   "starting_balance_usd": 100.0
 }
