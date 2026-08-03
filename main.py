@@ -1,4 +1,4 @@
-"""Crypto Signal Monitor v4.0.0 — Lighter pool with incident protection."""
+"""Crypto Signal Monitor v4.1.0 — Lighter pool with incident protection."""
 from __future__ import annotations
 
 import argparse
@@ -132,7 +132,7 @@ def main() -> int:
         send_discord(
             webhook,
             report,
-            username=str(config.get("discord_username", "CF v4.0.0")),
+            username=str(config.get("discord_username", "CF v4.1.0")),
             avatar_url=str(config.get("discord_avatar_url", "")).strip(),
         )
         mark_event_displayed(
@@ -147,4 +147,4 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 
-# Package revision: v4.0.0-fresh-incident-r1
+# Package revision: v4.1.0-fixed-btc-anchor-r2

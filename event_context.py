@@ -1,4 +1,4 @@
-"""Verified scheduled and externally confirmed event context for CF v4.0.0.
+"""Verified scheduled and externally confirmed event context for CF v4.1.0.
 
 Automatic facts come only from official public schedules/status pages. Project-
 specific events such as token unlocks are accepted only from a local or remote
@@ -24,8 +24,8 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-CACHE_VERSION = "event-cache-v400-r1"
-USER_AGENT = "crypto-signal-monitor/4.0.0"
+CACHE_VERSION = "event-cache-v410-r1"
+USER_AGENT = "crypto-signal-monitor/4.1.0"
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4,
     "may": 5, "june": 6, "july": 7, "august": 8,
@@ -1002,4 +1002,4 @@ def load_critical_events(
     return EventSnapshot(marks, all_events, diagnostics, _iso(now) or "")
 
 
-# Package revision: v4.0.0-fresh-incident-r1
+# Package revision: v4.1.0-fixed-btc-anchor-r2

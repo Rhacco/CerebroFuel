@@ -1,4 +1,4 @@
-"""Deterministic, multi-candidate paper-trading engine for CF v4.0.0."""
+"""Deterministic, multi-candidate paper-trading engine for CF v4.1.0."""
 from __future__ import annotations
 
 import json
@@ -10,8 +10,7 @@ from typing import Any, Iterable, Mapping
 
 
 STATE_SCHEMA = 1
-APP_VERSION = "4.0.0"
-COMPATIBLE_APP_VERSIONS = {APP_VERSION, "3.9.2", "3.9.1", "3.9.0"}
+APP_VERSION = "4.1.0"
 ENTRY_STATES = {"BUY": 1, "SELL": -1, "STRONG_LONG": 1, "STRONG_SHORT": -1}
 IMMEDIATE_STATES = {"BUY", "SELL"}
 PROBE_STATES = {"STRONG_LONG", "STRONG_SHORT"}
@@ -307,17 +306,12 @@ class PaperTrader:
         if (
             not isinstance(payload, dict)
             or int(payload.get("schema", -1)) != STATE_SCHEMA
-            or payload.get("app_version") not in COMPATIBLE_APP_VERSIONS
+            or payload.get("app_version") != APP_VERSION
             or not isinstance(payload.get("positions"), dict)
             or _f(payload.get("balance_usd"), -1.0) < 0
             or invalid_position
         ):
             raise RuntimeError("Paper-State ist inkompatibel oder beschädigt")
-        if payload.get("app_version") == "3.9.0":
-            return self._initial_state()
-        if payload.get("app_version") != APP_VERSION:
-            payload["app_version"] = APP_VERSION
-            payload["checkpoint_requested"] = True
         return payload
 
     def _save_state(self) -> None:
@@ -474,7 +468,7 @@ class PaperTrader:
         if signal.selected_setup == "REVERSAL":
             quality_cap = min(quality_cap, 20)
         elif signal.selected_setup == "EARLY":
-            quality_cap = min(quality_cap, 25 if signal.state in IMMEDIATE_STATES else 15)
+            quality_cap = min(quality_cap, 30 if signal.state in IMMEDIATE_STATES else 20)
         elif signal.selected_setup == "TREND":
             quality_cap = min(quality_cap, 30)
         extremity = float(getattr(signal, "extremity_score", 0.0))
@@ -590,11 +584,11 @@ class PaperTrader:
     def _target_margin(self, signal: Any, rank: int) -> float:
         quality = self._quality(signal)
         if signal.state in PROBE_STATES:
-            amount = 1.5 if quality >= 84 else 1.0
+            amount = 2.0 if quality >= 82 else 1.5
         else:
-            amount = 4.0 if quality >= 94 else 3.0 if quality >= 88 else 2.0 if quality >= 81 else 1.0
+            amount = 5.0 if quality >= 93 else 4.0 if quality >= 87 else 3.0 if quality >= 80 else 2.0
         if signal.selected_setup in {"REVERSAL", "EARLY"}:
-            amount = min(amount, 2.0 if signal.state in IMMEDIATE_STATES else 1.0)
+            amount = min(amount, 3.0 if signal.state in IMMEDIATE_STATES else 1.5)
         if rank == 2:
             amount = max(1.0, amount - 1.0)
         elif rank >= 3:
@@ -796,7 +790,7 @@ class PaperTrader:
             _f(self.state.get("balance_usd")) - entry_fee,
             10,
         )
-        setup = SETUP_CODES.get(signal.selected_setup, "+" if signal.direction >= 0 else "-")
+        setup = SETUP_CODES.get(signal.selected_setup, "")
         position = {
             "symbol": symbol,
             "alias": signal.alias,
@@ -1399,9 +1393,7 @@ class PaperTrader:
         for symbol, position in list((self.state.get("positions") or {}).items()):
             reason: str | None = None
             if symbol not in allowed_symbols:
-                reason = "Symbol nicht mehr im v4.0.0-Kandidatenpool"
-            elif str(position.get("setup")) == "P":
-                reason = "P-Setup seit v3.7.1 deaktiviert"
+                reason = "Symbol nicht im v4.1.0-Kandidatenpool"
             if reason is None:
                 continue
             signal = self.signals.get(symbol)
@@ -1527,7 +1519,7 @@ class PaperTrader:
         if fresh_decision and not self.actions:
             top = " | ".join(
                 f"{signal.alias} {signal.state} "
-                f"{SETUP_CODES.get(signal.selected_setup, '+' if signal.direction >= 0 else '-')} "
+                f"{SETUP_CODES.get(signal.selected_setup, '')} "
                 f"{signal.trade_readiness:.1f}/{signal.confidence:.1f}"
                 for signal in signals[:3]
             )
@@ -1536,7 +1528,7 @@ class PaperTrader:
                 f"{top}"
             )
         equity, free, margin = self._equity()
-        # Paper actions are deliberately log-only in v4.0.0.
+        # Paper actions are deliberately log-only in v4.1.0.
         action_line = None
         self._log(
             f"KONTO Balance {_money(_f(self.state.get('balance_usd')), compact=False)} | "

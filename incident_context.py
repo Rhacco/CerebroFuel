@@ -1,9 +1,10 @@
-"""Persistent spontaneous-incident detection for CF v4.0.0.
+"""Persistent spontaneous-incident detection for CF v4.1.0.
 
 Confirmed external SECURITY/NETWORK events and strict Lighter market shocks use
 one state machine. Market evidence is labelled SHK! and never claims an exploit
 cause. Incidents block fresh paper entries, own detail priority for ten minutes,
-and may replace BTC in the compact header for twenty-five minutes.
+and reserve one alternative header slot for twenty-five minutes. BTC remains the
+permanent right-hand macro/event anchor.
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-STATE_VERSION = "incident-state-v400-r1"
+STATE_VERSION = "incident-state-v410-r2"
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,7 @@ class IncidentMark:
     confirmed: bool
     detected_at: str
     priority_until: str
-    anchor_until: str
+    header_until: str
     danger_score: float
     fingerprint: str
     metrics: dict[str, Any]
@@ -48,7 +49,7 @@ class IncidentSnapshot:
     marks: dict[str, IncidentMark]
     display_codes: dict[str, str]
     priority_symbol: str | None
-    anchor_symbol: str | None
+    header_symbol: str | None
     incidents: list[IncidentMark]
     diagnostics: list[str]
     generated_at: str
@@ -57,7 +58,7 @@ class IncidentSnapshot:
         return {
             "generated_at": self.generated_at,
             "priority_symbol": self.priority_symbol,
-            "anchor_symbol": self.anchor_symbol,
+            "header_symbol": self.header_symbol,
             "marks": {symbol: asdict(mark) for symbol, mark in self.marks.items()},
             "incidents": [asdict(mark) for mark in self.incidents],
             "diagnostics": list(self.diagnostics),
@@ -357,14 +358,14 @@ def _new_record(
     candidate: Mapping[str, Any],
     now: datetime,
     priority_minutes: int,
-    anchor_minutes: int,
+    header_minutes: int,
 ) -> dict[str, Any]:
     return {
         **dict(candidate),
         "detected_at": _iso(now),
         "last_seen_at": _iso(now),
         "priority_until": _iso(now + timedelta(minutes=priority_minutes)),
-        "anchor_until": _iso(now + timedelta(minutes=anchor_minutes)),
+        "header_until": _iso(now + timedelta(minutes=header_minutes)),
         "was_triggering": True,
         "cleared_at": None,
     }
@@ -385,12 +386,12 @@ def detect_spontaneous_incidents(
         return IncidentSnapshot({}, {}, None, None, [], [], _iso(now))
 
     priority_minutes = max(1, int(section.get("priority_minutes", 10)))
-    anchor_minutes = max(
+    header_minutes = max(
         priority_minutes,
-        int(section.get("anchor_override_minutes", 25)),
+        int(section.get("header_priority_minutes", 25)),
     )
     retention_minutes = max(
-        anchor_minutes,
+        header_minutes,
         int(section.get("state_retention_minutes", 120)),
     )
     reset_cooldown = max(1, int(section.get("reset_cooldown_minutes", 5)))
@@ -442,7 +443,7 @@ def detect_spontaneous_incidents(
         if same and (bool(existing.get("was_triggering")) or cooldown_active):
             record = dict(existing)
             for key, value in candidate.items():
-                if key not in {"detected_at", "priority_until", "anchor_until"}:
+                if key not in {"detected_at", "priority_until", "header_until"}:
                     record[key] = value
             record["last_seen_at"] = _iso(now)
             record["was_triggering"] = True
@@ -452,7 +453,7 @@ def detect_spontaneous_incidents(
                 candidate,
                 now,
                 priority_minutes,
-                anchor_minutes,
+                header_minutes,
             )
         records[symbol] = record
 
@@ -461,10 +462,10 @@ def detect_spontaneous_incidents(
             record["was_triggering"] = False
             record["cleared_at"] = _iso(now)
         last_seen = _parse_iso(record.get("last_seen_at"))
-        anchor_until = _parse_iso(record.get("anchor_until"))
+        header_until = _parse_iso(record.get("header_until"))
         if last_seen is None or (
             now_s - last_seen.timestamp() > retention_minutes * 60
-            and (anchor_until is None or now > anchor_until)
+            and (header_until is None or now > header_until)
         ):
             records.pop(symbol, None)
 
@@ -472,14 +473,14 @@ def detect_spontaneous_incidents(
     active_records: list[dict[str, Any]] = []
     for symbol, record in records.items():
         priority_until = _parse_iso(record.get("priority_until"))
-        anchor_until = _parse_iso(record.get("anchor_until"))
+        header_until = _parse_iso(record.get("header_until"))
         detected_at = _parse_iso(record.get("detected_at"))
         still_triggering = bool(record.get("was_triggering"))
         if (
             priority_until is None
-            or anchor_until is None
+            or header_until is None
             or detected_at is None
-            or (now > anchor_until and not still_triggering)
+            or (now > header_until and not still_triggering)
         ):
             continue
         active_records.append(record)
@@ -489,7 +490,7 @@ def detect_spontaneous_incidents(
             kind=str(record.get("kind") or "MARKET_SHOCK"),
             title=str(record.get("title") or "Spontaneous incident"),
             starts_at=_iso(detected_at),
-            ends_at=_iso(anchor_until),
+            ends_at=_iso(header_until),
             priority=int(record.get("priority") or 98),
             risk=int(record.get("risk") or 100),
             active=True,
@@ -500,7 +501,7 @@ def detect_spontaneous_incidents(
             confirmed=bool(record.get("confirmed")),
             detected_at=_iso(detected_at),
             priority_until=_iso(priority_until),
-            anchor_until=_iso(anchor_until),
+            header_until=_iso(header_until),
             danger_score=float(record.get("danger_score") or 0.0),
             fingerprint=str(record.get("fingerprint") or ""),
             metrics=dict(record.get("metrics") or {}),
@@ -520,13 +521,13 @@ def detect_spontaneous_incidents(
         for record in active_records
         if (_parse_iso(record.get("priority_until")) or now - timedelta(seconds=1)) >= now
     ]
-    anchor_candidates = [
+    header_candidates = [
         record
         for record in active_records
-        if (_parse_iso(record.get("anchor_until")) or now - timedelta(seconds=1)) >= now
+        if (_parse_iso(record.get("header_until")) or now - timedelta(seconds=1)) >= now
     ]
     priority_record = max(priority_candidates, key=rank) if priority_candidates else None
-    anchor_record = max(anchor_candidates, key=rank) if anchor_candidates else None
+    header_record = max(header_candidates, key=rank) if header_candidates else None
 
     if state_path is not None:
         try:
@@ -546,11 +547,11 @@ def detect_spontaneous_incidents(
         marks=marks,
         display_codes={symbol: mark.code for symbol, mark in marks.items()},
         priority_symbol=str(priority_record.get("symbol")) if priority_record else None,
-        anchor_symbol=str(anchor_record.get("symbol")) if anchor_record else None,
+        header_symbol=str(header_record.get("symbol")) if header_record else None,
         incidents=incident_marks,
         diagnostics=diagnostics,
         generated_at=_iso(now),
     )
 
 
-# Package revision: v4.0.0-fresh-incident-r1
+# Package revision: v4.1.0-fixed-btc-anchor-r2
