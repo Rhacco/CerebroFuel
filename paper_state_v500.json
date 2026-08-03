@@ -2,12 +2,10 @@
   "app_version": "5.0.0",
   "balance_usd": 96.19482069,
   "checkpoint_requested": false,
-  "cooldowns": {
-    "BTC": 1785795938
-  },
-  "last_checkpoint_at": "2026-08-03T22:24:41.986775+00:00",
-  "last_decision_key": "1785795840000",
-  "last_run_at": "2026-08-03T22:24:38.392473+00:00",
+  "cooldowns": {},
+  "last_checkpoint_at": "2026-08-03T22:50:48.442580+00:00",
+  "last_decision_key": "1785797400000",
+  "last_run_at": "2026-08-03T22:50:44.386356+00:00",
   "ledger": [
     {
       "action": {
@@ -4078,84 +4076,209 @@
         "trade_net_pnl_usd": -0.1353588223568752
       },
       "timestamp": "2026-08-03T22:24:38.392473+00:00"
+    },
+    {
+      "action": {
+        "alias": "HYP",
+        "direction": 1,
+        "discord_visible": false,
+        "full_close": false,
+        "is_add": false,
+        "kind": "OPEN",
+        "leverage": 20,
+        "margin_usd": 4.0,
+        "priority": 77.42025943825519,
+        "realized_pnl_usd": 0.0,
+        "reason": "E 70.0/74.3, Stop 0.192%",
+        "symbol": "HYPE"
+      },
+      "balance_usd": 96.19482069,
+      "details": {
+        "base_size": 1.4814430736980895,
+        "confidence": 74.29381063331917,
+        "entry_fee_usd": 0.0,
+        "entry_price": 54.0014,
+        "entry_roundtrip_cost_pct": 0.010925642668517683,
+        "entry_state": "WATCH_LONG",
+        "notional_usd": 80.0,
+        "rank": 1,
+        "readiness": 70.04937159097751,
+        "setup": "E",
+        "stop_price": 53.89758223320521,
+        "target_one_price": 54.146744873512695,
+        "target_two_price": 54.31285330038435
+      },
+      "timestamp": "2026-08-03T22:50:44.386356+00:00"
     }
   ],
   "observations": {
     "1000BONK": {
-      "candle_ms": 1785795840000,
+      "candle_ms": 1785797400000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "INVALID_DATA"
     },
     "1000PEPE": {
-      "candle_ms": 1785795840000,
+      "candle_ms": 1785797400000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "AAVE": {
-      "candle_ms": 1785795840000,
+      "candle_ms": 1785797400000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "BTC": {
-      "candle_ms": 1785795840000,
+      "candle_ms": 1785797400000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "ENA": {
-      "candle_ms": 1785795840000,
-      "entry_direction": 0,
-      "entry_streak": 0,
-      "state": "NO_TRADE"
+      "candle_ms": 1785797400000,
+      "entry_direction": 1,
+      "entry_streak": 2,
+      "state": "WATCH_LONG"
     },
     "HYPE": {
-      "candle_ms": 1785795840000,
-      "entry_direction": 0,
-      "entry_streak": 0,
-      "state": "NO_TRADE"
+      "candle_ms": 1785797400000,
+      "entry_direction": 1,
+      "entry_streak": 1,
+      "state": "WATCH_LONG"
     },
     "JUP": {
-      "candle_ms": 1785795840000,
+      "candle_ms": 1785797400000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "NEAR": {
-      "candle_ms": 1785795840000,
+      "candle_ms": 1785797400000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "ONDO": {
-      "candle_ms": 1785795840000,
+      "candle_ms": 1785797400000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "PUMP": {
-      "candle_ms": 1785795840000,
+      "candle_ms": 1785797400000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "SUI": {
-      "candle_ms": 1785795840000,
+      "candle_ms": 1785797400000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "ZEC": {
-      "candle_ms": 1785795840000,
+      "candle_ms": 1785797400000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     }
   },
-  "positions": {},
-  "run_count": 442,
+  "positions": {
+    "HYPE": {
+      "alias": "HYP",
+      "base_size": 1.48144307369809,
+      "degrade_streak": 0,
+      "direction": 1,
+      "entry_confidence": 74.29381063331917,
+      "entry_features": {
+        "btc_context": 82.0,
+        "chase_warning": false,
+        "confidence": 74.29381063331917,
+        "cost_pct": 0.010925642668517683,
+        "data_quality": 100.0,
+        "direction": 1,
+        "early_approach_confirmed": true,
+        "early_boundary_distance_pct": 0.06016022983058589,
+        "early_clean_boundary_test": false,
+        "early_preview_only": false,
+        "event_kind": "NFP",
+        "event_risk": 20.0,
+        "execution_score": 89.07435733147508,
+        "extremity_available": true,
+        "extremity_confidence": 85.9337,
+        "extremity_intraday": 6.9117,
+        "extremity_return_1d": 2.668,
+        "extremity_return_3d": 2.7561,
+        "extremity_return_7d": -3.7543,
+        "extremity_score": 8.1438,
+        "extremity_swing": 8.5357,
+        "funding_hourly_pct": 0.0096,
+        "funding_missing": false,
+        "leverage": 20,
+        "liquidity_score": 84.26279152580017,
+        "margin_usd": 4.0,
+        "probe_entry": true,
+        "rank": 1,
+        "readiness": 70.04937159097751,
+        "rebound_participation": 1.0955,
+        "regime_available": true,
+        "regime_consistency": 1.0,
+        "regime_modifier": -5.4289,
+        "regime_score": -75.4776,
+        "relative_14d": -10.9526,
+        "relative_30d": -23.3708,
+        "relative_7d": -3.4533,
+        "relative_drift_60m": 0.3916,
+        "return_14d": -13.5236,
+        "return_30d": -22.7033,
+        "return_7d": -3.7543,
+        "reversal_new_extreme": false,
+        "reversal_relative_confirmed": true,
+        "reversal_relative_opposition": false,
+        "reversal_structural_reclaim": false,
+        "risk_usd": 0.16254062567975086,
+        "setup": "E",
+        "setup_age_minutes": null,
+        "setup_consumed_fraction": 0.0,
+        "setup_phase": "forming",
+        "setup_score": 67.66865232681441,
+        "stop_pct": 0.19225013943117092,
+        "symbol": "HYPE",
+        "tape_quality": 79.74099662789008,
+        "technical_stop_pct": null,
+        "technical_stop_price": null,
+        "volume_confirmation": 64.15364276208358
+      },
+      "entry_fee_remaining_usd": 0.0,
+      "entry_price": 54.0014,
+      "entry_rank": 1,
+      "entry_readiness": 70.04937159097751,
+      "entry_roundtrip_cost_pct": 0.010925642668517683,
+      "entry_state": "WATCH_LONG",
+      "funding_accrued_usd": 0.0,
+      "funding_updated_at": "2026-08-03T22:50:44.386356+00:00",
+      "last_candle_ms": 1785797400000,
+      "leverage": 20,
+      "margin_usd": 4.0,
+      "notional_usd": 80.0,
+      "opened_at": "2026-08-03T22:50:44.386356+00:00",
+      "probe_entry": true,
+      "realized_pnl_usd": 0.0,
+      "risk_usd": 0.16254062567975086,
+      "scale_count": 0,
+      "setup": "E",
+      "stop_pct": 0.19225013943117092,
+      "stop_price": 53.89758223320521,
+      "symbol": "HYPE",
+      "taker_fee_pct": 0.0,
+      "target_one_price": 54.146744873512695,
+      "target_one_taken": false,
+      "target_two_price": 54.31285330038435
+    }
+  },
+  "run_count": 468,
   "schema": 1,
   "starting_balance_usd": 100.0
 }
