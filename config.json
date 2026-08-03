@@ -1,6 +1,6 @@
 {
-  "schema_version": "4.2.0",
-  "package_revision": "v4.2.0-streak-aggressive-paper-r1",
+  "schema_version": "5.0.0",
+  "package_revision": "v5.0.0-transition-guard-r1",
   "lighter_base_url": "https://mainnet.zklighter.elliot.ai/api/v1",
   "timezone": "Europe/Berlin",
   "candidate_symbols": [
@@ -74,6 +74,10 @@
   "btc_reversal_immediate_breadth_score": 52,
   "strong_trade_readiness": 61,
   "watch_trade_readiness": 54,
+  "signal_flip_guard_minutes": 10,
+  "signal_flip_try_confirmed_minutes": 2,
+  "signal_flip_now_confirmed_minutes": 3,
+  "unconfirmed_reversal_max_readiness": 60,
   "candle_count": 360,
   "closed_candle_delay_seconds": 8,
   "api_retry_count": 3,
@@ -115,7 +119,7 @@
   "paper_stop_cooldown_minutes": 4,
   "paper_action_line_max_codepoints": 34,
   "paper_ledger_limit": 500,
-  "discord_username": "CF v4.2.0",
+  "discord_username": "CF v5.0.0",
   "discord_avatar_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Cryptocurrency_Logo.svg/330px-Cryptocurrency_Logo.svg.png",
   "test_candidate_symbols": [
     "ONDO",
@@ -289,6 +293,7 @@
   "paper_near_min_readiness": 48,
   "paper_near_min_confidence": 46,
   "paper_near_min_streak": 1,
+  "paper_flip_try_min_streak": 2,
   "paper_near_max_leverage": 30,
   "paper_near_margin_pct": 5.0,
   "paper_probe_margin_pct": 9.0,

@@ -1,4 +1,4 @@
-// v4.2.0: request a run every minute; never queue over an active run.
+// v5.0.0: request a run every minute; never queue over an active run.
 function schedulerEnabled(env) {
   // ENABLED 1 = aktiv, 2 = pausiert.
   return String(env.ENABLED ?? "1").trim() === "1";
@@ -18,7 +18,7 @@ export default {
       ok: true,
       scheduler: schedulerEnabled(env) ? "enabled" : "paused",
       interval: "1m",
-      version: "4.2.0",
+      version: "5.0.0",
     });
   },
 };
@@ -28,7 +28,7 @@ function githubHeaders(env) {
     Accept: "application/vnd.github+json",
     Authorization: `Bearer ${env.GH_PAT}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "cloudflare-crypto-scheduler-v4.2.0",
+    "User-Agent": "cloudflare-crypto-scheduler-v5.0.0",
   };
 }
 
@@ -82,4 +82,4 @@ async function triggerGitHubWithRetry(env, source) {
   throw new Error(`GitHub konnte nicht gestartet werden: ${lastError}`);
 }
 
-// Package revision: v4.2.0-streak-aggressive-paper-r1
+// Package revision: v5.0.0-transition-guard-r1

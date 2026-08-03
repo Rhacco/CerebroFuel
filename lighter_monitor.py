@@ -1,4 +1,4 @@
-"""Lighter-native early-swing/T/W signal engine for CF v4.2.0."""
+"""Lighter-native early-swing/T/W signal engine for CF v5.0.0."""
 from __future__ import annotations
 
 import json
@@ -18,10 +18,11 @@ from regime_context import calculate_regimes
 from extremity_context import calculate_extremity, extremity_code, extremity_color
 from incident_context import IncidentSnapshot, detect_spontaneous_incidents
 from signal_streak_state import apply_signal_streaks
+from signal_transition_guard import apply_signal_transition_guard
 from signal_evaluator import update_signal_evaluation
 
-APP_VERSION = "4.2.0"
-PACKAGE_REVISION = "v4.2.0-streak-aggressive-paper-r1"
+APP_VERSION = "5.0.0"
+PACKAGE_REVISION = "v5.0.0-transition-guard-r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 TREND_WINDOWS = (5, 15, 60)
@@ -203,6 +204,11 @@ class Signal:
     action_streak_count: int = 0
     action_streak_action: str = ""
     action_streak_direction: int = 0
+    transition_guard_active: bool = False
+    transition_guard_from_direction: int = 0
+    transition_guard_direction_streak: int = 0
+    transition_guard_confirmed_streak: int = 0
+    transition_guard_reason: str = ""
     reasons: list[str] = field(default_factory=list)
 
 
@@ -1203,7 +1209,7 @@ def _detail_head(signal: Signal) -> str:
     if pressure is None:
         pressure = float(signal.direction)
     if abs(pressure) < 8.0:
-        return "🟡 ▷  "
+        return "🟡▷"
     if pressure >= 22.0:
         return "🟢▲"
     if pressure > 0.0:
@@ -1400,6 +1406,16 @@ class LighterMonitor:
         immediate = float(self.config.get("immediate_trade_readiness", 76))
         if not 0 < watch < strong < immediate <= 100:
             raise ValueError("Readiness-Schwellen sind nicht logisch geordnet")
+        flip_guard = int(self.config.get("signal_flip_guard_minutes", 10))
+        flip_try = int(self.config.get("signal_flip_try_confirmed_minutes", 2))
+        flip_now = int(self.config.get("signal_flip_now_confirmed_minutes", 3))
+        reversal_cap = float(
+            self.config.get("unconfirmed_reversal_max_readiness", strong - 1.0)
+        )
+        if not 1 <= flip_guard <= 60 or not 2 <= flip_try < flip_now <= 10:
+            raise ValueError("Richtungswechsel-Schutz ist ungültig")
+        if not watch <= reversal_cap < strong:
+            raise ValueError("W?-Readiness-Cap muss zwischen NEAR und TRY liegen")
         funding_watch = float(self.config.get("funding_watch_hourly_pct", 0.015))
         funding_hard = float(self.config.get("funding_hard_hourly_pct", 0.05))
         if not 0 <= funding_watch < funding_hard:
@@ -2688,7 +2704,7 @@ class LighterMonitor:
                     setup_token,
                 ) if value
             )
-            lines.append(f"{_detail_head(item)}{windows} {tail}")
+            lines.append(f"{_detail_head(item)} {windows} {tail}")
 
         if any(len(line) > max_len for line in lines):
             raise RuntimeError("Discord-Zeilenlimit überschritten")
@@ -2700,6 +2716,7 @@ class LighterMonitor:
         event_marks: Mapping[str, Any] | None = None,
         event_display_codes: Mapping[str, str] | None = None,
         incident_state_path: Path | None = None,
+        signal_transition_state_path: Path | None = None,
         signal_streak_state_path: Path | None = None,
         signal_evaluation_state_path: Path | None = None,
         now: datetime | None = None,
@@ -2801,6 +2818,15 @@ class LighterMonitor:
             }
         merged_display_codes.update(incident_snapshot.display_codes)
         self._apply_event_context(signals, merged_marks, merged_display_codes)
+        transition_payload: dict[str, Any] = {}
+        if signal_transition_state_path is not None:
+            transition_payload = apply_signal_transition_guard(
+                signals,
+                state_path=signal_transition_state_path,
+                now=now,
+                config=self.config,
+                action_getter=_action_code,
+            )
         if signal_streak_state_path is not None:
             apply_signal_streaks(
                 signals,
@@ -2844,6 +2870,7 @@ class LighterMonitor:
             "signals": [asdict(item) for item in self.last_signals],
             "regime": regime_payload,
             "extremity": extremity_payload,
+            "signal_transition": transition_payload,
             "signal_evaluation": evaluation_payload,
             "incidents": incident_snapshot.to_dict(),
             "event_marks": {
@@ -2869,4 +2896,4 @@ class LighterMonitor:
         return candles, book, daily
 
 
-# Package revision: v4.2.0-streak-aggressive-paper-r1
+# Package revision: v5.0.0-transition-guard-r1

@@ -1,4 +1,4 @@
-"""Deterministic, multi-candidate paper-trading engine for CF v4.2.0."""
+"""Deterministic, multi-candidate paper-trading engine for CF v5.0.0."""
 from __future__ import annotations
 
 import json
@@ -10,7 +10,7 @@ from typing import Any, Iterable, Mapping
 
 
 STATE_SCHEMA = 1
-APP_VERSION = "4.2.0"
+APP_VERSION = "5.0.0"
 ENTRY_STATES = {
     "BUY": 1, "SELL": -1,
     "STRONG_LONG": 1, "STRONG_SHORT": -1,
@@ -275,6 +275,8 @@ class PaperTrader:
             raise ValueError("Paper-Zielmargin ist ungültig")
         if not 0 <= int(self.config.get("paper_near_min_streak", 1)) <= 20:
             raise ValueError("paper_near_min_streak ist ungültig")
+        if not 1 <= int(self.config.get("paper_flip_try_min_streak", 2)) <= 20:
+            raise ValueError("paper_flip_try_min_streak ist ungültig")
         if not 0 <= int(self.config.get("paper_max_scale_count", 1)) <= 3:
             raise ValueError("paper_max_scale_count ist ungültig")
         same_direction = int(self.config.get("paper_max_same_direction_positions", 2))
@@ -521,6 +523,16 @@ class PaperTrader:
         direction = ENTRY_STATES.get(signal.state)
         if direction is None:
             return "kein starkes Einstiegssignal"
+        transition_active = bool(getattr(signal, "transition_guard_active", False))
+        action_streak = int(getattr(signal, "action_streak_count", 0) or 0)
+        if transition_active and signal.state in SCOUT_STATES:
+            return "Gegenrichtung wartet auf bestätigtes TRY/NOW"
+        if (
+            transition_active
+            and signal.state in PROBE_STATES
+            and action_streak < int(self.config.get("paper_flip_try_min_streak", 2))
+        ):
+            return "Gegenrichtung TRY noch nicht lange genug bestätigt"
         if bool(getattr(signal, "chase_warning", False)):
             return "CH!-Warnung blockiert Hinterherlaufen"
         technical_stop = max(0.0, _f(getattr(signal, "technical_stop_pct", 0.0)))
@@ -528,6 +540,8 @@ class PaperTrader:
             return "technisches Invalidationsniveau ist zu weit entfernt"
         if signal.selected_setup == "REVERSAL":
             setup = _setup(signal)
+            if signal.state in SCOUT_STATES:
+                return "bestätigtes W wartet im Paper auf TRY/NOW"
             if (
                 setup.phase != "ready"
                 or not bool(getattr(setup, "structural_reclaim", False))
@@ -1433,7 +1447,7 @@ class PaperTrader:
         for symbol, position in list((self.state.get("positions") or {}).items()):
             reason: str | None = None
             if symbol not in allowed_symbols:
-                reason = "Symbol nicht im v4.2.0-Kandidatenpool"
+                reason = "Symbol nicht im v5.0.0-Kandidatenpool"
             if reason is None:
                 continue
             signal = self.signals.get(symbol)
@@ -1571,7 +1585,7 @@ class PaperTrader:
                 f"{top}"
             )
         equity, free, margin = self._equity()
-        # Paper actions are deliberately log-only in v4.2.0.
+        # Paper actions are deliberately log-only in v5.0.0.
         action_line = None
         self._log(
             f"KONTO Balance {_money(_f(self.state.get('balance_usd')), compact=False)} | "

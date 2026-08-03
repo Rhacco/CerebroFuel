@@ -1,4 +1,4 @@
-# Crypto Signal Monitor v4.2.0
+# Crypto Signal Monitor v5.0.0
 
 ## Anzeige
 
@@ -19,13 +19,17 @@ Fensterkreise `5/20/60`: `🟢` long · `🟡` neutral · `🔴` short · `🟤`
 ## Aktionen
 
 - `NOW▲3` / `NOW▼3` direkte Freigabe, seit 3 Minuten unverändert
-- `TRY▲2` / `TRY▼2` mutiger Probe-Einstieg, seit 2 Minuten unverändert
+- `TRY▲2` / `TRY▼2` Probe-Einstieg, seit 2 Minuten unverändert
 - `NEAR3` starkes Vor-Signal, seit 3 Minuten in gleicher Richtung
 - `WAIT` keine Freigabe
 
-Der Zähler steigt nur bei aufeinanderfolgenden abgeschlossenen Minuten mit **gleicher Aktion und Richtung**. Wechsel, Lücke, WAIT oder Datenfehler starten beim nächsten Signal wieder mit `1`.
+Der Zähler steigt nur bei aufeinanderfolgenden abgeschlossenen Minuten mit gleicher Aktion und Richtung. Wechsel, Lücke, WAIT oder Datenfehler starten wieder mit `1`.
 
-Intern werden alle NEAR/TRY/NOW-Signale nach `3/5/10/20` Minuten ausgewertet: Kursweg, maximaler Gewinn-/Gegenlauf, Beständigkeit, Hochstufung und Richtungswechsel – getrennt nach Coin, E/T/W und Long/Short.
+## Richtungswechsel
+
+- `W?` bleibt immer höchstens `NEAR`; TRY/NOW erst nach bestätigtem strukturellem `W`.
+- Nach einem entgegengesetzten TRY/NOW braucht die neue Richtung zwei bestätigte Minuten für TRY und drei für NOW.
+- Das Paper-Trading übernimmt dieselbe Sperre und handelt keine unbestätigte Gegenrichtung; sein übriges aggressives Profil bleibt bestehen.
 
 ## Kontext
 
@@ -42,5 +46,3 @@ Intern werden alle NEAR/TRY/NOW-Signale nach `3/5/10/20` Minuten ausgewertet: Ku
 ## Ereignisse
 
 `FED` FOMC · `CPI` Verbraucherpreise · `NFP` Arbeitsmarkt · `PPI` Erzeugerpreise · `GDP` BIP · `PCE` Inflation · `EXP` Optionsverfall · `ETF` ETF · `U` Unlock · `UPG` Upgrade · `MNT` Wartung · `GOV` Governance · `SUP` Supply · `N` Nachricht.
-
-**Paper:** bewusst sehr aggressives Experimentprofil; kann bereits NEAR handeln, nutzt größere Margin, mehr Positionen und höhere Hebel. Die sichtbare Signalbewertung bleibt unverändert.

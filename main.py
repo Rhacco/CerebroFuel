@@ -1,4 +1,4 @@
-"""Crypto Signal Monitor v4.2.0 — Lighter pool with incident protection."""
+"""Crypto Signal Monitor v5.0.0 — Lighter pool with incident protection."""
 from __future__ import annotations
 
 import argparse
@@ -56,6 +56,7 @@ def main() -> int:
         event_marks=event_snapshot.marks,
         event_display_codes=event_plan.codes,
         incident_state_path=output / "incident_state.json",
+        signal_transition_state_path=output / "signal_transition_state.json",
         signal_streak_state_path=output / "signal_streak_state.json",
         signal_evaluation_state_path=output / "signal_evaluation_state.json",
         now=generated_at,
@@ -134,7 +135,7 @@ def main() -> int:
         send_discord(
             webhook,
             report,
-            username=str(config.get("discord_username", "CF v4.2.0")),
+            username=str(config.get("discord_username", "CF v5.0.0")),
             avatar_url=str(config.get("discord_avatar_url", "")).strip(),
         )
         mark_event_displayed(
@@ -149,4 +150,4 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 
-# Package revision: v4.2.0-streak-aggressive-paper-r1
+# Package revision: v5.0.0-transition-guard-r1

@@ -1,4 +1,4 @@
-"""Rolling NEAR/TRY/NOW outcome evaluation for CF v4.2.0."""
+"""Rolling NEAR/TRY/NOW outcome evaluation for CF v5.0.0."""
 from __future__ import annotations
 
 import json
@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-STATE_VERSION = "signal-evaluation-v420-r1"
+STATE_VERSION = "signal-evaluation-v500-r1"
 TRACKED_ACTIONS = {"NEAR", "TRY", "NOW"}
 HORIZONS = (3, 5, 10, 20)
 RECENT_LIMIT = 200
@@ -275,4 +275,4 @@ def update_signal_evaluation(
     }
 
 
-# Package revision: v4.2.0-streak-aggressive-paper-r1
+# Package revision: v5.0.0-transition-guard-r1
