@@ -1203,7 +1203,7 @@ def _detail_head(signal: Signal) -> str:
     if pressure is None:
         pressure = float(signal.direction)
     if abs(pressure) < 8.0:
-        return "🟡▷"
+        return "🟡 ▷"
     if pressure >= 22.0:
         return "🟢▲"
     if pressure > 0.0:
@@ -2688,7 +2688,7 @@ class LighterMonitor:
                     setup_token,
                 ) if value
             )
-            lines.append(f"{_detail_head(item)} {windows} {tail}")
+            lines.append(f"{_detail_head(item)}{windows} {tail}")
 
         if any(len(line) > max_len for line in lines):
             raise RuntimeError("Discord-Zeilenlimit überschritten")
