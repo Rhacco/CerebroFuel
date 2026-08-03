@@ -1,4 +1,4 @@
-"""Lighter-native early-swing/T/W signal engine for CF v4.1.0."""
+"""Lighter-native early-swing/T/W signal engine for CF v4.2.0."""
 from __future__ import annotations
 
 import json
@@ -17,9 +17,11 @@ from urllib.request import Request, urlopen
 from regime_context import calculate_regimes
 from extremity_context import calculate_extremity, extremity_code, extremity_color
 from incident_context import IncidentSnapshot, detect_spontaneous_incidents
+from signal_streak_state import apply_signal_streaks
+from signal_evaluator import update_signal_evaluation
 
-APP_VERSION = "4.1.0"
-PACKAGE_REVISION = "v4.1.0-fixed-btc-anchor-r2"
+APP_VERSION = "4.2.0"
+PACKAGE_REVISION = "v4.2.0-streak-aggressive-paper-r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 TREND_WINDOWS = (5, 15, 60)
@@ -198,6 +200,9 @@ class Signal:
     early: Setup = field(default_factory=lambda: Setup("EARLY"))
     trend: Setup = field(default_factory=lambda: Setup("TREND"))
     reversal: Setup = field(default_factory=lambda: Setup("REVERSAL"))
+    action_streak_count: int = 0
+    action_streak_action: str = ""
+    action_streak_direction: int = 0
     reasons: list[str] = field(default_factory=list)
 
 
@@ -1198,7 +1203,7 @@ def _detail_head(signal: Signal) -> str:
     if pressure is None:
         pressure = float(signal.direction)
     if abs(pressure) < 8.0:
-        return "🟡►"
+        return "🟡▷"
     if pressure >= 22.0:
         return "🟢▲"
     if pressure > 0.0:
@@ -1255,9 +1260,13 @@ def _action_code(signal: Signal) -> str:
 
 def _action_token(signal: Signal) -> str:
     code = _action_code(signal)
+    if code not in {"NEAR", "TRY", "NOW"}:
+        return code
+    count = max(1, int(getattr(signal, "action_streak_count", 0) or 0))
+    suffix = str(count)
     if code in {"TRY", "NOW"}:
-        return code + ("▲" if signal.direction >= 0 else "▼")
-    return code
+        return code + ("▲" if signal.direction >= 0 else "▼") + suffix
+    return code + suffix
 
 
 def _market_bias(signal: Signal) -> float | None:
@@ -2691,6 +2700,8 @@ class LighterMonitor:
         event_marks: Mapping[str, Any] | None = None,
         event_display_codes: Mapping[str, str] | None = None,
         incident_state_path: Path | None = None,
+        signal_streak_state_path: Path | None = None,
+        signal_evaluation_state_path: Path | None = None,
         now: datetime | None = None,
     ) -> tuple[str, dict[str, Any]]:
         now = now or datetime.now(timezone.utc)
@@ -2790,6 +2801,28 @@ class LighterMonitor:
             }
         merged_display_codes.update(incident_snapshot.display_codes)
         self._apply_event_context(signals, merged_marks, merged_display_codes)
+        if signal_streak_state_path is not None:
+            apply_signal_streaks(
+                signals,
+                state_path=signal_streak_state_path,
+                now=now,
+                action_getter=_action_code,
+            )
+        else:
+            for signal in signals:
+                action = _action_code(signal)
+                if action in {"NEAR", "TRY", "NOW"}:
+                    signal.action_streak_count = 1
+                    signal.action_streak_action = action
+                    signal.action_streak_direction = _direction(signal.direction)
+        evaluation_payload: dict[str, Any] = {}
+        if signal_evaluation_state_path is not None:
+            evaluation_payload = update_signal_evaluation(
+                signals,
+                state_path=signal_evaluation_state_path,
+                now=now,
+                action_getter=_action_code,
+            )
         self.last_incidents = incident_snapshot
         self.last_signals = self._rank(signals)
         self.last_snapshots = snapshots
@@ -2811,6 +2844,7 @@ class LighterMonitor:
             "signals": [asdict(item) for item in self.last_signals],
             "regime": regime_payload,
             "extremity": extremity_payload,
+            "signal_evaluation": evaluation_payload,
             "incidents": incident_snapshot.to_dict(),
             "event_marks": {
                 symbol: (asdict(mark) if hasattr(mark, "__dataclass_fields__") else dict(mark))
@@ -2835,4 +2869,4 @@ class LighterMonitor:
         return candles, book, daily
 
 
-# Package revision: v4.1.0-fixed-btc-anchor-r2
+# Package revision: v4.2.0-streak-aggressive-paper-r1

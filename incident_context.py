@@ -1,4 +1,4 @@
-"""Persistent spontaneous-incident detection for CF v4.1.0.
+"""Persistent spontaneous-incident detection for CF v4.2.0.
 
 Confirmed external SECURITY/NETWORK events and strict Lighter market shocks use
 one state machine. Market evidence is labelled SHK! and never claims an exploit
@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-STATE_VERSION = "incident-state-v410-r2"
+STATE_VERSION = "incident-state-v420-r2"
 
 
 @dataclass(frozen=True)
@@ -554,4 +554,4 @@ def detect_spontaneous_incidents(
     )
 
 
-# Package revision: v4.1.0-fixed-btc-anchor-r2
+# Package revision: v4.2.0-streak-aggressive-paper-r1

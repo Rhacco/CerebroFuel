@@ -1,59 +1,46 @@
-# Crypto Signal Monitor v4.1.0
+# Crypto Signal Monitor v4.2.0
 
 ## Anzeige
 
-**Kopfzeile:** drei auffälligste Altcoins + **BTC immer ganz rechts**. Der Kreis hinter dem Coin zeigt die aktuelle Überdehnung; Warnungen und Ereignisse stehen direkt dahinter. BTC trägt die stündliche Makroanzeige.
+**Kopfzeile:** drei auffälligste Altcoins + **BTC immer ganz rechts**. Coin-Kreis = Überdehnung; Warnungen/Ereignisse stehen direkt dahinter. BTC trägt die stündliche Makroanzeige.
 
-**Detailzeilen:** stärkste NOW-, TRY- und NEAR-Signale sowie BTC, nach Signalstärke sortiert. Aufbau:
+**Detail:** `Druck  5m 20m 60m  Coin+Readiness  Aktion  Extremität  Setup`
 
-`Druck  5m 20m 60m  Coin+Readiness  Aktion  Extremität  Setup`
-
-## Druckkreis
+## Trenddruck
 
 - `🟣▲/▼` NOW freigegeben
-- `🟢▲` starker Long-Druck
-- `🔵▲` leichter Long-Druck
-- `🟡►` beruhigt / seitwärts
-- `🟠▼` leichter Short-Druck
-- `🔴▼` starker Short-Druck
+- `🟢▲` starker Long-Druck · `🔵▲` leichter Long-Druck
+- `🟡▷` beruhigt / seitwärts
+- `🟠▼` leichter Short-Druck · `🔴▼` starker Short-Druck
 - `⚫?` unzureichende Daten
 
-Die Kreise bei `5/20/60` zeigen den Druck je Zeitfenster: `🟢` long, `🟡` neutral, `🔴` short, `🟤` unvollständig.
+Fensterkreise `5/20/60`: `🟢` long · `🟡` neutral · `🔴` short · `🟤` unvollständig.
 
-## Aktionen und Setups
+## Aktionen
 
-- `NOW▲/▼` direkte Trading-Freigabe
-- `TRY▲/▼` mutiger Probe-Einstieg
-- `NEAR` starkes Signal kurz vor TRY/NOW
+- `NOW▲3` / `NOW▼3` direkte Freigabe, seit 3 Minuten unverändert
+- `TRY▲2` / `TRY▼2` mutiger Probe-Einstieg, seit 2 Minuten unverändert
+- `NEAR3` starkes Vor-Signal, seit 3 Minuten in gleicher Richtung
 - `WAIT` keine Freigabe
-- `E` früher Impuls
-- `T` Trendfortsetzung
-- `W` bestätigte Umkehr, `W?` noch unvollständig
-- `a0–a9` Alter des Setups in Minuten
 
-## Extremität
+Der Zähler steigt nur bei aufeinanderfolgenden abgeschlossenen Minuten mit **gleicher Aktion und Richtung**. Wechsel, Lücke, WAIT oder Datenfehler starten beim nächsten Signal wieder mit `1`.
 
-- `OB` überkauft / nach oben überdehnt
-- `OS` überverkauft / nach unten überdehnt
-- `X` neutraler Bereich
+Intern werden alle NEAR/TRY/NOW-Signale nach `3/5/10/20` Minuten ausgewertet: Kursweg, maximaler Gewinn-/Gegenlauf, Beständigkeit, Hochstufung und Richtungswechsel – getrennt nach Coin, E/T/W und Long/Short.
 
-Kopfzeile: `🔴` stark überkauft, `🟠` erhöht, `🟡` neutral, `🔵` erhöht überverkauft, `🟢` stark überverkauft, `⚫` nicht verfügbar. Diese Farbe beschreibt Überdehnung, nicht die Handelsrichtung.
+## Kontext
+
+- `E` früher Impuls · `T` Trendfortsetzung · `W` bestätigte Umkehr · `W?` unvollständig
+- `a0–a9` Setup-Alter
+- `OB` überkauft · `OS` überverkauft · `X` neutral
+
+Überdehnung in der Kopfzeile: `🔴` stark oben · `🟠` erhöht oben · `🟡` neutral · `🔵` erhöht unten · `🟢` stark unten · `⚫` unbekannt.
 
 ## Warnungen
 
-- `SEC!` bestätigtes Sicherheitsereignis
-- `NET!` bestätigte Netzwerkstörung
-- `SHK!` außergewöhnlicher Marktschock
-- `V!` schwache Volumen-/Tape-Bestätigung
-- `L!` geringe Liquidität
-- `K!` ungünstige Handelskosten
-- `B!` schwacher BTC-Kontext
-- `R!` gegensätzliches Marktregime
-- `RS!` schwache relative Stärke bei Umkehr
-- `CH!` Signal bereits zu weit gelaufen
-- `F!` ungünstiges oder fehlendes Funding
-- `DATA!`, `STALE!`, `GAP!`, `BOOK!`, `CND!` Datenproblem
+`SEC!` Sicherheit · `NET!` Netzwerk · `SHK!` Marktschock · `V!` Volumen/Tape · `L!` Liquidität · `K!` Kosten · `B!` BTC-Kontext · `R!` Regime · `RS!` relative Umkehrstärke · `CH!` zu weit gelaufen · `F!` Funding · `DATA!/STALE!/GAP!/BOOK!/CND!` Datenproblem.
 
 ## Ereignisse
 
-`FED` FOMC · `CPI` Verbraucherpreise · `NFP` US-Arbeitsmarkt · `PPI` Erzeugerpreise · `GDP` BIP · `PCE` PCE-Inflation · `EXP` großer Optionsverfall · `ETF` ETF-Ereignis · `U` Token-Unlock · `UPG` Upgrade · `MNT` Wartung · `GOV` Governance · `SUP` Angebot/Supply · `N` Nachricht
+`FED` FOMC · `CPI` Verbraucherpreise · `NFP` Arbeitsmarkt · `PPI` Erzeugerpreise · `GDP` BIP · `PCE` Inflation · `EXP` Optionsverfall · `ETF` ETF · `U` Unlock · `UPG` Upgrade · `MNT` Wartung · `GOV` Governance · `SUP` Supply · `N` Nachricht.
+
+**Paper:** bewusst sehr aggressives Experimentprofil; kann bereits NEAR handeln, nutzt größere Margin, mehr Positionen und höhere Hebel. Die sichtbare Signalbewertung bleibt unverändert.
