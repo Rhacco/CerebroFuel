@@ -1,40 +1,25 @@
-# Crypto Signal Monitor v5.1.0
+<!-- Package revision: r1 -->
+# Crypto Signal Monitor v5.2.0
+
+## Pool
+`BTC ETH SOL HYPE ENA ZEC PUMP AAVE ADA AVAX JUP APT NEAR ONDO SUI TIA`
 
 ## Anzeige
+Kopfzeile: drei auffälligste Altcoins, BTC immer rechts. Ereignisse und Warnungen stehen direkt am Coin. Ohne Makrotermin erscheint der BTC-Kurs; bei heutigen Makroterminen wechseln News in geraden und der Kurs in ungeraden Minuten.
 
-**Kopfzeile:** drei auffälligste Altcoins, BTC immer ganz rechts. Coin-Kreis = Überdehnung; Warnungen und Ereignisse stehen direkt am Coin.
+Detail: `Druck  5m 20m 60m  Coin+Score  Aktion  OB/OS  Setup`
 
-- Ohne eingeblendete Makro-News: `BTC🟡64,123`
-- Heutige Makro-News: gerade Minute `BTC🟡JOLTS@16`, ungerade Minute BTC-Kurs
-- Mehrere heutige Termine wechseln untereinander; künftige Termine bleiben in der stündlichen Ankündigung
+## Farben und Signale
+- `🟣▲/▼` NOW · `🟢▲`/`🔵▲` Long-Druck · `🟡 ▷  ` seitwärts · `🟠▼`/`🔴▼` Short-Druck
+- `NOW▲3`/`NOW▼3` Freigabe · `TRY▲2`/`TRY▼2` Probe · `NEAR3` Vor-Signal · `WAIT` keine Freigabe
+- `E` früher Impuls · `T` Trend · `W` bestätigte Umkehr · `W?` unvollständig · `a0–a9` Alter
+- `OB03` obere, `OS01` untere Überdehnung; Fensterfarben: `🟢` long · `🟡` neutral · `🔴` short · `🟤` unvollständig
 
-**Detail:** `Trenddruck  5m 20m 60m  Coin+Readiness  Aktion  OB/OS  Setup`
+## Coin-Ereignisse
+`SEC!` Sicherheit · `NET!` Netzwerk · `SHK!` Marktschock · `N!` News · `UPG` Upgrade · `GOV` Governance · `MNT` Wartung · `ETF` Regulierung · `SUP` Angebot · `U!` Unlock heute/aktiv · `U5D` Unlock in fünf Tagen.
 
-## Farben und Druck
-
-- `🟣▲/▼` NOW-Freigabe
-- `🟢▲` / `🔵▲` starker / leichter Long-Druck
-- `🟡 ▷  ` beruhigt / seitwärts
-- `🟠▼` / `🔴▼` leichter / starker Short-Druck
-- Fenster `5/20/60`: `🟢` long · `🟡` neutral · `🔴` short · `🟤` unvollständig
-
-Überdehnung oben: `🔴` stark oben · `🟠` erhöht oben · `🟡` neutral · `🔵` erhöht unten · `🟢` stark unten · `⚫` unbekannt.
-
-## Signale
-
-- `NOW▲3` / `NOW▼3` direkte Freigabe
-- `TRY▲2` / `TRY▼2` Probe
-- `NEAR3` starkes Vor-Signal
-- `WAIT` keine Freigabe
-- `E` früher Impuls · `T` Trendfortsetzung · `W` bestätigte Umkehr · `W?` unvollständig
-- `a0–a9` Setup-Alter · `OB03` leicht überkauft · `OS01` leicht überverkauft
-
-Der Zähler gilt nur für aufeinanderfolgende abgeschlossene Minuten mit gleicher Aktion und Richtung. `W?` bleibt höchstens NEAR; Gegenrichtungen benötigen erneut bestätigte Minuten.
+## Weitere Warnungen
+`V!` Volumen/Tape · `L!` Liquidität · `K!` Kosten · `B!` BTC-Kontext · `R!` Regime · `RS!` relative Umkehrstärke · `CH!` überdehnt · `F!` Funding · `DATA!/STALE!/GAP!/BOOK!/CND!` Datenproblem.
 
 ## Makro
-
-`FED` FOMC · `BB` Beige Book · `CPI` Verbraucherpreise · `NFP` Arbeitsmarkt · `JOLTS` offene Stellen · `PPI` Erzeugerpreise · `ECI` Arbeitskosten · `PROD` Produktivität · `IMP` Importpreise · `GDP` BIP · `PCE` Einkommen/Inflation · `TRD` Außenhandel · `RET` Einzelhandel · `DUR` langlebige Güter · `HOU` Baustarts · `NHS` Neubauverkäufe · `FAC` Industrieaufträge · `CON` Bauausgaben · `INV` Lagerbestände · `AEI` Vorabindikatoren · `ISMM/ISMS` Einkaufsmanager · `CLM` Erstanträge · `ADP` Privatbeschäftigung · `CONF/MICH` Verbraucherstimmung.
-
-## Warnungen
-
-`SEC!` Sicherheit · `NET!` Netzwerk · `SHK!` Marktschock · `V!` Volumen/Tape · `L!` Liquidität · `K!` Kosten · `B!` BTC-Kontext · `R!` Regime · `RS!` relative Umkehrstärke · `CH!` überdehnt · `F!` Funding · `DATA!/STALE!/GAP!/BOOK!/CND!` Datenproblem.
+`FED` FOMC · `BB` Beige Book · `CPI` · `NFP` · `JOLTS` · `PPI` · `ECI` · `PROD` · `IMP` · `GDP` · `PCE` · `TRD` · `RET` · `DUR` · `HOU` · `NHS` · `FAC` · `CON` · `INV` · `AEI` · `ISMM/ISMS` · `CLM` · `ADP` · `CONF/MICH`.

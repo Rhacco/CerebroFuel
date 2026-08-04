@@ -1,4 +1,5 @@
-"""Crypto Signal Monitor v5.1.0 — Lighter pool with incident protection."""
+# Package revision: r1
+"""Crypto Signal Monitor v5.2.0 — Lighter pool with incident protection."""
 from __future__ import annotations
 
 import argparse
@@ -8,7 +9,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 from discord_sender import send_discord
-from lighter_monitor import APP_VERSION, LighterMonitor
+from lighter_monitor import APP_VERSION, PACKAGE_REVISION, LighterMonitor
 from paper_trader import PaperTrader
 from event_context import load_critical_events
 from event_display_state import mark_event_displayed, plan_event_display
@@ -34,6 +35,8 @@ def main() -> int:
     config = json.loads(Path(args.config).read_text(encoding="utf-8"))
     if config.get("schema_version") != APP_VERSION:
         raise ValueError(f"config schema_version muss {APP_VERSION} sein")
+    if config.get("package_revision") != PACKAGE_REVISION:
+        raise ValueError(f"config package_revision muss {PACKAGE_REVISION} sein")
 
     output = ROOT / "output"
     output.mkdir(exist_ok=True)
@@ -135,13 +138,14 @@ def main() -> int:
         send_discord(
             webhook,
             report,
-            username=str(config.get("discord_username", "CF v5.1.0")),
+            username=str(config.get("discord_username", "CF v5.2.0")),
             avatar_url=str(config.get("discord_avatar_url", "")).strip(),
         )
         mark_event_displayed(
             state_path=event_display_path,
             plan=event_plan,
             now=generated_at,
+            displayed_symbols=monitor.last_header_event_symbols,
         )
         print("Discord als neue Nachricht gesendet.")
     return 0

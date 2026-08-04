@@ -1,4 +1,5 @@
-"""Hourly display throttling for future events in CF v5.1.0.
+# Package revision: r1
+"""Hourly display throttling for future events in CF v5.2.0.
 
 Future-day events are shown once in the first successful Discord report of each
 local clock hour. The event loader supplies today's timed macro only on its
@@ -10,16 +11,17 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
-STATE_VERSION = "event-display-v510-r1"
+STATE_VERSION = "event-display-v520-r1"
 
 
 @dataclass(frozen=True)
 class EventDisplayPlan:
     codes: dict[str, str]
     due_keys: tuple[str, ...]
+    due_by_symbol: dict[str, tuple[str, ...]]
     hour_key: str
 
 
@@ -93,6 +95,7 @@ def plan_event_display(
 
     codes: dict[str, str] = {}
     due: list[str] = []
+    due_by_symbol: dict[str, list[str]] = {}
     for symbol, mark in marks.items():
         code = str(_value(mark, "code", "") or "")
         if not code:
@@ -101,16 +104,22 @@ def plan_event_display(
         active = bool(_value(mark, "active", False))
         is_today = starts is not None and starts.astimezone(zone).date() <= today
         if active or is_today or starts is None:
-            codes[str(symbol)] = code
+            codes[str(symbol).upper()] = code
             continue
 
         fingerprint = _fingerprint(str(symbol), mark)
         if sent.get(fingerprint) != hour_key:
-            codes[str(symbol)] = code
+            normalized_symbol = str(symbol).upper()
+            codes[normalized_symbol] = code
             due.append(fingerprint)
+            due_by_symbol.setdefault(normalized_symbol, []).append(fingerprint)
     return EventDisplayPlan(
         codes=codes,
         due_keys=tuple(sorted(set(due))),
+        due_by_symbol={
+            symbol: tuple(sorted(set(keys)))
+            for symbol, keys in due_by_symbol.items()
+        },
         hour_key=hour_key,
     )
 
@@ -120,12 +129,21 @@ def mark_event_displayed(
     state_path: Path,
     plan: EventDisplayPlan,
     now: datetime,
+    displayed_symbols: Iterable[str] | None = None,
 ) -> None:
-    if not plan.due_keys:
+    due_keys = set(plan.due_keys)
+    if displayed_symbols is not None:
+        normalized = {str(symbol).upper() for symbol in displayed_symbols}
+        due_keys = {
+            key
+            for symbol in normalized
+            for key in plan.due_by_symbol.get(symbol, ())
+        }
+    if not due_keys:
         return
     state = _load(state_path)
     sent = dict(state.get("sent") or {})
-    for key in plan.due_keys:
+    for key in sorted(due_keys):
         sent[key] = plan.hour_key
     # Keep only the latest 256 event fingerprints. Old entries are harmless,
     # but bounding the file avoids indefinite growth.

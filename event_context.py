@@ -1,4 +1,5 @@
-"""Verified scheduled and externally confirmed event context for CF v5.1.0.
+# Package revision: r1
+"""Verified scheduled and externally confirmed event context for CF v5.2.0.
 
 Automatic facts come only from official public schedules/status pages. Project-
 specific events such as token unlocks are accepted only from a local or remote
@@ -24,8 +25,8 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-CACHE_VERSION = "event-cache-v510-r1"
-USER_AGENT = "crypto-signal-monitor/5.1.0"
+CACHE_VERSION = "event-cache-v520-r1"
+USER_AGENT = "crypto-signal-monitor/5.2.0"
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4,
     "may": 5, "june": 6, "july": 7, "august": 8,
@@ -453,51 +454,6 @@ def _parse_fomc_calendar(text: str, years: Iterable[int]) -> list[CriticalEvent]
     return result
 
 
-def _parse_status_events(text: str, *, symbol: str, source_name: str, source_url: str, scheduled: bool) -> list[CriticalEvent]:
-    try:
-        payload = json.loads(text)
-    except (ValueError, TypeError, json.JSONDecodeError):
-        return []
-    key = "scheduled_maintenances" if scheduled else "incidents"
-    rows = payload.get(key) if isinstance(payload, Mapping) else None
-    if not isinstance(rows, list):
-        return []
-    result: list[CriticalEvent] = []
-    for row in rows:
-        if not isinstance(row, Mapping):
-            continue
-        title = str(row.get("name") or ("Scheduled maintenance" if scheduled else "Network incident")).strip()
-        starts = _parse_iso(row.get("scheduled_for") if scheduled else row.get("created_at"))
-        ends = _parse_iso(row.get("scheduled_until") if scheduled else row.get("resolved_at"))
-        impact = str(row.get("impact") or "minor").lower()
-        priority = 100 if not scheduled else (94 if impact in {"major", "critical"} else 86)
-        update_text = " ".join(
-            str(update.get("body") or "")
-            for update in (row.get("incident_updates") or [])
-            if isinstance(update, Mapping)
-        )
-        scheduled_text = f"{title} {update_text}".lower()
-        scheduled_kind = (
-            "UPGRADE"
-            if re.search(r"\b(network|protocol|mainnet|system)?\s*(upgrade|hard[ -]?fork)\b", scheduled_text)
-            else "MAINTENANCE"
-        )
-        result.append(CriticalEvent(
-            symbol=symbol,
-            kind=scheduled_kind if scheduled else "NETWORK",
-            title=title,
-            starts_at=_iso(starts),
-            ends_at=_iso(ends),
-            exact_time=starts is not None,
-            priority=priority,
-            source_name=source_name,
-            source_url=source_url,
-            active=not scheduled,
-        ))
-    return result
-
-
-
 def _parse_fed_month_calendar(text: str, *, year: int, month: int) -> list[CriticalEvent]:
     """Parse timed FOMC-minutes and Beige Book releases from a Fed month page."""
     flat = _html_text(text)
@@ -787,8 +743,6 @@ def _event_timing(event: CriticalEvent, now: datetime, config: Mapping[str, Any]
         if event.exact_time:
             hours = (starts - now).total_seconds() / 3600.0
         else:
-            # Date-only facts remain visible for the complete local calendar
-            # day. Do not invent a clock time by treating midnight as exact.
             zone = ZoneInfo(str(config.get("timezone_name", "Europe/Berlin")))
             days = (starts.astimezone(zone).date() - now.astimezone(zone).date()).days
             hours = float(days * 24)
@@ -799,59 +753,71 @@ def _event_timing(event: CriticalEvent, now: datetime, config: Mapping[str, Any]
     if ends and now > ends + timedelta(minutes=post_minutes):
         active = False
 
-    if event.kind == "NETWORK":
+    # Date-only unlock/supply facts are active for their full verified calendar day.
+    # Their exact minute is unknown, so they reduce risk but never pretend to know
+    # a precise release time or impose a hard block.
+    if event.kind in {"UNLOCK", "SUPPLY"}:
+        if not event.exact_time and hours == 0:
+            active = True
+            return active, False, 15, 68, hours
+        if hours is None:
+            return active, False, None, 20, hours
+        if hours > 24 * 7:
+            return active, False, None, 18, hours
+        if hours > 48:
+            return active, False, None, 32, hours
+        if hours > 24:
+            return active, False, 20, 45, hours
+        if hours > 0.25:
+            return active, False, 15, 62, hours
+        if event.exact_time and hours >= -(post_minutes / 60.0):
+            return active, False, 10, 88, hours
+        return active, False, None, 0, hours
+
+    if event.kind in {"NETWORK", "SECURITY"}:
         return active, active, 10 if active else None, 100 if active else 0, hours
+
+    # Fresh verified headlines are visibility signals, not automatic trade bans.
+    if event.kind == "NEWS":
+        return active, False, None, 10 if active else 0, hours
+
+    # Governance, upgrades, maintenance and ETF decisions can matter, but an
+    # already-published headline must not freeze trading. Scheduled exact-time
+    # events receive only bounded leverage/risk controls near the appointment.
+    if event.kind in {"GOVERNANCE", "UPGRADE", "MAINTENANCE", "ETF"}:
+        if active and (hours is None or hours <= 0):
+            return active, False, None, 20, hours
+        if hours is None or hours > 6:
+            return active, False, None, 20, hours
+        if hours > 1:
+            return active, False, 20, 45, hours
+        if hours > 0.25:
+            return active, False, 15, 72, hours
+        if hours >= -(post_minutes / 60.0):
+            return active, False, 12, 82, hours
+        return active, False, None, 0, hours
 
     block_new = False
     leverage_cap: int | None = None
     risk = 0
-    if event.kind == "UNLOCK":
-        if hours is None:
-            risk = 20
-        elif hours > 24 * 7:
-            risk = 18
-        elif hours > 48:
-            risk = 32
-        elif hours > 24:
-            risk = 45
-            leverage_cap = 20
-        elif hours > 0.25:
-            risk = 62
-            leverage_cap = 15
-        elif event.exact_time and hours >= -(post_minutes / 60.0):
-            risk = 88
-            block_new = True
-            leverage_cap = 10
-        elif not event.exact_time and hours == 0:
-            # The date is verified but the clock is not: show U0D, reduce risk,
-            # and avoid pretending that a specific minute is known.
-            risk = 68
-            leverage_cap = 15
-        else:
-            risk = 0
-    else:
-        if active:
-            risk = 95
-            block_new = True
-            leverage_cap = 10
-        elif hours is None:
-            risk = 20
-        elif hours > 6:
-            risk = 20
-        elif hours > 1:
-            risk = 45
-            leverage_cap = 20
-        elif hours > 0.25:
-            risk = 72
-            leverage_cap = 15
-        elif hours >= 0:
-            risk = 95
-            block_new = True
-            leverage_cap = 10
-        elif hours >= -(post_minutes / 60.0):
-            risk = 95
-            block_new = True
-            leverage_cap = 10
+    if active:
+        risk = 95
+        block_new = True
+        leverage_cap = 10
+    elif hours is None:
+        risk = 20
+    elif hours > 6:
+        risk = 20
+    elif hours > 1:
+        risk = 45
+        leverage_cap = 20
+    elif hours > 0.25:
+        risk = 72
+        leverage_cap = 15
+    elif hours >= -(post_minutes / 60.0):
+        risk = 95
+        block_new = True
+        leverage_cap = 10
     return active, block_new, leverage_cap, risk, hours
 
 
@@ -980,6 +946,49 @@ def _pick_display_marks(
 ) -> dict[str, EventMark]:
     """Alternate today's timed US macro with the BTC price and cycle same-day releases."""
     display = dict(risk_marks)
+
+    # Keep a verified upcoming/current unlock visible even when another event
+    # is the primary risk mark for the same coin. The compact code remains
+    # attached to the coin (for example SEC!U5D) without changing risk logic.
+    eligible_by_symbol = _eligible_event_rows(events, symbols, now, config)
+    for symbol, rows in eligible_by_symbol.items():
+        unlock_rows = [row for row in rows if row[0].kind == "UNLOCK"]
+        if not unlock_rows:
+            continue
+        upcoming = [row for row in unlock_rows if row[5] is None or row[5] >= 0]
+        selected_unlock = min(
+            upcoming or unlock_rows,
+            key=lambda row: (
+                abs(float(row[5] or 0.0)),
+                -int(row[0].priority),
+            ),
+        )
+        unlock_mark = _mark_from_row(
+            selected_unlock, now=now, timezone_name=timezone_name
+        )
+        existing = display.get(symbol)
+        if existing is None:
+            display[symbol] = unlock_mark
+        elif existing.kind != "UNLOCK" and unlock_mark.code not in existing.code:
+            display[symbol] = EventMark(
+                symbol=existing.symbol,
+                code=f"{existing.code}{unlock_mark.code}",
+                kind=existing.kind,
+                title=existing.title,
+                starts_at=existing.starts_at,
+                ends_at=existing.ends_at,
+                priority=max(existing.priority, unlock_mark.priority),
+                risk=max(existing.risk, unlock_mark.risk),
+                active=existing.active or unlock_mark.active,
+                block_new=existing.block_new or unlock_mark.block_new,
+                leverage_cap=min(
+                    value for value in (existing.leverage_cap, unlock_mark.leverage_cap)
+                    if value is not None
+                ) if any(value is not None for value in (existing.leverage_cap, unlock_mark.leverage_cap)) else None,
+                source_name=existing.source_name,
+                source_url=existing.source_url,
+            )
+
     if "BTC" not in symbols:
         return display
 
@@ -1148,41 +1157,10 @@ def load_critical_events(
     cached["schedule_events"] = [asdict(event) for event in schedule_events]
     cached["schedule_fetched_at"] = max(source_fetched_at.values(), default=0)
 
-    # Network incidents can change quickly. Check every five minutes by default
-    # while retaining the last successful result briefly on transient failures.
-    status_refresh = max(1, int(section.get("status_refresh_minutes", 5))) * 60
-    status_fetched_at = int(cached.get("status_fetched_at") or 0)
-    status_checked_at = int(cached.get("status_checked_at") or 0)
-    status_events = cached_events("status_events")
-    if now_s - status_checked_at >= status_refresh or status_checked_at <= 0:
-        status_sources = [
-            ("HYPE", "Hyperliquid Status", "https://hyperliquid.statuspage.io/api/v2/incidents/unresolved.json", False),
-            ("HYPE", "Hyperliquid Status", "https://hyperliquid.statuspage.io/api/v2/scheduled-maintenances/upcoming.json", True),
-        ]
-        fresh_status: list[CriticalEvent] = []
-        successful_status = 0
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            futures = {
-                pool.submit(_request_text, url, timeout=timeout): (symbol, source_name, url, scheduled)
-                for symbol, source_name, url, scheduled in status_sources if symbol in symbols
-            }
-            for future in as_completed(futures):
-                symbol, source_name, url, scheduled = futures[future]
-                try:
-                    fresh_status.extend(_parse_status_events(
-                        future.result(), symbol=symbol, source_name=source_name,
-                        source_url=url, scheduled=scheduled,
-                    ))
-                    successful_status += 1
-                except Exception as exc:
-                    diagnostics.append(f"{source_name} nicht aktualisiert: {exc}")
-        cached["status_checked_at"] = now_s
-        if successful_status:
-            status_events = _dedupe(fresh_status)
-            cached["status_fetched_at"] = now_s
-            cached["status_events"] = [asdict(event) for event in status_events]
-        elif status_fetched_at and now_s - status_fetched_at > 7200:
-            status_events = []
+    # Coin/project status, release, news and unlock sources are normalized by
+    # the central Cloudflare event feed. Keeping this monitor-side loader free
+    # of symbol-specific status exceptions makes every configured coin follow
+    # the same verified-feed path.
 
     # Large BTC option expiries are derived hourly from Deribit's official
     # public open-interest endpoint. A label appears only when both the absolute
@@ -1262,8 +1240,20 @@ def load_critical_events(
         int(section.get("verified_feed_cache_max_stale_minutes", 10)),
     ) * 60
     if feed_url:
-        if not _host_allowed(feed_url, allowlist):
-            diagnostics.append("Ereignisfeed-Domain nicht freigegeben")
+        # The feed endpoint is an explicitly configured transport (usually the
+        # project's own workers.dev URL). It must be HTTPS, while every event
+        # inside it still requires verified=true and an individually allowlisted
+        # HTTPS evidence URL. This keeps arbitrary feed contents untrusted.
+        try:
+            feed_transport = urlparse(feed_url)
+        except ValueError:
+            feed_transport = None
+        if (
+            feed_transport is None
+            or feed_transport.scheme != "https"
+            or not feed_transport.hostname
+        ):
+            diagnostics.append("Ereignisfeed-URL ist nicht gültig oder nicht HTTPS")
             remote_feed_events = []
         elif now_s - remote_feed_checked_at >= feed_refresh or remote_feed_checked_at <= 0:
             cached["remote_feed_checked_at"] = now_s
@@ -1286,7 +1276,7 @@ def load_critical_events(
     feed_events.extend(remote_feed_events)
 
     all_events = _dedupe([
-        *schedule_events, *status_events, *derivative_events, *feed_events
+        *schedule_events, *derivative_events, *feed_events
     ])
     timing_section = dict(section)
     timing_section["timezone_name"] = timezone_name

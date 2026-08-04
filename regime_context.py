@@ -1,4 +1,5 @@
-"""Bounded 7/14/30-day regime context for CF v5.1.0.
+# Package revision: r1
+"""Bounded 7/14/30-day regime context for CF v5.2.0.
 
 The regime layer never creates a trade direction. It only adjusts an already
 existing short-term signal by at most a configured number of score points.

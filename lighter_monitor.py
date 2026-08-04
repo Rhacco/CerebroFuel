@@ -1,4 +1,5 @@
-"""Lighter-native early-swing/T/W signal engine for CF v5.1.0."""
+# Package revision: r1
+"""Lighter-native early-swing/T/W signal engine for CF v5.2.0."""
 from __future__ import annotations
 
 import json
@@ -21,8 +22,8 @@ from signal_streak_state import apply_signal_streaks
 from signal_transition_guard import apply_signal_transition_guard
 from signal_evaluator import update_signal_evaluation
 
-APP_VERSION = "5.1.0"
-PACKAGE_REVISION = "r2"
+APP_VERSION = "5.2.0"
+PACKAGE_REVISION = "r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 GLOBAL_BTC_EVENT_KINDS = {
@@ -159,8 +160,6 @@ class Signal:
     platform_max_leverage: float = 0.0
     maintenance_margin_pct: float = 0.0
     taker_fee_pct: float = 0.0
-    candidate_tier: str = "core"
-    candidate_penalty: float = 0.0
     extremity_available: bool = False
     extremity_score: float = 0.0
     extremity_confidence: float = 0.0
@@ -1384,6 +1383,7 @@ class LighterMonitor:
         self.last_signals: list[Signal] = []
         self.last_snapshots: dict[str, dict[str, Any]] = {}
         self.last_incidents: IncidentSnapshot | None = None
+        self.last_header_event_symbols: tuple[str, ...] = ()
         self.generated_at = datetime.now(timezone.utc)
 
     def _validate_config(self) -> None:
@@ -1771,31 +1771,6 @@ class LighterMonitor:
                 signal.trade_readiness - float(self.config.get("trend_readiness_penalty", 5))
             )
 
-        test_symbols = {
-            str(value).upper()
-            for value in self.config.get("test_candidate_symbols", [])
-        }
-        penalties = self.config.get("candidate_trade_penalty_points") or {}
-        signal.candidate_tier = "test" if symbol in test_symbols else "core"
-        signal.candidate_penalty = _clamp(
-            _f(penalties.get(symbol)),
-            0.0,
-            20.0,
-        )
-        if signal.candidate_penalty > 0:
-            signal.opportunity = _clamp(
-                signal.opportunity - signal.candidate_penalty * 0.75
-            )
-            signal.confidence = _clamp(
-                signal.confidence - signal.candidate_penalty
-            )
-            signal.trade_readiness = _clamp(
-                signal.trade_readiness - signal.candidate_penalty
-            )
-            signal.reasons.append(
-                f"Testkandidat -{signal.candidate_penalty:g} Qualitätspunkte"
-            )
-
         funding_watch = float(self.config.get("funding_watch_hourly_pct", 0.015))
         funding_hard = float(self.config.get("funding_hard_hourly_pct", 0.05))
         funding_against = (
@@ -1947,17 +1922,6 @@ class LighterMonitor:
             or not tape_ok
             or funding_block
         )
-        test_candidate_ready = (
-            signal.candidate_tier != "test"
-            or (
-                signal.trade_readiness >= float(
-                    self.config.get("test_candidate_minimum_readiness", 84.0)
-                )
-                and signal.confidence >= float(
-                    self.config.get("test_candidate_minimum_confidence", 80.0)
-                )
-            )
-        )
 
         if not executable or not meets_market_minimum:
             signal.state = "NO_TRADE"
@@ -1977,7 +1941,6 @@ class LighterMonitor:
             and fresh_entry
             and setup_is_precise
             and not setup_conflict
-            and test_candidate_ready
             and (selected.kind != "TREND" or bool(self.config.get("trend_immediate_enabled", False)))
             and signal.trade_readiness >= immediate_threshold
         ):
@@ -2003,8 +1966,6 @@ class LighterMonitor:
 
         if setup_conflict:
             signal.reasons.append("Setups widersprechen sich")
-        if signal.candidate_tier == "test" and not test_candidate_ready:
-            signal.reasons.append("Testkandidat nur bei Spitzenqualität")
         if selected.exit_hint:
             signal.reasons.append("Setup abgelaufen/aussteigen prüfen")
         if funding_magnitude > funding_watch and not funding_block:
@@ -2499,6 +2460,30 @@ class LighterMonitor:
             item.alias,
         )
 
+    def _rotating_event_header_symbol(
+        self,
+        signals: list[Signal],
+        now: datetime,
+    ) -> str | None:
+        candidates = [
+            item for item in signals
+            if item.symbol != "BTC" and item.event_display_code
+        ]
+        if not candidates:
+            return None
+        ordered = sorted(
+            candidates,
+            key=lambda item: (
+                float(item.event_priority + item.event_risk),
+                float(item.attention_score),
+                float(item.trade_readiness),
+                item.alias,
+            ),
+            reverse=True,
+        )
+        minute_bucket = int(now.timestamp() // 60)
+        return ordered[minute_bucket % len(ordered)].symbol
+
     def _summary_items(
         self,
         signals: list[Signal],
@@ -2506,9 +2491,8 @@ class LighterMonitor:
     ) -> list[Signal]:
         """Select three alternative coins and keep BTC fixed on the far right.
 
-        During an acute incident the affected non-BTC coin reserves one of the
-        alternative slots for the configured 25-minute header window. It never
-        replaces the BTC macro/event anchor.
+        A currently displayed non-BTC event or acute incident reserves one of
+        the alternative slots. It never replaces the BTC macro/event anchor.
         """
         requested = {
             str(value).upper()
@@ -2545,8 +2529,7 @@ class LighterMonitor:
         selected = ranked[: max(0, alt_slots - (1 if priority_item is not None else 0))]
         selected.sort(key=self._summary_sort_key)
         if priority_item is not None and alt_slots > 0:
-            # Keep the acute coin immediately before BTC so its warning remains
-            # prominent without breaking the permanent BTC position.
+            # Keep the reserved event/incident coin immediately before BTC.
             selected.append(priority_item)
         if anchor is not None:
             selected.append(anchor)
@@ -2628,6 +2611,9 @@ class LighterMonitor:
                         break
         if len(header) > max_len:
             raise RuntimeError("Discord-Top-Zeilenlimit überschritten")
+        self.last_header_event_symbols = tuple(
+            item.symbol for item in summary if event_codes.get(item.symbol, "")
+        )
         lines = [header]
 
         maximum_details = int(self.config.get("maximum_detail_count", 4))
@@ -2841,6 +2827,10 @@ class LighterMonitor:
             }
         merged_display_codes.update(incident_snapshot.display_codes)
         self._apply_event_context(signals, merged_marks, merged_display_codes)
+        # Normal project events share the reserved header slot instead of
+        # permanently hiding one another. Acute incidents still override this
+        # choice through incident_snapshot.header_symbol below.
+        event_header_symbol = self._rotating_event_header_symbol(signals, now)
         transition_payload: dict[str, Any] = {}
         if signal_transition_state_path is not None:
             transition_payload = apply_signal_transition_guard(
@@ -2879,7 +2869,7 @@ class LighterMonitor:
             signals,
             now,
             incident_priority_symbol=incident_snapshot.priority_symbol,
-            incident_header_symbol=incident_snapshot.header_symbol,
+            incident_header_symbol=incident_snapshot.header_symbol or event_header_symbol,
         )
         minimum_lines = int(self.config.get("minimum_detail_count", 1)) + 1
         maximum_lines = len(allowed) + 1

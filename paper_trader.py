@@ -1,4 +1,5 @@
-"""Deterministic, multi-candidate paper-trading engine for CF v5.1.0."""
+# Package revision: r1
+"""Deterministic, multi-candidate paper-trading engine for CF v5.2.0."""
 from __future__ import annotations
 
 import json
@@ -10,7 +11,7 @@ from typing import Any, Iterable, Mapping
 
 
 STATE_SCHEMA = 1
-APP_VERSION = "5.1.0"
+APP_VERSION = "5.2.0"
 ENTRY_STATES = {
     "BUY": 1, "SELL": -1,
     "STRONG_LONG": 1, "STRONG_SHORT": -1,
@@ -577,15 +578,6 @@ class PaperTrader:
         else:
             minimum_readiness = float(self.config.get("paper_entry_min_readiness", 54))
             minimum_confidence = float(self.config.get("paper_entry_min_confidence", 52))
-        if str(getattr(signal, "candidate_tier", "core")) == "test":
-            minimum_readiness = max(
-                minimum_readiness,
-                float(self.config.get("test_candidate_minimum_readiness", 84)),
-            )
-            minimum_confidence = max(
-                minimum_confidence,
-                float(self.config.get("test_candidate_minimum_confidence", 80)),
-            )
         if additional:
             minimum_readiness = max(minimum_readiness, float(self.config.get("paper_additional_min_readiness", 70)))
             minimum_confidence = max(minimum_confidence, float(self.config.get("paper_additional_min_confidence", 66)))
@@ -1410,7 +1402,7 @@ class PaperTrader:
         for symbol, position in list((self.state.get("positions") or {}).items()):
             reason: str | None = None
             if symbol not in allowed_symbols:
-                reason = "Symbol nicht im v5.1.0-Kandidatenpool"
+                reason = "Symbol nicht im v5.2.0-Kandidatenpool"
             if reason is None:
                 continue
             signal = self.signals.get(symbol)
