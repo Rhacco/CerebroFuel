@@ -1,7 +1,5 @@
-# Generated runtime state — package revision v5.0.0-transition-guard-r1
 .cache/
 __pycache__/
 *.pyc
 .ruff_cache/
-output/*
-!output/.gitkeep
+output/

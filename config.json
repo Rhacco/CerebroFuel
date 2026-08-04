@@ -1,6 +1,5 @@
 {
-  "schema_version": "5.0.0",
-  "package_revision": "v5.0.0-transition-guard-r1",
+  "schema_version": "5.1.0",
   "lighter_base_url": "https://mainnet.zklighter.elliot.ai/api/v1",
   "timezone": "Europe/Berlin",
   "candidate_symbols": [
@@ -117,9 +116,8 @@
   "paper_reversal_max_hold_minutes": 20,
   "paper_close_cooldown_minutes": 1,
   "paper_stop_cooldown_minutes": 4,
-  "paper_action_line_max_codepoints": 34,
   "paper_ledger_limit": 500,
-  "discord_username": "CF v5.0.0",
+  "discord_username": "CF v5.1.0",
   "discord_avatar_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Cryptocurrency_Logo.svg/330px-Cryptocurrency_Logo.svg.png",
   "test_candidate_symbols": [
     "ONDO",
@@ -141,7 +139,6 @@
   "early_min_volume_consistency": 3,
   "btc_early_immediate_breadth_score": 58,
   "detail_attention_threshold": 70,
-  "detail_watch_attention_threshold": 74,
   "paper_probe_min_readiness": 50,
   "paper_probe_min_confidence": 48,
   "paper_early_max_hold_minutes": 24,
@@ -172,6 +169,7 @@
       "federalreserve.gov",
       "bls.gov",
       "bea.gov",
+      "census.gov",
       "sec.gov",
       "deribit.com",
       "hyperliquid.xyz",
@@ -187,7 +185,8 @@
       "certik.com",
       "halborn.com",
       "slowmist.com",
-      "x.com"
+      "x.com",
+      "ismworld.org"
     ],
     "status_refresh_minutes": 5,
     "derivatives_refresh_minutes": 60,
@@ -196,7 +195,9 @@
     "deribit_expiry_min_notional_usd": {
       "BTC": 500000000
     },
-    "deribit_expiry_min_share_pct": 8.0
+    "deribit_expiry_min_share_pct": 8.0,
+    "census_schedule_url": "https://www.census.gov/economic-indicators/calendar-listview.html",
+    "ism_schedule_url": "https://www.ismworld.org/supply-management-news-and-reports/reports/rob-report-calendar/"
   },
   "incident_detection": {
     "enabled": true,

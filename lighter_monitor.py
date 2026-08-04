@@ -1,4 +1,4 @@
-"""Lighter-native early-swing/T/W signal engine for CF v5.0.0."""
+"""Lighter-native early-swing/T/W signal engine for CF v5.1.0."""
 from __future__ import annotations
 
 import json
@@ -21,14 +21,19 @@ from signal_streak_state import apply_signal_streaks
 from signal_transition_guard import apply_signal_transition_guard
 from signal_evaluator import update_signal_evaluation
 
-APP_VERSION = "5.0.0"
-PACKAGE_REVISION = "v5.0.0-transition-guard-r1"
+APP_VERSION = "5.1.0"
+PACKAGE_REVISION = "r2"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
-TREND_WINDOWS = (5, 15, 60)
-# Kept as the stable public display contract.
-WINDOWS = DISPLAY_WINDOWS
-GLOBAL_BTC_EVENT_KINDS = {"FOMC", "CPI", "NFP", "PPI", "GDP", "PCE", "EXPIRY", "ETF"}
+GLOBAL_BTC_EVENT_KINDS = {
+    "FOMC", "BEIGE", "CPI", "NFP", "PPI", "JOLTS", "ECI",
+    "PRODUCTIVITY", "IMPORT_PRICES", "GDP", "PCE", "TRADE",
+    "RETAIL", "DURABLE", "HOUSING_STARTS", "NEW_HOME_SALES",
+    "FACTORY_ORDERS", "CONSTRUCTION", "BUSINESS_INVENTORIES",
+    "ADVANCE_INDICATORS", "CLAIMS", "ADP",
+    "CONSUMER_CONFIDENCE", "MICHIGAN", "ISM_MANUFACTURING",
+    "ISM_SERVICES", "EXPIRY", "ETF",
+}
 
 STATE_TIER = {
     "BUY": 4,
@@ -147,6 +152,7 @@ class Signal:
     open_interest_usd: float = 0.0
     volume_oi: float | None = None
     price: float = 0.0
+    live_price: float = 0.0
     candle_timestamp_ms: int = 0
     noise_pct: float = 0.0
     min_quote_amount: float = 0.0
@@ -1198,6 +1204,11 @@ def _setup_priority(item: Setup) -> tuple[int, float]:
     )
 
 
+def _btc_price_code(price: float) -> str:
+    value = _f(price)
+    return f"{value:,.0f}" if value > 0.0 else ""
+
+
 def _detail_head(signal: Signal) -> str:
     """Show current multi-window pressure; purple is reserved for NOW."""
     if signal.state == "INVALID_DATA":
@@ -1546,6 +1557,7 @@ class LighterMonitor:
             else None
         )
         signal.funding_hourly_pct = None if funding is None else funding * 100.0
+        signal.live_price = reference_price
         signal.price = (
             _f(candles[-1].get("c"), reference_price)
             if candles
@@ -2575,7 +2587,14 @@ class LighterMonitor:
                     "⚫" if item.state == "INVALID_DATA"
                     else extremity_color(item.extremity_score, item.extremity_available)
                 )
-                tokens.append(f"{item.alias}{color}{''.join(warnings)}{event}")
+                price = (
+                    _btc_price_code(item.live_price or item.price)
+                    if item.symbol == protected_anchor_symbol and not event
+                    else ""
+                )
+                tokens.append(
+                    f"{item.alias}{color}{''.join(warnings)}{event}{price}"
+                )
             return " ".join(tokens)
 
         max_len = int(self.config.get("discord_max_codepoints_per_line", 68))
@@ -2695,7 +2714,11 @@ class LighterMonitor:
                 for minutes in DISPLAY_WINDOWS
             )
             setup_token = f"{_setup_code(item)}{_setup_age_code(item)}"
-            extreme_token = extremity_code(item.extremity_score, item.extremity_available)
+            extreme_token = extremity_code(
+                item.extremity_score,
+                item.extremity_available,
+                item.direction,
+            )
             tail = " ".join(
                 value for value in (
                     f"{item.alias}{round(item.trade_readiness):02d}",
@@ -2896,4 +2919,3 @@ class LighterMonitor:
         return candles, book, daily
 
 
-# Package revision: v5.0.0-transition-guard-r1

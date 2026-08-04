@@ -1,4 +1,4 @@
-"""Multi-horizon extension and crowding score for CF v5.0.0.
+"""Multi-horizon extension and crowding score for CF v5.1.0.
 
 Positive values mean unusually extended upward; negative values mean unusually
 extended downward.  The score combines intraday displacement with 1/3/7-day
@@ -262,20 +262,17 @@ def extremity_color(score: float, available: bool = True) -> str:
     return "🟢"
 
 
-def extremity_code(score: float, available: bool = True) -> str:
-    if not available:
-        return "X?"
-    value = min(99, int(round(abs(score))))
-    if score >= 20.0:
+def extremity_code(
+    score: float,
+    available: bool = True,
+    direction: float = 0.0,
+) -> str:
+    """Always expose signed crowding as OB/OS; neutral values stay numeric."""
+    value = min(99, int(round(abs(score)))) if available else 0
+    if score > 0.0:
         return f"OB{value:02d}"
-    if score <= -20.0:
+    if score < 0.0:
         return f"OS{value:02d}"
-    rounded = int(round(score))
-    if rounded >= 20:
-        return f"OB{rounded:02d}"
-    if rounded <= -20:
-        return f"OS{abs(rounded):02d}"
-    return f"X{rounded:+03d}"
+    return f"OB{value:02d}" if direction >= 0.0 else f"OS{value:02d}"
 
 
-# Package revision: v5.0.0-transition-guard-r1

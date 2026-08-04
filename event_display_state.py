@@ -1,8 +1,8 @@
-"""Hourly display throttling for future events in CF v5.0.0.
+"""Hourly display throttling for future events in CF v5.1.0.
 
 Future-day events are shown once in the first successful Discord report of each
-local clock hour. Events scheduled for today, active incidents, and date-only
-events on their verified day remain visible in every report until they occur.
+local clock hour. The event loader supplies today's timed macro only on its
+intended display minutes; active incidents and date-only events stay visible.
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
-STATE_VERSION = "event-display-v500-r1"
+STATE_VERSION = "event-display-v510-r1"
 
 
 @dataclass(frozen=True)

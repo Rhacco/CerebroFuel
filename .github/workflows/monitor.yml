@@ -1,6 +1,4 @@
-name: Crypto Signal Monitor v5.0.0
-# Package revision: v5.0.0-transition-guard-r1
-
+name: Crypto Signal Monitor v5.1.0
 on:
   workflow_dispatch:
     inputs:
@@ -14,7 +12,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: crypto-signal-monitor-v500
+  group: crypto-signal-monitor-v510
   cancel-in-progress: false
 
 jobs:
@@ -28,7 +26,6 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: "pip"
       - name: Laufzeit-State-Cache laden
         uses: actions/cache/restore@v4
         with:
@@ -41,17 +38,15 @@ jobs:
             output/signal_streak_state.json
             output/signal_evaluation_state.json
             output/parameter_review.json
-          key: runtime-state-v500-${{ github.run_id }}
+          key: runtime-state-v510-${{ github.run_id }}
           # actions/cache accepts at most ten keys total, including `key`.
           # Keep this fresh v5 state independent and use one restore prefix.
           restore-keys: |
-            runtime-state-v500-
+            runtime-state-v510-
       - name: Paper-State wiederherstellen
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python paper_state_store.py restore output/paper_state.json
-      - name: Abhängigkeiten installieren
-        run: python -m pip install --disable-pip-version-check -r requirements.txt
       - name: Lighter-Analyse ausführen
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
@@ -77,4 +72,4 @@ jobs:
             output/signal_streak_state.json
             output/signal_evaluation_state.json
             output/parameter_review.json
-          key: runtime-state-v500-${{ github.run_id }}
+          key: runtime-state-v510-${{ github.run_id }}

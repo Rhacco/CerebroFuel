@@ -1,4 +1,4 @@
-"""Crypto Signal Monitor v5.0.0 — Lighter pool with incident protection."""
+"""Crypto Signal Monitor v5.1.0 — Lighter pool with incident protection."""
 from __future__ import annotations
 
 import argparse
@@ -46,7 +46,7 @@ def main() -> int:
     )
     event_display_path = output / "event_display_state.json"
     event_plan = plan_event_display(
-        marks=event_snapshot.marks,
+        marks=event_snapshot.display_marks,
         now=generated_at,
         timezone_name=str(config.get("timezone", "Europe/Berlin")),
         state_path=event_display_path,
@@ -135,7 +135,7 @@ def main() -> int:
         send_discord(
             webhook,
             report,
-            username=str(config.get("discord_username", "CF v5.0.0")),
+            username=str(config.get("discord_username", "CF v5.1.0")),
             avatar_url=str(config.get("discord_avatar_url", "")).strip(),
         )
         mark_event_displayed(
@@ -150,4 +150,3 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 
-# Package revision: v5.0.0-transition-guard-r1

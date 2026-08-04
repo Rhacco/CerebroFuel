@@ -1,48 +1,40 @@
-# Crypto Signal Monitor v5.0.0
+# Crypto Signal Monitor v5.1.0
 
 ## Anzeige
 
-**Kopfzeile:** drei auffälligste Altcoins + **BTC immer ganz rechts**. Coin-Kreis = Überdehnung; Warnungen/Ereignisse stehen direkt dahinter. BTC trägt die stündliche Makroanzeige.
+**Kopfzeile:** drei auffälligste Altcoins, BTC immer ganz rechts. Coin-Kreis = Überdehnung; Warnungen und Ereignisse stehen direkt am Coin.
 
-**Detail:** `Druck  5m 20m 60m  Coin+Readiness  Aktion  Extremität  Setup`
+- Ohne eingeblendete Makro-News: `BTC🟡64,123`
+- Heutige Makro-News: gerade Minute `BTC🟡JOLTS@16`, ungerade Minute BTC-Kurs
+- Mehrere heutige Termine wechseln untereinander; künftige Termine bleiben in der stündlichen Ankündigung
 
-## Trenddruck
+**Detail:** `Trenddruck  5m 20m 60m  Coin+Readiness  Aktion  OB/OS  Setup`
 
-- `🟣▲/▼` NOW freigegeben
-- `🟢▲` starker Long-Druck · `🔵▲` leichter Long-Druck
-- `🟡▷` beruhigt / seitwärts
-- `🟠▼` leichter Short-Druck · `🔴▼` starker Short-Druck
-- `⚫?` unzureichende Daten
+## Farben und Druck
 
-Fensterkreise `5/20/60`: `🟢` long · `🟡` neutral · `🔴` short · `🟤` unvollständig.
+- `🟣▲/▼` NOW-Freigabe
+- `🟢▲` / `🔵▲` starker / leichter Long-Druck
+- `🟡 ▷  ` beruhigt / seitwärts
+- `🟠▼` / `🔴▼` leichter / starker Short-Druck
+- Fenster `5/20/60`: `🟢` long · `🟡` neutral · `🔴` short · `🟤` unvollständig
 
-## Aktionen
+Überdehnung oben: `🔴` stark oben · `🟠` erhöht oben · `🟡` neutral · `🔵` erhöht unten · `🟢` stark unten · `⚫` unbekannt.
 
-- `NOW▲3` / `NOW▼3` direkte Freigabe, seit 3 Minuten unverändert
-- `TRY▲2` / `TRY▼2` Probe-Einstieg, seit 2 Minuten unverändert
-- `NEAR3` starkes Vor-Signal, seit 3 Minuten in gleicher Richtung
+## Signale
+
+- `NOW▲3` / `NOW▼3` direkte Freigabe
+- `TRY▲2` / `TRY▼2` Probe
+- `NEAR3` starkes Vor-Signal
 - `WAIT` keine Freigabe
-
-Der Zähler steigt nur bei aufeinanderfolgenden abgeschlossenen Minuten mit gleicher Aktion und Richtung. Wechsel, Lücke, WAIT oder Datenfehler starten wieder mit `1`.
-
-## Richtungswechsel
-
-- `W?` bleibt immer höchstens `NEAR`; TRY/NOW erst nach bestätigtem strukturellem `W`.
-- Nach einem entgegengesetzten TRY/NOW braucht die neue Richtung zwei bestätigte Minuten für TRY und drei für NOW.
-- Das Paper-Trading übernimmt dieselbe Sperre und handelt keine unbestätigte Gegenrichtung; sein übriges aggressives Profil bleibt bestehen.
-
-## Kontext
-
 - `E` früher Impuls · `T` Trendfortsetzung · `W` bestätigte Umkehr · `W?` unvollständig
-- `a0–a9` Setup-Alter
-- `OB` überkauft · `OS` überverkauft · `X` neutral
+- `a0–a9` Setup-Alter · `OB03` leicht überkauft · `OS01` leicht überverkauft
 
-Überdehnung in der Kopfzeile: `🔴` stark oben · `🟠` erhöht oben · `🟡` neutral · `🔵` erhöht unten · `🟢` stark unten · `⚫` unbekannt.
+Der Zähler gilt nur für aufeinanderfolgende abgeschlossene Minuten mit gleicher Aktion und Richtung. `W?` bleibt höchstens NEAR; Gegenrichtungen benötigen erneut bestätigte Minuten.
+
+## Makro
+
+`FED` FOMC · `BB` Beige Book · `CPI` Verbraucherpreise · `NFP` Arbeitsmarkt · `JOLTS` offene Stellen · `PPI` Erzeugerpreise · `ECI` Arbeitskosten · `PROD` Produktivität · `IMP` Importpreise · `GDP` BIP · `PCE` Einkommen/Inflation · `TRD` Außenhandel · `RET` Einzelhandel · `DUR` langlebige Güter · `HOU` Baustarts · `NHS` Neubauverkäufe · `FAC` Industrieaufträge · `CON` Bauausgaben · `INV` Lagerbestände · `AEI` Vorabindikatoren · `ISMM/ISMS` Einkaufsmanager · `CLM` Erstanträge · `ADP` Privatbeschäftigung · `CONF/MICH` Verbraucherstimmung.
 
 ## Warnungen
 
-`SEC!` Sicherheit · `NET!` Netzwerk · `SHK!` Marktschock · `V!` Volumen/Tape · `L!` Liquidität · `K!` Kosten · `B!` BTC-Kontext · `R!` Regime · `RS!` relative Umkehrstärke · `CH!` zu weit gelaufen · `F!` Funding · `DATA!/STALE!/GAP!/BOOK!/CND!` Datenproblem.
-
-## Ereignisse
-
-`FED` FOMC · `CPI` Verbraucherpreise · `NFP` Arbeitsmarkt · `PPI` Erzeugerpreise · `GDP` BIP · `PCE` Inflation · `EXP` Optionsverfall · `ETF` ETF · `U` Unlock · `UPG` Upgrade · `MNT` Wartung · `GOV` Governance · `SUP` Supply · `N` Nachricht.
+`SEC!` Sicherheit · `NET!` Netzwerk · `SHK!` Marktschock · `V!` Volumen/Tape · `L!` Liquidität · `K!` Kosten · `B!` BTC-Kontext · `R!` Regime · `RS!` relative Umkehrstärke · `CH!` überdehnt · `F!` Funding · `DATA!/STALE!/GAP!/BOOK!/CND!` Datenproblem.

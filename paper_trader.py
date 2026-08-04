@@ -1,4 +1,4 @@
-"""Deterministic, multi-candidate paper-trading engine for CF v5.0.0."""
+"""Deterministic, multi-candidate paper-trading engine for CF v5.1.0."""
 from __future__ import annotations
 
 import json
@@ -10,7 +10,7 @@ from typing import Any, Iterable, Mapping
 
 
 STATE_SCHEMA = 1
-APP_VERSION = "5.0.0"
+APP_VERSION = "5.1.0"
 ENTRY_STATES = {
     "BUY": 1, "SELL": -1,
     "STRONG_LONG": 1, "STRONG_SHORT": -1,
@@ -180,7 +180,6 @@ class PaperAction:
     priority: float = 0.0
     is_add: bool = False
     full_close: bool = False
-    discord_visible: bool = False
 
     def token(self) -> str:
         if self.kind == "OPEN":
@@ -223,10 +222,6 @@ class PaperTrader:
         maximum = int(self.config.get("paper_max_leverage", 0))
         if not 10 <= minimum <= maximum <= 50:
             raise ValueError("Paper-Hebel müssen zwischen 10x und 50x liegen")
-        line_limit = int(self.config.get("paper_action_line_max_codepoints", 0))
-        discord_limit = int(self.config.get("discord_max_codepoints_per_line", 0))
-        if not 12 <= line_limit <= discord_limit:
-            raise ValueError("Paper-Aktionszeile überschreitet das Discord-Limit")
         per_position = float(
             self.config.get("paper_max_margin_per_position_pct", 0.0)
         )
@@ -1220,12 +1215,11 @@ class PaperTrader:
         stop_pct = self._planned_stop_pct(signal)
         leverage = self._leverage(signal, stop_pct)
         if leverage is None:
-            if not close_action.discord_visible:
-                self.actions.append(close_action)
-                self._record(
-                    close_action,
-                    close_details | {"reverse_block": f"Hebel unter {int(self.config.get('paper_min_leverage', 10))}x"},
-                )
+            self.actions.append(close_action)
+            self._record(
+                close_action,
+                close_details | {"reverse_block": f"Hebel unter {int(self.config.get('paper_min_leverage', 10))}x"},
+            )
             self._log(
                 f"REVERSE {signal.alias} verworfen: Markt erlaubt keinen "
                 f"{int(self.config.get('paper_min_leverage', 10))}x-Paper-Hebel"
@@ -1383,37 +1377,6 @@ class PaperTrader:
         self._record(action, {"fill_price": price, "new_entry_price": weighted_entry, "entry_fee_usd": fee, "new_margin_usd": position["margin_usd"]})
         self._log(f"ADD {signal.alias} {_money(add, compact=False)} {leverage}x @ {price:.10g} | {reason}")
 
-    def _pack_actions(self) -> str | None:
-        maximum = int(
-            self.config.get(
-                "paper_action_line_max_codepoints",
-                self.config.get("discord_max_codepoints_per_line", 34),
-            )
-        )
-        ordered = sorted(
-            enumerate(self.actions),
-            key=lambda row: (-row[1].priority, row[0]),
-        )
-        tokens: list[str] = []
-        length = 0
-        blocked = False
-        for _, action in ordered:
-            token = action.token()
-            extra = len(token) if not tokens else len(token) + 1
-            if blocked or length + extra > maximum:
-                blocked = True
-                continue
-            tokens.append(token)
-            length += extra
-            action.discord_visible = True
-        hidden = [action for action in self.actions if not action.discord_visible]
-        if hidden:
-            self._log(
-                "LOG-ONLY "
-                + " ".join(action.token() for action in sorted(hidden, key=lambda item: -item.priority))
-            )
-        return " ".join(tokens) if tokens else None
-
     def run(
         self,
         signals: list[Any],
@@ -1447,7 +1410,7 @@ class PaperTrader:
         for symbol, position in list((self.state.get("positions") or {}).items()):
             reason: str | None = None
             if symbol not in allowed_symbols:
-                reason = "Symbol nicht im v5.0.0-Kandidatenpool"
+                reason = "Symbol nicht im v5.1.0-Kandidatenpool"
             if reason is None:
                 continue
             signal = self.signals.get(symbol)
@@ -1585,8 +1548,6 @@ class PaperTrader:
                 f"{top}"
             )
         equity, free, margin = self._equity()
-        # Paper actions are deliberately log-only in v5.0.0.
-        action_line = None
         self._log(
             f"KONTO Balance {_money(_f(self.state.get('balance_usd')), compact=False)} | "
             f"Equity {_money(equity, compact=False)} | "
@@ -1596,7 +1557,6 @@ class PaperTrader:
         )
         self._save_state()
         return {
-            "action_line": action_line,
             "actions": [asdict(action) | {"token": action.token()} for action in self.actions],
             "logs": list(self.logs),
             "account": {

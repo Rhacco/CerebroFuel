@@ -1,4 +1,4 @@
-"""Verified scheduled and externally confirmed event context for CF v5.0.0.
+"""Verified scheduled and externally confirmed event context for CF v5.1.0.
 
 Automatic facts come only from official public schedules/status pages. Project-
 specific events such as token unlocks are accepted only from a local or remote
@@ -14,7 +14,7 @@ import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -24,20 +24,50 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-CACHE_VERSION = "event-cache-v500-r1"
-USER_AGENT = "crypto-signal-monitor/5.0.0"
+CACHE_VERSION = "event-cache-v510-r1"
+USER_AGENT = "crypto-signal-monitor/5.1.0"
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4,
     "may": 5, "june": 6, "july": 7, "august": 8,
     "september": 9, "october": 10, "november": 11, "december": 12,
 }
+US_MACRO_KINDS = {
+    "FOMC", "BEIGE", "CPI", "NFP", "PPI", "JOLTS", "ECI",
+    "PRODUCTIVITY", "IMPORT_PRICES", "GDP", "PCE", "TRADE",
+    "RETAIL", "DURABLE", "HOUSING_STARTS", "NEW_HOME_SALES",
+    "FACTORY_ORDERS", "CONSTRUCTION", "BUSINESS_INVENTORIES",
+    "ADVANCE_INDICATORS", "CLAIMS", "ADP",
+    "CONSUMER_CONFIDENCE", "MICHIGAN", "ISM_MANUFACTURING",
+    "ISM_SERVICES",
+}
+
 KIND_CODES = {
     "FOMC": "FED",
+    "BEIGE": "BB",
     "CPI": "CPI",
     "NFP": "NFP",
     "PPI": "PPI",
+    "JOLTS": "JOLTS",
+    "ECI": "ECI",
+    "PRODUCTIVITY": "PROD",
+    "IMPORT_PRICES": "IMP",
     "GDP": "GDP",
     "PCE": "PCE",
+    "TRADE": "TRD",
+    "RETAIL": "RET",
+    "DURABLE": "DUR",
+    "HOUSING_STARTS": "HOU",
+    "NEW_HOME_SALES": "NHS",
+    "FACTORY_ORDERS": "FAC",
+    "CONSTRUCTION": "CON",
+    "BUSINESS_INVENTORIES": "INV",
+    "ADVANCE_INDICATORS": "AEI",
+    "CLAIMS": "CLM",
+    "ADP": "ADP",
+    "CONSUMER_CONFIDENCE": "CONF",
+    "MICHIGAN": "MICH",
+    "ISM_MANUFACTURING": "ISMM",
+    "ISM_SERVICES": "ISMS",
     "EXPIRY": "EXP",
     "ETF": "ETF",
     "UNLOCK": "U",
@@ -51,19 +81,39 @@ KIND_CODES = {
 }
 DEFAULT_PRIORITIES = {
     "NETWORK": 100,
-    "FOMC": 100,
-    "CPI": 96,
-    "NFP": 96,
+    "FOMC": 90,
+    "BEIGE": 80,
+    "CPI": 90,
+    "NFP": 90,
+    "PPI": 80,
+    "JOLTS": 80,
+    "ECI": 80,
+    "PRODUCTIVITY": 80,
+    "IMPORT_PRICES": 80,
+    "GDP": 90,
+    "PCE": 90,
+    "TRADE": 80,
+    "RETAIL": 80,
+    "DURABLE": 80,
+    "HOUSING_STARTS": 80,
+    "NEW_HOME_SALES": 80,
+    "FACTORY_ORDERS": 80,
+    "CONSTRUCTION": 80,
+    "BUSINESS_INVENTORIES": 80,
+    "ADVANCE_INDICATORS": 80,
+    "CLAIMS": 80,
+    "ADP": 80,
+    "CONSUMER_CONFIDENCE": 80,
+    "MICHIGAN": 80,
+    "ISM_MANUFACTURING": 80,
+    "ISM_SERVICES": 80,
     "UNLOCK": 94,
     "ETF": 92,
     "SUPPLY": 90,
     "UPGRADE": 88,
     "MAINTENANCE": 84,
     "GOVERNANCE": 86,
-    "PCE": 84,
-    "GDP": 82,
     "EXPIRY": 80,
-    "PPI": 72,
     "NEWS": 70,
     "SECURITY": 100,
 }
@@ -106,11 +156,15 @@ class EventSnapshot:
     events: list[CriticalEvent]
     diagnostics: list[str]
     generated_at: str
+    display_marks: dict[str, EventMark] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "generated_at": self.generated_at,
             "marks": {symbol: asdict(mark) for symbol, mark in self.marks.items()},
+            "display_marks": {
+                symbol: asdict(mark) for symbol, mark in self.display_marks.items()
+            },
             "events": [asdict(event) for event in self.events],
             "diagnostics": list(self.diagnostics),
         }
@@ -252,6 +306,22 @@ def _ical_datetime(key: str, value: str) -> tuple[datetime | None, bool]:
     return parsed, True
 
 
+def _macro_kind_from_bls_summary(summary: str) -> str:
+    """Map only broadly market-moving national BLS releases."""
+    normalized = re.sub(r"\s+", " ", summary).strip().lower()
+    patterns = (
+        ("consumer price index", "CPI"),
+        ("employment situation", "NFP"),
+        ("producer price index", "PPI"),
+        ("job openings and labor turnover survey", "JOLTS"),
+        ("employment cost index", "ECI"),
+        ("productivity and costs", "PRODUCTIVITY"),
+        ("u.s. import and export price indexes", "IMPORT_PRICES"),
+        ("import and export price indexes", "IMPORT_PRICES"),
+    )
+    return next((kind for phrase, kind in patterns if phrase in normalized), "")
+
+
 def _parse_bls_ics(text: str) -> list[CriticalEvent]:
     events: list[CriticalEvent] = []
     current: dict[str, str] | None = None
@@ -262,11 +332,7 @@ def _parse_bls_ics(text: str) -> list[CriticalEvent]:
         if line == "END:VEVENT":
             if current:
                 summary = current.get("SUMMARY", "").replace("\\,", ",").replace("\\n", " ").strip()
-                kind = (
-                    "CPI" if "Consumer Price Index" in summary else
-                    "NFP" if "Employment Situation" in summary else
-                    "PPI" if "Producer Price Index" in summary else ""
-                )
+                kind = _macro_kind_from_bls_summary(summary)
                 dt_key = next((key for key in current if key.startswith("DTSTART")), "")
                 starts, exact = _ical_datetime(dt_key, current.get(dt_key, "")) if dt_key else (None, False)
                 if kind and starts:
@@ -315,7 +381,12 @@ def _parse_bea_schedule(text: str, year: int) -> list[CriticalEvent]:
         month_name, day_text, clock, ampm, title = match.groups()
         title = title.strip(" |-")
         lowered = title.lower()
-        kind = "GDP" if lowered.startswith("gdp") else "PCE" if lowered.startswith("personal income and outlays") else ""
+        kind = (
+            "GDP" if lowered.startswith("gdp") else
+            "PCE" if lowered.startswith("personal income and outlays") else
+            "TRADE" if lowered.startswith("u.s. international trade in goods and services") else
+            ""
+        )
         if not kind:
             continue
         try:
@@ -428,34 +499,163 @@ def _parse_status_events(text: str, *, symbol: str, source_name: str, source_url
 
 
 def _parse_fed_month_calendar(text: str, *, year: int, month: int) -> list[CriticalEvent]:
-    """Parse officially timed FOMC-minutes releases from a Fed month page."""
+    """Parse timed FOMC-minutes and Beige Book releases from a Fed month page."""
     flat = _html_text(text)
     eastern = ZoneInfo("America/New_York")
     result: list[CriticalEvent] = []
+    patterns = (
+        (
+            "FOMC",
+            "FOMC Minutes",
+            re.compile(
+                r"(\d{1,2}:\d{2})\s*(a\.m\.|p\.m\.)\s+FOMC Minutes\s+"
+                r"Meeting of\s+[A-Za-z]+\s+\d{1,2}-\d{1,2}\s+(\d{1,2})(?=\s|$)",
+                flags=re.IGNORECASE,
+            ),
+        ),
+        (
+            "BEIGE",
+            "Beige Book",
+            re.compile(
+                r"(\d{1,2}:\d{2})\s*(a\.m\.|p\.m\.)\s+Beige Book\s+(\d{1,2})(?=\s|$)",
+                flags=re.IGNORECASE,
+            ),
+        ),
+    )
+    for kind, title, pattern in patterns:
+        for clock, ampm, day_text in pattern.findall(flat):
+            try:
+                local = datetime.strptime(
+                    f"{year}-{month:02d}-{int(day_text):02d} {clock} {ampm.replace('.', '').upper()}",
+                    "%Y-%m-%d %I:%M %p",
+                ).replace(tzinfo=eastern)
+            except ValueError:
+                continue
+            result.append(CriticalEvent(
+                symbol="BTC",
+                kind=kind,
+                title=title,
+                starts_at=_iso(local),
+                ends_at=None,
+                exact_time=True,
+                priority=DEFAULT_PRIORITIES[kind],
+                source_name="Federal Reserve Board Calendar",
+                source_url=f"https://www.federalreserve.gov/newsevents/{year}-{local:%B}.htm".lower(),
+            ))
+    return result
+
+
+def _parse_census_schedule(text: str) -> list[CriticalEvent]:
+    """Parse selected market-moving releases from the official Census calendar."""
+    flat = _html_text(text)
+    month_pattern = "|".join(name.title() for name in MONTHS)
+    releases = (
+        (r"Advance Monthly Sales for Retail and Food Services", "RETAIL", "Advance Retail Sales"),
+        (
+            r"Advance Report on Durable Goods(?:--|—|-)Manufacturers['’] Shipments, Inventories, and Orders",
+            "DURABLE",
+            "Advance Durable Goods",
+        ),
+        (
+            r"New Residential Construction(?: \(Building Permits, Housing Starts, and Housing Completions\))?",
+            "HOUSING_STARTS",
+            "New Residential Construction",
+        ),
+        (r"New Residential Sales", "NEW_HOME_SALES", "New Residential Sales"),
+        (
+            r"Full Report - Manufacturers['’] Shipments, Inventories and Orders",
+            "FACTORY_ORDERS",
+            "Manufacturers' Orders",
+        ),
+        (
+            r"Construction Spending \(Construction Put in Place\)",
+            "CONSTRUCTION",
+            "Construction Spending",
+        ),
+        (
+            r"Manufacturing and Trade: Inventories and Sales",
+            "BUSINESS_INVENTORIES",
+            "Business Inventories",
+        ),
+        (
+            r"Advance Economic Indicators Report \(International Trade, Retail, & Wholesale\)",
+            "ADVANCE_INDICATORS",
+            "Advance Economic Indicators",
+        ),
+        (
+            r"U\.S\. International Trade in Goods and Services",
+            "TRADE",
+            "U.S. International Trade in Goods and Services",
+        ),
+    )
+    eastern = ZoneInfo("America/New_York")
+    result: list[CriticalEvent] = []
+    for title_pattern, kind, title in releases:
+        pattern = re.compile(
+            rf"{title_pattern}\s+({month_pattern})\s+(\d{{1,2}}),?\s+(20\d{{2}})\s+"
+            rf"(\d{{1,2}}:\d{{2}})\s+(AM|PM)",
+            flags=re.IGNORECASE,
+        )
+        for month_name, day_text, year_text, clock, ampm in pattern.findall(flat):
+            try:
+                local = datetime.strptime(
+                    f"{year_text}-{MONTHS[month_name.lower()]:02d}-{int(day_text):02d} {clock} {ampm.upper()}",
+                    "%Y-%m-%d %I:%M %p",
+                ).replace(tzinfo=eastern)
+            except (ValueError, KeyError):
+                continue
+            result.append(CriticalEvent(
+                symbol="BTC",
+                kind=kind,
+                title=title,
+                starts_at=_iso(local),
+                ends_at=None,
+                exact_time=True,
+                priority=DEFAULT_PRIORITIES[kind],
+                source_name="U.S. Census Bureau",
+                source_url="https://www.census.gov/economic-indicators/calendar-listview.html",
+            ))
+    return result
+
+
+def _parse_ism_schedule(text: str) -> list[CriticalEvent]:
+    """Parse the official annual ISM Manufacturing/Services release table."""
+    flat = _html_text(text)
+    eastern = ZoneInfo("America/New_York")
+    result: list[CriticalEvent] = []
+    month_pattern = "|".join(name.title() for name in MONTHS)
     pattern = re.compile(
-        r"(\d{1,2}:\d{2})\s*(a\.m\.|p\.m\.)\s+FOMC Minutes\s+"
-        r"Meeting of\s+[A-Za-z]+\s+\d{1,2}-\d{1,2}\s+(\d{1,2})(?=\s|$)",
+        rf"\b({month_pattern})\s+(20\d{{2}})\s+(\d{{1,2}})\s+(\d{{1,2}})(?=\s|$)",
         flags=re.IGNORECASE,
     )
-    for clock, ampm, day_text in pattern.findall(flat):
-        try:
-            local = datetime.strptime(
-                f"{year}-{month:02d}-{int(day_text):02d} {clock} {ampm.replace('.', '').upper()}",
-                "%Y-%m-%d %I:%M %p",
-            ).replace(tzinfo=eastern)
-        except ValueError:
+    for month_name, year_text, manufacturing_day, services_day in pattern.findall(flat):
+        month = MONTHS.get(month_name.lower())
+        if not month:
             continue
-        result.append(CriticalEvent(
-            symbol="BTC",
-            kind="FOMC",
-            title="FOMC Minutes",
-            starts_at=_iso(local),
-            ends_at=None,
-            exact_time=True,
-            priority=88,
-            source_name="Federal Reserve Board Calendar",
-            source_url=f"https://www.federalreserve.gov/newsevents/{year}-{local:%B}.htm".lower(),
-        ))
+        for kind, day_text, title in (
+            ("ISM_MANUFACTURING", manufacturing_day, "ISM Manufacturing PMI"),
+            ("ISM_SERVICES", services_day, "ISM Services PMI"),
+        ):
+            try:
+                local = datetime(
+                    int(year_text), month, int(day_text), 10, 0, tzinfo=eastern
+                )
+            except ValueError:
+                continue
+            result.append(CriticalEvent(
+                symbol="BTC",
+                kind=kind,
+                title=title,
+                starts_at=_iso(local),
+                ends_at=None,
+                exact_time=True,
+                priority=DEFAULT_PRIORITIES[kind],
+                source_name="Institute for Supply Management",
+                source_url=(
+                    "https://www.ismworld.org/supply-management-news-and-reports/"
+                    "reports/rob-report-calendar/"
+                ),
+            ))
     return result
 
 
@@ -673,8 +873,15 @@ def _event_code(event: CriticalEvent, now: datetime, timezone_name: str, active:
     return f"{base}{days}D"
 
 
-def _pick_marks(events: list[CriticalEvent], symbols: set[str], now: datetime, timezone_name: str, config: Mapping[str, Any]) -> dict[str, EventMark]:
-    eligible: dict[str, list[tuple[CriticalEvent, bool, bool, int | None, int, float | None]]] = {symbol: [] for symbol in symbols}
+def _eligible_event_rows(
+    events: list[CriticalEvent],
+    symbols: set[str],
+    now: datetime,
+    config: Mapping[str, Any],
+) -> dict[str, list[tuple[CriticalEvent, bool, bool, int | None, int, float | None]]]:
+    eligible: dict[str, list[tuple[CriticalEvent, bool, bool, int | None, int, float | None]]] = {
+        symbol: [] for symbol in symbols
+    }
     for event in events:
         if event.symbol not in symbols:
             continue
@@ -683,45 +890,130 @@ def _pick_marks(events: list[CriticalEvent], symbols: set[str], now: datetime, t
         if not active:
             if starts is None:
                 continue
-            if hours is not None and hours < -max(1, int(config.get("post_event_block_minutes", 10))) / 60.0:
+            if hours is not None and hours < -max(
+                1, int(config.get("post_event_block_minutes", 10))
+            ) / 60.0:
                 continue
             horizon = _display_horizon_days(event.kind, config)
             if hours is not None and hours > horizon * 24:
                 continue
-        eligible[event.symbol].append((event, active, block_new, leverage_cap, risk, hours))
+        eligible[event.symbol].append(
+            (event, active, block_new, leverage_cap, risk, hours)
+        )
+    return eligible
 
+
+def _mark_from_row(
+    row: tuple[CriticalEvent, bool, bool, int | None, int, float | None],
+    *,
+    now: datetime,
+    timezone_name: str,
+) -> EventMark:
+    event, active, block_new, leverage_cap, risk, _ = row
+    return EventMark(
+        symbol=event.symbol,
+        code=_event_code(event, now, timezone_name, active),
+        kind=event.kind,
+        title=event.title,
+        starts_at=event.starts_at,
+        ends_at=event.ends_at,
+        priority=event.priority,
+        risk=risk,
+        active=active,
+        block_new=block_new,
+        leverage_cap=leverage_cap,
+        source_name=event.source_name,
+        source_url=event.source_url,
+    )
+
+
+def _pick_marks(
+    events: list[CriticalEvent],
+    symbols: set[str],
+    now: datetime,
+    timezone_name: str,
+    config: Mapping[str, Any],
+) -> dict[str, EventMark]:
+    """Pick risk marks; US macro selection is chronological, never priority-filtered."""
+    eligible = _eligible_event_rows(events, symbols, now, config)
     marks: dict[str, EventMark] = {}
     for symbol, rows in eligible.items():
         if not rows:
             continue
-        def ranking(row: tuple[CriticalEvent, bool, bool, int | None, int, float | None]) -> tuple[int, float, int, int]:
-            event, active, block_new, _, risk, hours = row
-            # Balance importance and proximity. A near CPI/GDP release may
-            # outrank a distant FOMC date, while a minor PPI date does not hide
-            # a materially more important meeting several days later.
-            proximity_bonus = (
-                max(0.0, 28.0 - min(max(hours, 0.0), 168.0) / 6.0)
-                if hours is not None else 0.0
-            )
-            relevance = float(event.priority + risk) + proximity_bonus
-            return (1 if active else 0, relevance, risk, event.priority)
-        event, active, block_new, leverage_cap, risk, _ = max(rows, key=ranking)
-        marks[symbol] = EventMark(
-            symbol=symbol,
-            code=_event_code(event, now, timezone_name, active),
-            kind=event.kind,
-            title=event.title,
-            starts_at=event.starts_at,
-            ends_at=event.ends_at,
-            priority=event.priority,
-            risk=risk,
-            active=active,
-            block_new=block_new,
-            leverage_cap=leverage_cap,
-            source_name=event.source_name,
-            source_url=event.source_url,
+
+        macro_rows = [row for row in rows if row[0].kind in US_MACRO_KINDS]
+        if symbol == "BTC" and macro_rows:
+            active_rows = [row for row in macro_rows if row[1]]
+            upcoming_rows = [row for row in macro_rows if row[5] is not None and row[5] >= 0]
+            recent_rows = [row for row in macro_rows if row[5] is not None and row[5] < 0]
+            if active_rows:
+                selected = min(active_rows, key=lambda row: abs(float(row[5] or 0.0)))
+            elif upcoming_rows:
+                selected = min(upcoming_rows, key=lambda row: float(row[5] or 0.0))
+            else:
+                selected = min(recent_rows, key=lambda row: abs(float(row[5] or 0.0)))
+        else:
+            def ranking(
+                row: tuple[CriticalEvent, bool, bool, int | None, int, float | None]
+            ) -> tuple[int, float, int, int]:
+                event, active, _, _, risk, hours = row
+                proximity_bonus = (
+                    max(0.0, 28.0 - min(max(hours, 0.0), 168.0) / 6.0)
+                    if hours is not None else 0.0
+                )
+                relevance = float(event.priority + risk) + proximity_bonus
+                return (1 if active else 0, relevance, risk, event.priority)
+            selected = max(rows, key=ranking)
+        marks[symbol] = _mark_from_row(
+            selected, now=now, timezone_name=timezone_name
         )
     return marks
+
+
+def _pick_display_marks(
+    events: list[CriticalEvent],
+    symbols: set[str],
+    now: datetime,
+    timezone_name: str,
+    config: Mapping[str, Any],
+    risk_marks: Mapping[str, EventMark],
+) -> dict[str, EventMark]:
+    """Alternate today's timed US macro with the BTC price and cycle same-day releases."""
+    display = dict(risk_marks)
+    if "BTC" not in symbols:
+        return display
+
+    zone = ZoneInfo(timezone_name)
+    local_now = now.astimezone(zone)
+    post_minutes = max(0, int(config.get("post_event_block_minutes", 10)))
+    rows = _eligible_event_rows(events, symbols, now, config).get("BTC", [])
+    today_rows = [
+        row for row in rows
+        if row[0].kind in US_MACRO_KINDS
+        and row[0].exact_time
+        and (starts := _parse_iso(row[0].starts_at)) is not None
+        and starts.astimezone(zone).date() == local_now.date()
+        and (row[5] is None or row[5] >= -(post_minutes / 60.0))
+    ]
+    if not today_rows:
+        return display
+
+    if local_now.minute % 2 == 1:
+        display.pop("BTC", None)
+        return display
+
+    today_rows.sort(
+        key=lambda row: (
+            _parse_iso(row[0].starts_at) or datetime.max.replace(tzinfo=timezone.utc),
+            row[0].kind,
+            row[0].title,
+        )
+    )
+    selected = today_rows[(local_now.minute // 2) % len(today_rows)]
+    display["BTC"] = _mark_from_row(
+        selected, now=now, timezone_name=timezone_name
+    )
+    return display
 
 
 def load_critical_events(
@@ -788,6 +1080,8 @@ def load_critical_events(
     sources: dict[str, str] = {
         "bls": str(section.get("bls_ics_url", "https://www.bls.gov/schedule/news_release/bls.ics")),
         "bea": str(section.get("bea_schedule_url", "https://www.bea.gov/news/schedule")),
+        "census": str(section.get("census_schedule_url", "https://www.census.gov/economic-indicators/calendar-listview.html")),
+        "ism": str(section.get("ism_schedule_url", "https://www.ismworld.org/supply-management-news-and-reports/reports/rob-report-calendar/")),
         "fomc": str(section.get("fomc_calendar_url", "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm")),
     }
     for year, month in sorted(fed_months):
@@ -816,6 +1110,10 @@ def load_critical_events(
                 parsed = _parse_bls_ics(value)
             elif name == "bea":
                 parsed = _parse_bea_schedule(value, now.year)
+            elif name == "census":
+                parsed = _parse_census_schedule(value)
+            elif name == "ism":
+                parsed = _parse_ism_schedule(value)
             elif name == "fomc":
                 parsed = _parse_fomc_calendar(value, (now.year, now.year + 1))
             else:
@@ -993,13 +1291,17 @@ def load_critical_events(
     timing_section = dict(section)
     timing_section["timezone_name"] = timezone_name
     marks = _pick_marks(all_events, symbols, now, timezone_name, timing_section)
+    display_marks = _pick_display_marks(
+        all_events, symbols, now, timezone_name, timing_section, marks
+    )
     cached["version"] = CACHE_VERSION
     cached["updated_at"] = now_s
     try:
         _save_json(cache_path, cached)
     except OSError as exc:
         diagnostics.append(f"Ereignis-Cache nicht gespeichert: {exc}")
-    return EventSnapshot(marks, all_events, diagnostics, _iso(now) or "")
+    return EventSnapshot(
+        marks, all_events, diagnostics, _iso(now) or "", display_marks=display_marks
+    )
 
 
-# Package revision: v5.0.0-transition-guard-r1
