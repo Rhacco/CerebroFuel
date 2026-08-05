@@ -1,5 +1,5 @@
 # Package revision: r1
-"""Lighter-native early-swing/T/W signal engine for CF v5.2.0."""
+"""Lighter-native early-swing/T/W signal engine for CF v5.3.0."""
 from __future__ import annotations
 
 import json
@@ -7,6 +7,7 @@ import math
 import re
 import statistics
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -22,7 +23,7 @@ from signal_streak_state import apply_signal_streaks
 from signal_transition_guard import apply_signal_transition_guard
 from signal_evaluator import update_signal_evaluation
 
-APP_VERSION = "5.2.0"
+APP_VERSION = "5.3.0"
 PACKAGE_REVISION = "r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
@@ -47,6 +48,25 @@ STATE_TIER = {
     "INVALID_DATA": 0,
 }
 
+
+
+
+def _discord_display_columns(value: str) -> int:
+    """Conservative display-width estimate for Discord's proportional UI."""
+    width = 0
+    for char in str(value):
+        codepoint = ord(char)
+        if char == "\u200d" or 0xFE00 <= codepoint <= 0xFE0F:
+            continue
+        if unicodedata.combining(char):
+            continue
+        if unicodedata.east_asian_width(char) in {"W", "F"} or (
+            0x1F000 <= codepoint <= 0x1FAFF
+        ):
+            width += 2
+        else:
+            width += 1
+    return width
 
 def _f(value: Any, default: float = 0.0) -> float:
     try:
@@ -1408,8 +1428,13 @@ class LighterMonitor:
         if not 1 <= minimum_details <= maximum_details <= len(symbols):
             raise ValueError("Detailzeilen-Konfiguration ist ungültig")
         line_limit = int(self.config.get("discord_max_codepoints_per_line", 34))
+        display_limit = int(
+            self.config.get("discord_max_display_columns_per_line", line_limit + 4)
+        )
         if not 34 <= line_limit <= 2_000:
             raise ValueError("Discord-Zeilenlimit ist ungueltig")
+        if not line_limit <= display_limit <= 2_000:
+            raise ValueError("Discord-Anzeigebreitenlimit ist ungueltig")
         if line_limit < summary_count * 5 - 1:
             raise ValueError("Discord-Zeilenlimit ist für die Top-Zeile zu klein")
         watch = float(self.config.get("watch_trade_readiness", 56))
@@ -2580,36 +2605,76 @@ class LighterMonitor:
                 )
             return " ".join(tokens)
 
-        max_len = int(self.config.get("discord_max_codepoints_per_line", 68))
+        max_len = int(self.config.get("discord_max_codepoints_per_line", 42))
+        max_columns = int(
+            self.config.get("discord_max_display_columns_per_line", max_len + 4)
+        )
+
+        def line_fits(value: str) -> bool:
+            return len(value) <= max_len and _discord_display_columns(value) <= max_columns
+
         compact_clock = False
         header = summary_line(False)
-        if len(header) > max_len:
+        if not line_fits(header):
             compact_clock = True
             header = summary_line(True)
-        if len(header) > max_len:
+
+        # Keep the BTC macro/event token and the deliberately reserved altcoin
+        # event intact. Trim ordinary warning suffixes before hiding news.
+        changed = True
+        while not line_fits(header) and changed:
+            changed = False
             for item in summary:
-                if item.symbol == protected_anchor_symbol:
+                codes = warning_codes.get(item.symbol, [])
+                for index in range(len(codes) - 1, -1, -1):
+                    if codes[index] in critical_warnings:
+                        continue
+                    del codes[index]
+                    changed = True
+                    header = summary_line(compact_clock)
+                    break
+                if line_fits(header):
+                    break
+
+        # Several simultaneous normal coin events can still exceed the compact
+        # mobile width. Preserve the rotating/reserved event and BTC; hide only
+        # non-reserved normal event duplicates. Critical events remain protected.
+        if not line_fits(header):
+            reserved_symbols = {protected_anchor_symbol}
+            if incident_header_symbol:
+                reserved_symbols.add(str(incident_header_symbol).upper())
+            for item in summary:
+                code = event_codes.get(item.symbol, "")
+                if item.symbol in reserved_symbols or code in critical_warnings:
                     continue
                 event_codes[item.symbol] = ""
                 header = summary_line(compact_clock)
-                if len(header) <= max_len:
+                if line_fits(header):
                     break
-        if len(header) > max_len:
-            changed = True
-            while len(header) > max_len and changed:
-                changed = False
-                for item in summary:
-                    codes = warning_codes.get(item.symbol, [])
-                    for index in range(len(codes) - 1, -1, -1):
-                        if codes[index] in critical_warnings:
-                            continue
-                        del codes[index]
-                        changed = True
-                        header = summary_line(compact_clock)
-                        break
-                    if len(header) <= max_len:
-                        break
-        if len(header) > max_len:
+
+        if not line_fits(header):
+            # In a broad data outage, repeated long DATA/STALE/GAP codes can
+            # otherwise exceed the mobile cap by one or two characters. The
+            # black invalid-data color and detail token still expose the issue;
+            # keep the BTC/reserved warning and trim only redundant alt codes.
+            data_warnings = {"DATA!", "STALE!", "GAP!", "BOOK!", "CND!"}
+            reserved_symbols = {protected_anchor_symbol}
+            if incident_header_symbol:
+                reserved_symbols.add(str(incident_header_symbol).upper())
+            for item in summary:
+                if item.symbol in reserved_symbols:
+                    continue
+                codes = warning_codes.get(item.symbol, [])
+                for index in range(len(codes) - 1, -1, -1):
+                    if codes[index] not in data_warnings:
+                        continue
+                    del codes[index]
+                    header = summary_line(compact_clock)
+                    break
+                if line_fits(header):
+                    break
+
+        if not line_fits(header):
             raise RuntimeError("Discord-Top-Zeilenlimit überschritten")
         self.last_header_event_symbols = tuple(
             item.symbol for item in summary if event_codes.get(item.symbol, "")
@@ -2715,7 +2780,7 @@ class LighterMonitor:
             )
             lines.append(f"{_detail_head(item)} {windows} {tail}")
 
-        if any(len(line) > max_len for line in lines):
+        if any(not line_fits(line) for line in lines):
             raise RuntimeError("Discord-Zeilenlimit überschritten")
         return "\n".join(lines)
 

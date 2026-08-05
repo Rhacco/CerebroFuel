@@ -1,10 +1,10 @@
 // Package revision: r1
-// Crypto event feed and GitHub scheduler for v5.2.0.
+// Crypto event feed and GitHub scheduler for v5.3.0.
 
-const APP_VERSION = "5.2.0";
+const APP_VERSION = "5.3.0";
 const PACKAGE_REVISION = "r1";
-const STORE_KEY = "crypto-events-v520";
-const CACHE_URL = "https://crypto-events.internal/v5.2.0/events.json";
+const STORE_KEY = "crypto-events-v530";
+const CACHE_URL = "https://crypto-events.internal/v5.3.0/events.json";
 const ACTIVE_RETENTION_MS = 25 * 60 * 1000;
 const STATUS_GRACE_MS = 10 * 60 * 1000;
 const NEWS_REFRESH_MS = 5 * 60 * 1000;
@@ -99,9 +99,15 @@ const STATUSPAGE_SOURCES = Object.freeze([
 ]);
 
 const HTML_STATUS_SOURCES = Object.freeze([
+  ["AAVE", "https://status.aave.com/", "fully operational", "Aave Status"],
   ["JUP", "https://status.jup.ag/", "All services are online", "Jupiter Status"],
   ["NEAR", "https://status.near.org/", "No problems detected", "NEAR Status"],
   ["TIA", "https://status.celestia.org/", "fully operational", "Celestia Status"],
+]);
+
+const OFFICIAL_FEEDS = Object.freeze([
+  ["ETH", "https://blog.ethereum.org/feed.xml", "Ethereum Foundation Blog"],
+  ["SOL", "https://solana.com/changelog/rss.xml", "Solana Changelog"],
 ]);
 
 const MONTHS = Object.freeze({
@@ -166,21 +172,35 @@ async function refreshEventFeed(env, now) {
     ...STATUSPAGE_SOURCES.map(([symbol, url, name, collection]) => fetchStatuspage(symbol, url, name, collection, now)),
     ...HTML_STATUS_SOURCES.map(([symbol, url, healthy, name]) => fetchHtmlStatus(symbol, url, healthy, name, now)),
   ]);
+  let statusOk = 0;
   for (const result of statusResults) {
-    if (result.status === "fulfilled") fresh.push(...result.value);
-    else diagnostics.push(`status: ${shortError(result.reason)}`);
+    if (result.status === "fulfilled") {
+      statusOk += 1;
+      fresh.push(...result.value);
+    } else diagnostics.push(`status: ${shortError(result.reason)}`);
   }
 
   const previousMeta = isObject(previous.meta) ? previous.meta : {};
   const lastNews = parseMillis(previousMeta.news_checked_at);
   let newsCheckedAt = previousMeta.news_checked_at || null;
+  let newsOk = Number(previousMeta?.source_health?.news_ok || 0);
+  let newsTotal = Number(previousMeta?.source_health?.news_total || 0);
   if (!lastNews || now.getTime() - lastNews >= NEWS_REFRESH_MS) {
-    const newsResults = await Promise.allSettled(buildGdeltQueries().map((batch) => fetchGdeltBatch(batch, now)));
+    const newsResults = await Promise.allSettled([
+      ...buildGdeltQueries().map((batch) => fetchGdeltBatch(batch, now)),
+      ...OFFICIAL_FEEDS.map(([symbol, url, name]) => fetchOfficialFeed(symbol, url, name, now)),
+    ]);
+    newsOk = 0;
+    newsTotal = newsResults.length;
     for (const result of newsResults) {
-      if (result.status === "fulfilled") fresh.push(...result.value);
-      else diagnostics.push(`news: ${shortError(result.reason)}`);
+      if (result.status === "fulfilled") {
+        newsOk += 1;
+        fresh.push(...result.value);
+      } else diagnostics.push(`news: ${shortError(result.reason)}`);
     }
-    newsCheckedAt = now.toISOString();
+    // If every news source failed, retry on the next minute instead of hiding
+    // the outage behind the normal five-minute refresh interval.
+    if (newsOk > 0) newsCheckedAt = now.toISOString();
   }
 
   const repos = githubSources();
@@ -190,24 +210,33 @@ async function refreshEventFeed(env, now) {
   const releaseResults = await Promise.allSettled(
     githubBatch.map(([symbol, repo]) => fetchGithubReleases(symbol, repo, now)),
   );
+  let releaseOk = 0;
   for (const result of releaseResults) {
-    if (result.status === "fulfilled") fresh.push(...result.value);
-    else diagnostics.push(`release: ${shortError(result.reason)}`);
+    if (result.status === "fulfilled") {
+      releaseOk += 1;
+      fresh.push(...result.value);
+    } else diagnostics.push(`release: ${shortError(result.reason)}`);
   }
 
   const lastUnlock = parseMillis(previousMeta.unlocks_checked_at);
   let unlocksCheckedAt = previousMeta.unlocks_checked_at || null;
+  let unlockOk = Number(previousMeta?.source_health?.unlock_ok || 0);
+  let unlockTotal = Number(previousMeta?.source_health?.unlock_total || 0);
   if (!lastUnlock || now.getTime() - lastUnlock >= UNLOCK_REFRESH_MS) {
     const unlockResults = await Promise.allSettled(
       Object.entries(PROJECTS)
         .filter(([, project]) => project.unlockSlug)
         .map(([symbol, project]) => fetchTokenomistUnlock(symbol, project.unlockSlug, now)),
     );
+    unlockOk = 0;
+    unlockTotal = unlockResults.length;
     for (const result of unlockResults) {
-      if (result.status === "fulfilled" && result.value) fresh.push(result.value);
-      else if (result.status === "rejected") diagnostics.push(`unlock: ${shortError(result.reason)}`);
+      if (result.status === "fulfilled") {
+        unlockOk += 1;
+        if (result.value) fresh.push(result.value);
+      } else diagnostics.push(`unlock: ${shortError(result.reason)}`);
     }
-    unlocksCheckedAt = now.toISOString();
+    if (unlockOk > 0) unlocksCheckedAt = now.toISOString();
   }
 
   const merged = mergeEvents(previous, fresh, now);
@@ -221,6 +250,16 @@ async function refreshEventFeed(env, now) {
       news_checked_at: newsCheckedAt,
       unlocks_checked_at: unlocksCheckedAt,
       github_batch: batchIndex,
+      source_health: {
+        status_ok: statusOk,
+        status_total: statusResults.length,
+        news_ok: newsOk,
+        news_total: newsTotal,
+        release_ok: releaseOk,
+        release_total: releaseResults.length,
+        unlock_ok: unlockOk,
+        unlock_total: unlockTotal,
+      },
       seen_events: merged.seen,
     },
   };
@@ -233,7 +272,11 @@ function emptyFeed(now) {
     generated_at: now.toISOString(),
     events: [],
     diagnostics: [],
-    meta: { news_checked_at: null, unlocks_checked_at: null, github_batch: 0, seen_events: {} },
+    meta: {
+      news_checked_at: null, unlocks_checked_at: null, github_batch: 0,
+      source_health: { status_ok: 0, status_total: 0, news_ok: 0, news_total: 0, release_ok: 0, release_total: 0, unlock_ok: 0, unlock_total: 0 },
+      seen_events: {},
+    },
   };
 }
 
@@ -263,7 +306,7 @@ function mergeEvents(previous, fresh, now) {
   for (const event of fresh) {
     if (!isObject(event)) continue;
     const key = eventKey(event);
-    if (event.source_type === "news" || event.source_type === "release") {
+    if (["news", "release", "official_feed"].includes(event.source_type)) {
       const firstSeen = parseMillis(seen[key]);
       if (firstSeen && nowMs - firstSeen >= ACTIVE_RETENTION_MS) continue;
       const fixedFirst = firstSeen || nowMs;
@@ -402,6 +445,48 @@ async function fetchGdeltBatch(batch, now) {
       sourceUrl,
       active: true,
       sourceType: "news",
+    }));
+  }
+  return result;
+}
+
+
+async function fetchOfficialFeed(symbol, url, sourceName, now) {
+  const text = await fetchText(url);
+  const blocks = [
+    ...[...text.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi)].map((match) => match[1]),
+    ...[...text.matchAll(/<entry(?:\s[^>]*)?>([\s\S]*?)<\/entry>/gi)].map((match) => match[1]),
+  ].slice(0, 8);
+  const result = [];
+  for (const block of blocks) {
+    const title = cleanText(decodeXml(stripHtml(capture(block, /<title[^>]*>([\s\S]*?)<\/title>/i))));
+    const summary = cleanText(decodeXml(stripHtml(
+      capture(block, /<(?:description|summary|content)(?:\s[^>]*)?>([\s\S]*?)<\/(?:description|summary|content)>/i),
+    )));
+    const published = parseDateValue(
+      capture(block, /<(?:pubDate|published|updated)>([^<]+)<\/(?:pubDate|published|updated)>/i),
+    );
+    const link = decodeXml(
+      capture(block, /<link[^>]+href=["']([^"']+)["']/i)
+      || capture(block, /<link(?:\s[^>]*)?>([^<]+)<\/link>/i)
+      || url,
+    );
+    if (!title || !published) continue;
+    const age = now.getTime() - Date.parse(published);
+    if (age < -60 * 60 * 1000 || age > 24 * 60 * 60 * 1000) continue;
+    const classification = classifyHeadline(`${title} ${summary}`);
+    if (!classification) continue;
+    result.push(eventRow({
+      symbol,
+      kind: classification.kind,
+      title,
+      startsAt: published,
+      exactTime: true,
+      priority: classification.priority,
+      sourceName,
+      sourceUrl: link,
+      active: true,
+      sourceType: "official_feed",
     }));
   }
   return result;
@@ -702,6 +787,7 @@ export {
   PROJECTS,
   buildGdeltQueries,
   classifyHeadline,
+  fetchOfficialFeed,
   mergeEvents,
   parseTokenomistUnlock,
   symbolForOfficialUrl,

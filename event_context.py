@@ -1,5 +1,5 @@
 # Package revision: r1
-"""Verified scheduled and externally confirmed event context for CF v5.2.0.
+"""Verified scheduled and externally confirmed event context for CF v5.3.0.
 
 Automatic facts come only from official public schedules/status pages. Project-
 specific events such as token unlocks are accepted only from a local or remote
@@ -25,8 +25,8 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-CACHE_VERSION = "event-cache-v520-r1"
-USER_AGENT = "crypto-signal-monitor/5.2.0"
+CACHE_VERSION = "event-cache-v530-r1"
+USER_AGENT = "crypto-signal-monitor/5.3.0"
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4,
     "may": 5, "june": 6, "july": 7, "august": 8,
@@ -615,6 +615,183 @@ def _parse_ism_schedule(text: str) -> list[CriticalEvent]:
     return result
 
 
+
+
+def _parse_adp_schedule(text: str) -> list[CriticalEvent]:
+    """Parse the official monthly ADP report dates (monthly report only)."""
+    flat = _html_text(text)
+    match = re.search(
+        r"Upcoming Reports:\s*(.+?)(?=Upcoming reports \(weekly NER pulse\)|Technical Notes|$)",
+        flat,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return []
+    eastern = ZoneInfo("America/New_York")
+    result: list[CriticalEvent] = []
+    month_pattern = "|".join(name.title() for name in MONTHS)
+    for month_name, day_text, year_text in re.findall(
+        rf"\b({month_pattern})\s+(\d{{1,2}}),\s+(20\d{{2}})\b",
+        match.group(1),
+        flags=re.IGNORECASE,
+    ):
+        try:
+            local = datetime(
+                int(year_text), MONTHS[month_name.lower()], int(day_text),
+                8, 15, tzinfo=eastern,
+            )
+        except (ValueError, KeyError):
+            continue
+        result.append(CriticalEvent(
+            symbol="BTC",
+            kind="ADP",
+            title="ADP National Employment Report",
+            starts_at=_iso(local),
+            ends_at=None,
+            exact_time=True,
+            priority=DEFAULT_PRIORITIES["ADP"],
+            source_name="ADP Research Institute",
+            source_url="https://adpemploymentreport.com/",
+        ))
+    return result
+
+
+def _parse_michigan_schedule(text: str) -> list[CriticalEvent]:
+    """Parse the explicitly stated next University of Michigan release."""
+    flat = _html_text(text)
+    month_pattern = "|".join(name.title() for name in MONTHS)
+    match = re.search(
+        rf"Next data release:\s*(?:[A-Za-z]+,\s*)?({month_pattern})\s+(\d{{1,2}}),\s+"
+        rf"(20\d{{2}}).*?\bat\s+(\d{{1,2}})(?::(\d{{2}}))?\s*(am|pm)\s*ET\b",
+        flat,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return []
+    month_name, day_text, year_text, hour_text, minute_text, ampm = match.groups()
+    hour = int(hour_text) % 12 + (12 if ampm.lower() == "pm" else 0)
+    try:
+        local = datetime(
+            int(year_text), MONTHS[month_name.lower()], int(day_text),
+            hour, int(minute_text or 0), tzinfo=ZoneInfo("America/New_York"),
+        )
+    except (ValueError, KeyError):
+        return []
+    return [CriticalEvent(
+        symbol="BTC",
+        kind="MICHIGAN",
+        title="University of Michigan Consumer Sentiment",
+        starts_at=_iso(local),
+        ends_at=None,
+        exact_time=True,
+        priority=DEFAULT_PRIORITIES["MICHIGAN"],
+        source_name="University of Michigan Surveys of Consumers",
+        source_url="https://www.sca.isr.umich.edu/",
+    )]
+
+
+def _parse_consumer_confidence_schedule(
+    text: str,
+    *,
+    now: datetime,
+) -> list[CriticalEvent]:
+    """Parse The Conference Board's explicit next Consumer Confidence date."""
+    flat = _html_text(text)
+    month_pattern = "|".join(name.title() for name in MONTHS)
+    match = re.search(
+        rf"The next release is\s+(?:[A-Za-z]+,\s*)?({month_pattern})\s+"
+        rf"(\d{{1,2}})(?:st|nd|rd|th)?(?:,?\s+(20\d{{2}}))?\s+at\s+"
+        rf"(\d{{1,2}})(?::(\d{{2}}))?\s*(AM|PM)\s*ET\b",
+        flat,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return []
+    month_name, day_text, year_text, hour_text, minute_text, ampm = match.groups()
+    eastern = ZoneInfo("America/New_York")
+    local_now = now.astimezone(eastern)
+    year = int(year_text) if year_text else local_now.year
+    hour = int(hour_text) % 12 + (12 if ampm.lower() == "pm" else 0)
+    try:
+        local = datetime(
+            year, MONTHS[month_name.lower()], int(day_text), hour,
+            int(minute_text or 0), tzinfo=eastern,
+        )
+    except (ValueError, KeyError):
+        return []
+    if not year_text and local < local_now - timedelta(days=45):
+        local = local.replace(year=local.year + 1)
+    return [CriticalEvent(
+        symbol="BTC",
+        kind="CONSUMER_CONFIDENCE",
+        title="Conference Board Consumer Confidence",
+        starts_at=_iso(local),
+        ends_at=None,
+        exact_time=True,
+        priority=DEFAULT_PRIORITIES["CONSUMER_CONFIDENCE"],
+        source_name="The Conference Board",
+        source_url="https://www.conference-board.org/topics/consumer-confidence/",
+    )]
+
+
+def _observed_fixed_holiday(year: int, month: int, day: int) -> datetime.date:
+    value = datetime(year, month, day).date()
+    if value.weekday() == 5:
+        return value - timedelta(days=1)
+    if value.weekday() == 6:
+        return value + timedelta(days=1)
+    return value
+
+
+def _claims_release_holidays(year: int) -> set[datetime.date]:
+    thanksgiving = datetime(year, 11, 1).date()
+    thanksgiving += timedelta(days=(3 - thanksgiving.weekday()) % 7 + 21)
+    return {
+        _observed_fixed_holiday(year, 1, 1),
+        _observed_fixed_holiday(year, 6, 19),
+        _observed_fixed_holiday(year, 7, 4),
+        thanksgiving,
+        _observed_fixed_holiday(year, 12, 25),
+    }
+
+
+def _scheduled_claims(now: datetime, count: int = 10) -> list[CriticalEvent]:
+    """Create the official weekly 08:30 ET initial-claims schedule."""
+    eastern = ZoneInfo("America/New_York")
+    local_now = now.astimezone(eastern)
+    cursor = local_now.date()
+    result: list[CriticalEvent] = []
+    checked: set[datetime.date] = set()
+    while len(result) < count and len(checked) < count * 3:
+        days_to_thursday = (3 - cursor.weekday()) % 7
+        nominal = cursor + timedelta(days=days_to_thursday)
+        if nominal in checked:
+            nominal += timedelta(days=7)
+        checked.add(nominal)
+        release_day = nominal
+        if nominal in _claims_release_holidays(nominal.year):
+            release_day = nominal - timedelta(days=1)
+            while release_day.weekday() >= 5:
+                release_day -= timedelta(days=1)
+        local = datetime(
+            release_day.year, release_day.month, release_day.day,
+            8, 30, tzinfo=eastern,
+        )
+        if local >= local_now - timedelta(minutes=15):
+            result.append(CriticalEvent(
+                symbol="BTC",
+                kind="CLAIMS",
+                title="U.S. Initial Unemployment Claims",
+                starts_at=_iso(local),
+                ends_at=None,
+                exact_time=True,
+                priority=DEFAULT_PRIORITIES["CLAIMS"],
+                source_name="U.S. Department of Labor",
+                source_url="https://www.dol.gov/newsroom/releases/eta",
+            ))
+        cursor = nominal + timedelta(days=1)
+    return result
+
 def _parse_deribit_expiries(
     text: str,
     *,
@@ -1091,6 +1268,9 @@ def load_critical_events(
         "bea": str(section.get("bea_schedule_url", "https://www.bea.gov/news/schedule")),
         "census": str(section.get("census_schedule_url", "https://www.census.gov/economic-indicators/calendar-listview.html")),
         "ism": str(section.get("ism_schedule_url", "https://www.ismworld.org/supply-management-news-and-reports/reports/rob-report-calendar/")),
+        "adp": str(section.get("adp_schedule_url", "https://adpemploymentreport.com/")),
+        "michigan": str(section.get("michigan_schedule_url", "https://www.sca.isr.umich.edu/")),
+        "confidence": str(section.get("consumer_confidence_url", "https://www.conference-board.org/topics/consumer-confidence/")),
         "fomc": str(section.get("fomc_calendar_url", "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm")),
     }
     for year, month in sorted(fed_months):
@@ -1123,6 +1303,12 @@ def load_critical_events(
                 parsed = _parse_census_schedule(value)
             elif name == "ism":
                 parsed = _parse_ism_schedule(value)
+            elif name == "adp":
+                parsed = _parse_adp_schedule(value)
+            elif name == "michigan":
+                parsed = _parse_michigan_schedule(value)
+            elif name == "confidence":
+                parsed = _parse_consumer_confidence_schedule(value, now=now)
             elif name == "fomc":
                 parsed = _parse_fomc_calendar(value, (now.year, now.year + 1))
             else:
@@ -1146,9 +1332,10 @@ def load_critical_events(
             schedule_by_source.pop(source_id, None)
             source_fetched_at.pop(source_id, None)
             diagnostics.append(f"{source_id}-Termin-Cache zu alt; Quelle ausgeblendet")
-    schedule_events = _dedupe(
-        event for rows in schedule_by_source.values() for event in rows
-    )
+    schedule_events = _dedupe([
+        *(event for rows in schedule_by_source.values() for event in rows),
+        *_scheduled_claims(now),
+    ])
     cached["schedule_source_events"] = {
         source_id: [asdict(event) for event in rows]
         for source_id, rows in schedule_by_source.items()

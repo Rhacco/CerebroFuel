@@ -1,5 +1,5 @@
 {
-  "schema_version": "5.2.0",
+  "schema_version": "5.3.0",
   "package_revision": "r1",
   "lighter_base_url": "https://mainnet.zklighter.elliot.ai/api/v1",
   "timezone": "Europe/Berlin",
@@ -114,7 +114,7 @@
   "api_retry_count": 3,
   "parallel_requests": 4,
   "request_timeout_seconds": 15,
-  "discord_max_codepoints_per_line": 68,
+  "discord_max_codepoints_per_line": 42,
   "paper_trading_enabled": true,
   "paper_starting_capital_usd": 100,
   "paper_max_positions": 5,
@@ -149,7 +149,7 @@
   "paper_close_cooldown_minutes": 1,
   "paper_stop_cooldown_minutes": 4,
   "paper_ledger_limit": 500,
-  "discord_username": "CF v5.2.0",
+  "discord_username": "CF v5.3.0",
   "discord_avatar_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Cryptocurrency_Logo.svg/330px-Cryptocurrency_Logo.svg.png",
   "minimum_tape_quality": 68,
   "paper_min_tape_quality": 52,
@@ -191,6 +191,7 @@
     "verified_feed_url": "",
     "verified_source_domains": [
       "aave.com",
+      "adpemploymentreport.com",
       "aptos.dev",
       "aptosfoundation.org",
       "aptoslabs.com",
@@ -198,11 +199,14 @@
       "bea.gov",
       "bitcoin.org",
       "bitcoincore.org",
+      "blog.ethereum.org",
       "bls.gov",
       "cardano.org",
       "celestia.org",
       "census.gov",
+      "conference-board.org",
       "deribit.com",
+      "dol.gov",
       "electriccoin.co",
       "essentialcardano.io",
       "ethena.fi",
@@ -221,6 +225,7 @@
       "nearfoundation.org",
       "ondo.finance",
       "pump.fun",
+      "sca.isr.umich.edu",
       "solana.com",
       "statuspage.io",
       "sui.io",
@@ -235,7 +240,11 @@
     },
     "deribit_expiry_min_share_pct": 8.0,
     "census_schedule_url": "https://www.census.gov/economic-indicators/calendar-listview.html",
-    "ism_schedule_url": "https://www.ismworld.org/supply-management-news-and-reports/reports/rob-report-calendar/"
+    "ism_schedule_url": "https://www.ismworld.org/supply-management-news-and-reports/reports/rob-report-calendar/",
+    "dol_claims_url": "https://www.dol.gov/newsroom/releases/eta",
+    "adp_schedule_url": "https://adpemploymentreport.com/",
+    "michigan_schedule_url": "https://www.sca.isr.umich.edu/",
+    "consumer_confidence_url": "https://www.conference-board.org/topics/consumer-confidence/"
   },
   "incident_detection": {
     "enabled": true,
@@ -339,5 +348,6 @@
   "paper_immediate_margin_pct": 14.0,
   "paper_add_margin_pct": 5.0,
   "paper_max_scale_count": 2,
-  "paper_chase_hard_block": 88.0
+  "paper_chase_hard_block": 88.0,
+  "discord_max_display_columns_per_line": 46
 }
