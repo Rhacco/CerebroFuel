@@ -1,13 +1,16 @@
 // Package revision: r1
-// Crypto event feed and GitHub scheduler for v5.3.0.
+// Crypto event feed and GitHub scheduler for v5.4.0.
 
-const APP_VERSION = "5.3.0";
+const APP_VERSION = "5.4.0";
 const PACKAGE_REVISION = "r1";
-const STORE_KEY = "crypto-events-v530";
-const CACHE_URL = "https://crypto-events.internal/v5.3.0/events.json";
+const STORE_KEY = "crypto-events-v540";
+const CACHE_URL = "https://crypto-events.internal/v5.4.0/events.json";
 const ACTIVE_RETENTION_MS = 25 * 60 * 1000;
 const STATUS_GRACE_MS = 10 * 60 * 1000;
 const NEWS_REFRESH_MS = 5 * 60 * 1000;
+const ETF_REFRESH_MS = 5 * 60 * 1000;
+const ETF_ACTIVE_RETENTION_MS = 10 * 60 * 1000;
+const ETF_SOURCE_URL = "https://farside.co.uk/btc/";
 const UNLOCK_REFRESH_MS = 6 * 60 * 60 * 1000;
 const SEEN_RETENTION_MS = 48 * 60 * 60 * 1000;
 
@@ -203,6 +206,49 @@ async function refreshEventFeed(env, now) {
     if (newsOk > 0) newsCheckedAt = now.toISOString();
   }
 
+  const lastEtf = parseMillis(previousMeta.etf_checked_at);
+  let etfCheckedAt = previousMeta.etf_checked_at || null;
+  let etfLastDate = String(previousMeta.etf_last_date || "");
+  let etfLastTotal = Number.isFinite(Number(previousMeta.etf_last_total_m))
+    ? Number(previousMeta.etf_last_total_m) : null;
+  let etfOk = Number(previousMeta?.source_health?.etf_ok || 0);
+  if (!lastEtf || now.getTime() - lastEtf >= ETF_REFRESH_MS) {
+    try {
+      const row = await fetchBitcoinEtfFlow(now);
+      etfOk = 1;
+      etfCheckedAt = now.toISOString();
+      if (row) {
+        const hasBaseline = Boolean(etfLastDate) && etfLastTotal !== null;
+        const changed = row.date !== etfLastDate || Math.round(row.totalM) !== Math.round(etfLastTotal);
+        if (hasBaseline && changed && Math.abs(Math.round(row.totalM)) >= 1) {
+          const rounded = Math.round(row.totalM);
+          const signed = `${rounded >= 0 ? "+" : "-"}${Math.abs(rounded)}M`;
+          const expiresAt = new Date(now.getTime() + ETF_ACTIVE_RETENTION_MS).toISOString();
+          fresh.push(eventRow({
+            symbol: "BTC",
+            kind: "ETF_FLOW",
+            title: `US spot Bitcoin ETF net flow ${signed}`,
+            startsAt: now.toISOString(),
+            endsAt: expiresAt,
+            expiresAt,
+            exactTime: true,
+            priority: 91,
+            sourceName: "Farside Investors Bitcoin ETF Flow",
+            sourceUrl: ETF_SOURCE_URL,
+            active: true,
+            sourceType: "etf_flow",
+          }));
+        }
+        etfLastDate = row.date;
+        etfLastTotal = row.totalM;
+      }
+    } catch (error) {
+      etfOk = 0;
+      diagnostics.push(`etf: ${shortError(error)}`);
+      // Failed ETF checks retry next minute instead of waiting five minutes.
+    }
+  }
+
   const repos = githubSources();
   const batchCount = Math.max(1, Math.ceil(repos.length / 4));
   const batchIndex = Math.floor(now.getTime() / 60_000) % batchCount;
@@ -248,6 +294,9 @@ async function refreshEventFeed(env, now) {
     diagnostics: diagnostics.slice(0, 24),
     meta: {
       news_checked_at: newsCheckedAt,
+      etf_checked_at: etfCheckedAt,
+      etf_last_date: etfLastDate || null,
+      etf_last_total_m: etfLastTotal,
       unlocks_checked_at: unlocksCheckedAt,
       github_batch: batchIndex,
       source_health: {
@@ -255,6 +304,8 @@ async function refreshEventFeed(env, now) {
         status_total: statusResults.length,
         news_ok: newsOk,
         news_total: newsTotal,
+        etf_ok: etfOk,
+        etf_total: 1,
         release_ok: releaseOk,
         release_total: releaseResults.length,
         unlock_ok: unlockOk,
@@ -273,8 +324,8 @@ function emptyFeed(now) {
     events: [],
     diagnostics: [],
     meta: {
-      news_checked_at: null, unlocks_checked_at: null, github_batch: 0,
-      source_health: { status_ok: 0, status_total: 0, news_ok: 0, news_total: 0, release_ok: 0, release_total: 0, unlock_ok: 0, unlock_total: 0 },
+      news_checked_at: null, etf_checked_at: null, etf_last_date: null, etf_last_total_m: null, unlocks_checked_at: null, github_batch: 0,
+      source_health: { status_ok: 0, status_total: 0, news_ok: 0, news_total: 0, etf_ok: 0, etf_total: 1, release_ok: 0, release_total: 0, unlock_ok: 0, unlock_total: 0 },
       seen_events: {},
     },
   };
@@ -313,6 +364,9 @@ function mergeEvents(previous, fresh, now) {
       seen[key] = new Date(fixedFirst).toISOString();
       event.first_seen_at = new Date(fixedFirst).toISOString();
       event.expires_at = new Date(fixedFirst + ACTIVE_RETENTION_MS).toISOString();
+    } else if (event.source_type === "etf_flow") {
+      event.first_seen_at = event.first_seen_at || now.toISOString();
+      event.expires_at = event.expires_at || new Date(nowMs + ETF_ACTIVE_RETENTION_MS).toISOString();
     } else if (event.source_type === "status") {
       event.expires_at = new Date(nowMs + STATUS_GRACE_MS).toISOString();
     }
@@ -540,6 +594,70 @@ async function fetchGithubReleases(symbol, repo, now) {
   return result;
 }
 
+async function fetchBitcoinEtfFlow(now) {
+  const text = await fetchText(ETF_SOURCE_URL);
+  const row = parseFarsideBitcoinEtfFlow(text);
+  if (!row) throw new Error("Farside BTC ETF row not recognized");
+  const rowTime = Date.parse(`${row.date}T00:00:00Z`);
+  if (!Number.isFinite(rowTime) || now.getTime() - rowTime > 7 * 86_400_000) {
+    throw new Error("Farside BTC ETF row is stale");
+  }
+  return row;
+}
+
+function parseFarsideBitcoinEtfFlow(text) {
+  const rows = [...String(text || "").matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)];
+  const parsed = [];
+  for (const match of rows) {
+    const cells = [...match[1].matchAll(/<(?:td|th)\b[^>]*>([\s\S]*?)<\/(?:td|th)>/gi)]
+      .map((cell) => cleanText(stripHtml(decodeXml(cell[1]))));
+    if (cells.length < 2) continue;
+    const date = parseFarsideDate(cells[0]);
+    if (!date) continue;
+    const totalM = parseFarsideNumber(cells[cells.length - 1]);
+    if (totalM === null) continue;
+    parsed.push({ date, totalM });
+  }
+  if (!parsed.length) {
+    // Conservative fallback for text-table mirrors: date plus the final pipe cell.
+    const flatRows = String(text || "").split(/\r?\n/);
+    for (const row of flatRows) {
+      const dateMatch = row.match(/\b(\d{1,2})\s+([A-Za-z]{3,9})\s+(20\d{2})\b/);
+      if (!dateMatch || !row.includes("|")) continue;
+      const date = parseFarsideDate(dateMatch[0]);
+      const totalM = parseFarsideNumber(row.split("|").pop());
+      if (date && totalM !== null) parsed.push({ date, totalM });
+    }
+  }
+  parsed.sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+  return parsed.at(-1) || null;
+}
+
+function parseFarsideDate(value) {
+  const match = cleanText(value).match(/^(\d{1,2})\s+([A-Za-z]{3,9})\s+(20\d{2})$/);
+  if (!match) return null;
+  const monthName = match[2].toLowerCase();
+  const month = MONTHS[monthName] ?? Object.entries(MONTHS)
+    .find(([name]) => name.startsWith(monthName.slice(0, 3)))?.[1];
+  if (month === undefined) return null;
+  const date = new Date(Date.UTC(Number(match[3]), month, Number(match[1])));
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+}
+
+function parseFarsideNumber(value) {
+  let text = cleanText(value).replace(/[$,]/g, "");
+  if (!text || text === "-" || /^n\/?a$/i.test(text)) return null;
+  let sign = 1;
+  if (/^\(.*\)$/.test(text)) {
+    sign = -1;
+    text = text.slice(1, -1).trim();
+  }
+  const match = text.match(/^-?\d+(?:\.\d+)?$/);
+  if (!match) return null;
+  const number = Number(text);
+  return Number.isFinite(number) ? sign * Math.abs(number) : null;
+}
+
 async function fetchTokenomistUnlock(symbol, slug, now) {
   const url = `https://tokenomist.ai/${slug}/unlock-events`;
   const text = await fetchText(url);
@@ -570,13 +688,14 @@ function parseTokenomistUnlock(symbol, text, sourceUrl, now = new Date()) {
   });
 }
 
-function eventRow({ symbol, kind, title, startsAt = null, endsAt = null, exactTime = true, priority = 70, sourceName, sourceUrl, active = false, sourceType }) {
+function eventRow({ symbol, kind, title, startsAt = null, endsAt = null, expiresAt = null, exactTime = true, priority = 70, sourceName, sourceUrl, active = false, sourceType }) {
   return {
     symbol,
     kind,
     title: cleanText(title).slice(0, 240),
     starts_at: startsAt,
     ends_at: endsAt,
+    expires_at: expiresAt,
     exact_time: Boolean(exactTime),
     priority: Math.max(1, Math.min(100, Number(priority) || 70)),
     source_name: sourceName,
@@ -757,7 +876,7 @@ function decodeXml(value) {
   return String(value || "")
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
     .replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
-    .replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;|&#160;/g, " ");
 }
 
 function cleanText(value) {
@@ -789,6 +908,7 @@ export {
   classifyHeadline,
   fetchOfficialFeed,
   mergeEvents,
+  parseFarsideBitcoinEtfFlow,
   parseTokenomistUnlock,
   symbolForOfficialUrl,
 };

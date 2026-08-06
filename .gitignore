@@ -1,5 +1,5 @@
 # Package revision: r1
-# Crypto Signal Monitor v5.3.0
+# Crypto Signal Monitor v5.4.0
 .cache/
 __pycache__/
 *.pyc

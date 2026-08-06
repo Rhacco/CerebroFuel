@@ -1,5 +1,5 @@
 # Package revision: r1
-"""Lighter-native early-swing/T/W signal engine for CF v5.3.0."""
+"""Lighter-native early-swing/T/W signal engine for CF v5.4.0."""
 from __future__ import annotations
 
 import json
@@ -23,7 +23,7 @@ from signal_streak_state import apply_signal_streaks
 from signal_transition_guard import apply_signal_transition_guard
 from signal_evaluator import update_signal_evaluation
 
-APP_VERSION = "5.3.0"
+APP_VERSION = "5.4.0"
 PACKAGE_REVISION = "r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
@@ -1431,10 +1431,40 @@ class LighterMonitor:
         display_limit = int(
             self.config.get("discord_max_display_columns_per_line", line_limit + 4)
         )
+        header_line_limit = int(
+            self.config.get("discord_max_header_codepoints_per_line", line_limit)
+        )
+        header_display_limit = int(
+            self.config.get(
+                "discord_max_header_display_columns_per_line",
+                min(display_limit, header_line_limit + 4),
+            )
+        )
+        event_line_limit = int(
+            self.config.get("discord_max_event_codepoints_per_line", header_line_limit)
+        )
+        event_display_limit = int(
+            self.config.get(
+                "discord_max_event_display_columns_per_line",
+                min(header_display_limit, event_line_limit + 4),
+            )
+        )
         if not 34 <= line_limit <= 2_000:
             raise ValueError("Discord-Zeilenlimit ist ungueltig")
         if not line_limit <= display_limit <= 2_000:
             raise ValueError("Discord-Anzeigebreitenlimit ist ungueltig")
+        if not 34 <= header_line_limit <= line_limit:
+            raise ValueError("Discord-Kopfzeilenlimit ist ungueltig")
+        if not header_line_limit <= header_display_limit <= display_limit:
+            raise ValueError("Discord-Kopfzeilenbreite ist ungueltig")
+        if not 34 <= event_line_limit <= header_line_limit:
+            raise ValueError("Discord-Ereigniszeilenlimit ist ungueltig")
+        if not event_line_limit <= event_display_limit <= header_display_limit:
+            raise ValueError("Discord-Ereignisanzeigebreite ist ungueltig")
+        if event_line_limit < summary_count * 5 - 1:
+            raise ValueError("Discord-Ereigniszeilenlimit ist für die Top-Zeile zu klein")
+        if header_line_limit < summary_count * 5 - 1:
+            raise ValueError("Discord-Kopfzeilenlimit ist für die Top-Zeile zu klein")
         if line_limit < summary_count * 5 - 1:
             raise ValueError("Discord-Zeilenlimit ist für die Top-Zeile zu klein")
         watch = float(self.config.get("watch_trade_readiness", 56))
@@ -2609,20 +2639,52 @@ class LighterMonitor:
         max_columns = int(
             self.config.get("discord_max_display_columns_per_line", max_len + 4)
         )
+        # Header tokens are wider in Discord's mobile proportional font than
+        # the compact detail rows. Keep a separate empirical mobile cap and
+        # dynamically remove ordinary suffixes before Discord can wrap them.
+        header_max_len = int(
+            self.config.get("discord_max_header_codepoints_per_line", max_len)
+        )
+        header_max_columns = int(
+            self.config.get(
+                "discord_max_header_display_columns_per_line", max_columns
+            )
+        )
+        anchor_has_event = bool(event_codes.get(protected_anchor_symbol, ""))
+        if anchor_has_event:
+            header_max_len = min(
+                header_max_len,
+                int(self.config.get(
+                    "discord_max_event_codepoints_per_line", header_max_len
+                )),
+            )
+            header_max_columns = min(
+                header_max_columns,
+                int(self.config.get(
+                    "discord_max_event_display_columns_per_line",
+                    header_max_columns,
+                )),
+            )
 
         def line_fits(value: str) -> bool:
             return len(value) <= max_len and _discord_display_columns(value) <= max_columns
 
+        def header_fits(value: str) -> bool:
+            return (
+                len(value) <= header_max_len
+                and _discord_display_columns(value) <= header_max_columns
+            )
+
         compact_clock = False
         header = summary_line(False)
-        if not line_fits(header):
+        if not header_fits(header):
             compact_clock = True
             header = summary_line(True)
 
         # Keep the BTC macro/event token and the deliberately reserved altcoin
         # event intact. Trim ordinary warning suffixes before hiding news.
         changed = True
-        while not line_fits(header) and changed:
+        while not header_fits(header) and changed:
             changed = False
             for item in summary:
                 codes = warning_codes.get(item.symbol, [])
@@ -2633,13 +2695,13 @@ class LighterMonitor:
                     changed = True
                     header = summary_line(compact_clock)
                     break
-                if line_fits(header):
+                if header_fits(header):
                     break
 
         # Several simultaneous normal coin events can still exceed the compact
         # mobile width. Preserve the rotating/reserved event and BTC; hide only
         # non-reserved normal event duplicates. Critical events remain protected.
-        if not line_fits(header):
+        if not header_fits(header):
             reserved_symbols = {protected_anchor_symbol}
             if incident_header_symbol:
                 reserved_symbols.add(str(incident_header_symbol).upper())
@@ -2649,10 +2711,10 @@ class LighterMonitor:
                     continue
                 event_codes[item.symbol] = ""
                 header = summary_line(compact_clock)
-                if line_fits(header):
+                if header_fits(header):
                     break
 
-        if not line_fits(header):
+        if not header_fits(header):
             # In a broad data outage, repeated long DATA/STALE/GAP codes can
             # otherwise exceed the mobile cap by one or two characters. The
             # black invalid-data color and detail token still expose the issue;
@@ -2671,10 +2733,10 @@ class LighterMonitor:
                     del codes[index]
                     header = summary_line(compact_clock)
                     break
-                if line_fits(header):
+                if header_fits(header):
                     break
 
-        if not line_fits(header):
+        if not header_fits(header):
             raise RuntimeError("Discord-Top-Zeilenlimit überschritten")
         self.last_header_event_symbols = tuple(
             item.symbol for item in summary if event_codes.get(item.symbol, "")

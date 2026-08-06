@@ -1,5 +1,5 @@
 {
-  "schema_version": "5.3.0",
+  "schema_version": "5.4.0",
   "package_revision": "r1",
   "lighter_base_url": "https://mainnet.zklighter.elliot.ai/api/v1",
   "timezone": "Europe/Berlin",
@@ -149,7 +149,7 @@
   "paper_close_cooldown_minutes": 1,
   "paper_stop_cooldown_minutes": 4,
   "paper_ledger_limit": 500,
-  "discord_username": "CF v5.3.0",
+  "discord_username": "CF v5.4.0",
   "discord_avatar_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Cryptocurrency_Logo.svg/330px-Cryptocurrency_Logo.svg.png",
   "minimum_tape_quality": 68,
   "paper_min_tape_quality": 52,
@@ -212,6 +212,7 @@
       "ethena.fi",
       "ethenafoundation.com",
       "ethereum.org",
+      "farside.co.uk",
       "federalreserve.gov",
       "github.com",
       "governance.aave.com",
@@ -244,7 +245,8 @@
     "dol_claims_url": "https://www.dol.gov/newsroom/releases/eta",
     "adp_schedule_url": "https://adpemploymentreport.com/",
     "michigan_schedule_url": "https://www.sca.isr.umich.edu/",
-    "consumer_confidence_url": "https://www.conference-board.org/topics/consumer-confidence/"
+    "consumer_confidence_url": "https://www.conference-board.org/topics/consumer-confidence/",
+    "fred_adp_schedule_url": "https://fred.stlouisfed.org/releases/calendar?rid=194&view=year"
   },
   "incident_detection": {
     "enabled": true,
@@ -349,5 +351,9 @@
   "paper_add_margin_pct": 5.0,
   "paper_max_scale_count": 2,
   "paper_chase_hard_block": 88.0,
-  "discord_max_display_columns_per_line": 46
+  "discord_max_display_columns_per_line": 46,
+  "discord_max_event_codepoints_per_line": 38,
+  "discord_max_event_display_columns_per_line": 40,
+  "discord_max_header_codepoints_per_line": 38,
+  "discord_max_header_display_columns_per_line": 40
 }

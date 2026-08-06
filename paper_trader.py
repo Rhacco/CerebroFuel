@@ -1,5 +1,5 @@
 # Package revision: r1
-"""Deterministic, multi-candidate paper-trading engine for CF v5.3.0."""
+"""Deterministic, multi-candidate paper-trading engine for CF v5.4.0."""
 from __future__ import annotations
 
 import json
@@ -11,7 +11,7 @@ from typing import Any, Iterable, Mapping
 
 
 STATE_SCHEMA = 1
-APP_VERSION = "5.3.0"
+APP_VERSION = "5.4.0"
 ENTRY_STATES = {
     "BUY": 1, "SELL": -1,
     "STRONG_LONG": 1, "STRONG_SHORT": -1,
@@ -1402,7 +1402,7 @@ class PaperTrader:
         for symbol, position in list((self.state.get("positions") or {}).items()):
             reason: str | None = None
             if symbol not in allowed_symbols:
-                reason = "Symbol nicht im v5.3.0-Kandidatenpool"
+                reason = "Symbol nicht im v5.4.0-Kandidatenpool"
             if reason is None:
                 continue
             signal = self.signals.get(symbol)

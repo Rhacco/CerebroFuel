@@ -1,5 +1,5 @@
 # Package revision: r1
-"""Verified scheduled and externally confirmed event context for CF v5.3.0.
+"""Verified scheduled and externally confirmed event context for CF v5.4.0.
 
 Automatic facts come only from official public schedules/status pages. Project-
 specific events such as token unlocks are accepted only from a local or remote
@@ -25,8 +25,8 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-CACHE_VERSION = "event-cache-v530-r1"
-USER_AGENT = "crypto-signal-monitor/5.3.0"
+CACHE_VERSION = "event-cache-v540-r1"
+USER_AGENT = "crypto-signal-monitor/5.4.0"
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4,
     "may": 5, "june": 6, "july": 7, "august": 8,
@@ -71,6 +71,7 @@ KIND_CODES = {
     "ISM_SERVICES": "ISMS",
     "EXPIRY": "EXP",
     "ETF": "ETF",
+    "ETF_FLOW": "E",
     "UNLOCK": "U",
     "UPGRADE": "UPG",
     "MAINTENANCE": "MNT",
@@ -110,6 +111,7 @@ DEFAULT_PRIORITIES = {
     "ISM_SERVICES": 80,
     "UNLOCK": 94,
     "ETF": 92,
+    "ETF_FLOW": 91,
     "SUPPLY": 90,
     "UPGRADE": 88,
     "MAINTENANCE": 84,
@@ -656,6 +658,42 @@ def _parse_adp_schedule(text: str) -> list[CriticalEvent]:
     return result
 
 
+def _parse_fred_adp_schedule(text: str) -> list[CriticalEvent]:
+    """Parse the St. Louis Fed's official ADP release calendar fallback."""
+    flat = _html_text(text)
+    central = ZoneInfo("America/Chicago")
+    month_pattern = "|".join(name.title() for name in MONTHS)
+    pattern = re.compile(
+        rf"(?:Monday|Tuesday|Wednesday|Thursday|Friday)\s+"
+        rf"({month_pattern})\s+(\d{{1,2}}),\s+(20\d{{2}})"
+        rf"(?:\s+Updated)?\s+(\d{{1,2}}):(\d{{2}})\s*(am|pm)\s+"
+        rf"ADP National Employment Report",
+        flags=re.IGNORECASE,
+    )
+    result: list[CriticalEvent] = []
+    for month_name, day_text, year_text, hour_text, minute_text, ampm in pattern.findall(flat):
+        hour = int(hour_text) % 12 + (12 if ampm.lower() == "pm" else 0)
+        try:
+            local = datetime(
+                int(year_text), MONTHS[month_name.lower()], int(day_text),
+                hour, int(minute_text), tzinfo=central,
+            )
+        except (ValueError, KeyError):
+            continue
+        result.append(CriticalEvent(
+            symbol="BTC",
+            kind="ADP",
+            title="ADP National Employment Report",
+            starts_at=_iso(local),
+            ends_at=None,
+            exact_time=True,
+            priority=DEFAULT_PRIORITIES["ADP"],
+            source_name="Federal Reserve Bank of St. Louis FRED",
+            source_url="https://fred.stlouisfed.org/releases/calendar?rid=194&view=year",
+        ))
+    return result
+
+
 def _parse_michigan_schedule(text: str) -> list[CriticalEvent]:
     """Parse the explicitly stated next University of Michigan release."""
     flat = _html_text(text)
@@ -905,7 +943,7 @@ def _dedupe(events: Iterable[CriticalEvent]) -> list[CriticalEvent]:
 def _display_horizon_days(kind: str, config: Mapping[str, Any]) -> int:
     if kind == "UNLOCK":
         return max(1, int(config.get("unlock_display_days", 14)))
-    if kind in {"UPGRADE", "MAINTENANCE", "GOVERNANCE", "SUPPLY", "ETF", "EXPIRY", "NEWS", "SECURITY"}:
+    if kind in {"UPGRADE", "MAINTENANCE", "GOVERNANCE", "SUPPLY", "ETF", "ETF_FLOW", "EXPIRY", "NEWS", "SECURITY"}:
         return max(1, int(config.get("coin_event_display_days", 7)))
     return max(1, int(config.get("macro_display_days", 7)))
 
@@ -927,7 +965,9 @@ def _event_timing(event: CriticalEvent, now: datetime, config: Mapping[str, Any]
             active = active or starts <= now <= ends
         elif not event.active and event.exact_time:
             active = starts <= now <= starts + timedelta(minutes=post_minutes)
-    if ends and now > ends + timedelta(minutes=post_minutes):
+    if event.kind == "ETF_FLOW" and ends is not None:
+        active = bool(starts and starts <= now <= ends)
+    elif ends and now > ends + timedelta(minutes=post_minutes):
         active = False
 
     # Date-only unlock/supply facts are active for their full verified calendar day.
@@ -956,6 +996,8 @@ def _event_timing(event: CriticalEvent, now: datetime, config: Mapping[str, Any]
 
     # Fresh verified headlines are visibility signals, not automatic trade bans.
     if event.kind == "NEWS":
+        return active, False, None, 10 if active else 0, hours
+    if event.kind == "ETF_FLOW":
         return active, False, None, 10 if active else 0, hours
 
     # Governance, upgrades, maintenance and ETF decisions can matter, but an
@@ -1000,6 +1042,12 @@ def _event_timing(event: CriticalEvent, now: datetime, config: Mapping[str, Any]
 
 def _event_code(event: CriticalEvent, now: datetime, timezone_name: str, active: bool) -> str:
     base = KIND_CODES[event.kind]
+    if event.kind == "ETF_FLOW":
+        match = re.search(r"([+-])\s*(\d+(?:\.\d+)?)\s*M\b", event.title, flags=re.IGNORECASE)
+        if match:
+            amount = max(1, int(round(float(match.group(2)))))
+            return f"E{match.group(1)}{amount}M"
+        return "ETF"
     if active:
         return base + "!"
     starts = _parse_iso(event.starts_at)
@@ -1030,6 +1078,8 @@ def _eligible_event_rows(
             continue
         active, block_new, leverage_cap, risk, hours = _event_timing(event, now, config)
         starts = _parse_iso(event.starts_at)
+        if event.kind == "ETF_FLOW" and not active:
+            continue
         if not active:
             if starts is None:
                 continue
@@ -1181,9 +1231,15 @@ def _pick_display_marks(
         and starts.astimezone(zone).date() == local_now.date()
         and (row[5] is None or row[5] >= -(post_minutes / 60.0))
     ]
-    if not today_rows:
+    flow_rows = [
+        row for row in rows
+        if row[0].kind == "ETF_FLOW" and row[1]
+    ]
+    if not today_rows and not flow_rows:
         return display
 
+    # Odd minutes stay reserved for the current BTC price. Even minutes carry
+    # today's macro appointments and, while fresh, the latest ETF-flow update.
     if local_now.minute % 2 == 1:
         display.pop("BTC", None)
         return display
@@ -1195,10 +1251,27 @@ def _pick_display_marks(
             row[0].title,
         )
     )
-    selected = today_rows[(local_now.minute // 2) % len(today_rows)]
-    display["BTC"] = _mark_from_row(
-        selected, now=now, timezone_name=timezone_name
+    flow_rows.sort(
+        key=lambda row: _parse_iso(row[0].starts_at)
+        or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
     )
+
+    selected = None
+    if flow_rows and today_rows:
+        if (local_now.minute // 2) % 2 == 0:
+            selected = flow_rows[0]
+        else:
+            selected = today_rows[(local_now.minute // 4) % len(today_rows)]
+    elif flow_rows:
+        selected = flow_rows[0]
+    elif today_rows:
+        selected = today_rows[(local_now.minute // 2) % len(today_rows)]
+
+    if selected is not None:
+        display["BTC"] = _mark_from_row(
+            selected, now=now, timezone_name=timezone_name
+        )
     return display
 
 
@@ -1269,6 +1342,7 @@ def load_critical_events(
         "census": str(section.get("census_schedule_url", "https://www.census.gov/economic-indicators/calendar-listview.html")),
         "ism": str(section.get("ism_schedule_url", "https://www.ismworld.org/supply-management-news-and-reports/reports/rob-report-calendar/")),
         "adp": str(section.get("adp_schedule_url", "https://adpemploymentreport.com/")),
+        "fred-adp": str(section.get("fred_adp_schedule_url", "https://fred.stlouisfed.org/releases/calendar?rid=194&view=year")),
         "michigan": str(section.get("michigan_schedule_url", "https://www.sca.isr.umich.edu/")),
         "confidence": str(section.get("consumer_confidence_url", "https://www.conference-board.org/topics/consumer-confidence/")),
         "fomc": str(section.get("fomc_calendar_url", "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm")),
@@ -1305,6 +1379,8 @@ def load_critical_events(
                 parsed = _parse_ism_schedule(value)
             elif name == "adp":
                 parsed = _parse_adp_schedule(value)
+            elif name == "fred-adp":
+                parsed = _parse_fred_adp_schedule(value)
             elif name == "michigan":
                 parsed = _parse_michigan_schedule(value)
             elif name == "confidence":
