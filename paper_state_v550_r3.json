@@ -5,9 +5,9 @@
   "cooldowns": {
     "SOL": 1786098742
   },
-  "last_checkpoint_at": "2026-08-07T10:31:24.466201+00:00",
-  "last_decision_key": "1786098660000",
-  "last_run_at": "2026-08-07T10:31:22.498944+00:00",
+  "last_checkpoint_at": "2026-08-07T10:32:12.340308+00:00",
+  "last_decision_key": "1786098720000",
+  "last_run_at": "2026-08-07T10:32:10.281289+00:00",
   "ledger": [
     {
       "action": {
@@ -496,97 +496,222 @@
         "trade_net_pnl_usd": -0.06090937186486509
       },
       "timestamp": "2026-08-07T10:31:22.498944+00:00"
+    },
+    {
+      "action": {
+        "alias": "XRP",
+        "direction": 1,
+        "full_close": false,
+        "is_add": false,
+        "kind": "OPEN",
+        "leverage": 20,
+        "margin_usd": 4.0,
+        "priority": 76.10525889795946,
+        "realized_pnl_usd": 0.0,
+        "reason": "E 52.7/59.7, Stop 0.140%",
+        "symbol": "XRP"
+      },
+      "balance_usd": 99.52786866,
+      "details": {
+        "base_size": 77.20971800115622,
+        "confidence": 59.704065003930985,
+        "entry_fee_usd": 0.0,
+        "entry_price": 1.036139,
+        "entry_roundtrip_cost_pct": 0.02760247418541417,
+        "entry_state": "WATCH_LONG",
+        "notional_usd": 80.0,
+        "rank": 1,
+        "readiness": 52.720865755565,
+        "setup": "E",
+        "stop_price": 1.0346884054,
+        "target_one_price": 1.0379792085,
+        "target_two_price": 1.040569556
+      },
+      "timestamp": "2026-08-07T10:32:10.281289+00:00"
     }
   ],
   "observations": {
     "ADA": {
-      "candle_ms": 1786098660000,
+      "candle_ms": 1786098720000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "APT": {
-      "candle_ms": 1786098660000,
+      "candle_ms": 1786098720000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "INVALID_DATA"
     },
     "AVAX": {
-      "candle_ms": 1786098660000,
+      "candle_ms": 1786098720000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "BTC": {
-      "candle_ms": 1786098660000,
+      "candle_ms": 1786098720000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "DOGE": {
-      "candle_ms": 1786098660000,
+      "candle_ms": 1786098720000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "ENA": {
-      "candle_ms": 1786098660000,
-      "entry_direction": 1,
-      "entry_streak": 6,
-      "state": "WATCH_LONG"
+      "candle_ms": 1786098720000,
+      "entry_direction": 0,
+      "entry_streak": 0,
+      "state": "NO_TRADE"
     },
     "HYPE": {
-      "candle_ms": 1786098660000,
+      "candle_ms": 1786098720000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "JUP": {
-      "candle_ms": 1786098660000,
+      "candle_ms": 1786098720000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "NEAR": {
-      "candle_ms": 1786098660000,
+      "candle_ms": 1786098720000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "ONDO": {
-      "candle_ms": 1786098660000,
+      "candle_ms": 1786098720000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "PUMP": {
-      "candle_ms": 1786098660000,
+      "candle_ms": 1786098720000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "SOL": {
-      "candle_ms": 1786098660000,
+      "candle_ms": 1786098720000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "TIA": {
-      "candle_ms": 1786098660000,
+      "candle_ms": 1786098720000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "INVALID_DATA"
     },
     "XRP": {
-      "candle_ms": 1786098660000,
-      "entry_direction": 0,
-      "entry_streak": 0,
-      "state": "NO_TRADE"
+      "candle_ms": 1786098720000,
+      "entry_direction": 1,
+      "entry_streak": 1,
+      "state": "WATCH_LONG"
     }
   },
   "package_revision": "r3",
-  "positions": {},
-  "run_count": 36,
+  "positions": {
+    "XRP": {
+      "alias": "XRP",
+      "base_size": 77.20971800115622,
+      "degrade_streak": 0,
+      "direction": 1,
+      "entry_confidence": 59.704065003930985,
+      "entry_features": {
+        "btc_context": 100.0,
+        "chase_warning": false,
+        "confidence": 59.704065003930985,
+        "cost_pct": 0.02760247418541417,
+        "data_quality": 100.0,
+        "direction": 1,
+        "early_approach_confirmed": true,
+        "early_boundary_distance_pct": 0.06887238352463187,
+        "early_clean_boundary_test": false,
+        "early_preview_only": true,
+        "event_kind": "NFP",
+        "event_risk": 45.0,
+        "execution_score": 72.3975258145856,
+        "extremity_available": true,
+        "extremity_confidence": 78.3966,
+        "extremity_intraday": 25.1894,
+        "extremity_return_1d": -2.4445,
+        "extremity_return_3d": -3.5693,
+        "extremity_return_7d": -4.3262,
+        "extremity_score": -5.3458,
+        "extremity_swing": -64.0159,
+        "funding_hourly_pct": 0.0096,
+        "funding_missing": false,
+        "leverage": 20,
+        "liquidity_score": 68.86579672211913,
+        "margin_usd": 4.0,
+        "probe_entry": true,
+        "rank": 1,
+        "readiness": 52.720865755565,
+        "rebound_participation": null,
+        "regime_available": true,
+        "regime_consistency": 1.0,
+        "regime_modifier": -5.4419,
+        "regime_score": -68.2239,
+        "relative_14d": -6.1569,
+        "relative_30d": -9.1523,
+        "relative_7d": -4.5319,
+        "relative_drift_60m": 0.0128,
+        "return_14d": -6.4245,
+        "return_30d": -6.7017,
+        "return_7d": -4.3262,
+        "reversal_new_extreme": false,
+        "reversal_relative_confirmed": true,
+        "reversal_relative_opposition": false,
+        "reversal_structural_reclaim": false,
+        "risk_usd": 0.13408197934833135,
+        "setup": "E",
+        "setup_age_minutes": null,
+        "setup_consumed_fraction": 0.0,
+        "setup_phase": "forming",
+        "setup_score": 57.40523824171028,
+        "stop_pct": 0.14,
+        "symbol": "XRP",
+        "tape_quality": 66.93416930716776,
+        "technical_stop_pct": null,
+        "technical_stop_price": null,
+        "volume_confirmation": 28.025795404399066
+      },
+      "entry_fee_remaining_usd": 0.0,
+      "entry_price": 1.036139,
+      "entry_rank": 1,
+      "entry_readiness": 52.720865755565,
+      "entry_roundtrip_cost_pct": 0.02760247418541417,
+      "entry_state": "WATCH_LONG",
+      "funding_accrued_usd": 0.0,
+      "funding_updated_at": "2026-08-07T10:32:10.281289+00:00",
+      "last_candle_ms": 1786098720000,
+      "last_scale_at": null,
+      "leverage": 20,
+      "margin_usd": 4.0,
+      "notional_usd": 80.0,
+      "opened_at": "2026-08-07T10:32:10.281289+00:00",
+      "probe_entry": true,
+      "realized_pnl_usd": 0.0,
+      "risk_usd": 0.13408197934833135,
+      "scale_count": 0,
+      "setup": "E",
+      "stop_pct": 0.14,
+      "stop_price": 1.0346884054,
+      "symbol": "XRP",
+      "taker_fee_pct": 0.0,
+      "target_one_price": 1.0379792085,
+      "target_one_taken": false,
+      "target_two_price": 1.040569556
+    }
+  },
+  "run_count": 37,
   "schema": 1,
   "starting_balance_usd": 100.0
 }
