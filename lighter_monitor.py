@@ -1,5 +1,5 @@
 # Package revision: r1
-"""Lighter-native early-swing/T/W signal engine for CF v5.4.0."""
+"""Lighter-native early-swing/T/W signal engine for CF v5.5.0."""
 from __future__ import annotations
 
 import json
@@ -23,7 +23,7 @@ from signal_streak_state import apply_signal_streaks
 from signal_transition_guard import apply_signal_transition_guard
 from signal_evaluator import update_signal_evaluation
 
-APP_VERSION = "5.4.0"
+APP_VERSION = "5.5.0"
 PACKAGE_REVISION = "r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
@@ -220,6 +220,7 @@ class Signal:
     event_source_name: str = ""
     event_source_url: str = ""
     event_starts_at: str | None = None
+    event_is_global: bool = False
     chase_warning: bool = False
     chase_blocked: bool = False
     windows: dict[int, Window] = field(default_factory=dict)
@@ -1299,10 +1300,7 @@ def _action_token(signal: Signal) -> str:
     if code not in {"NEAR", "TRY", "NOW"}:
         return code
     count = max(1, int(getattr(signal, "action_streak_count", 0) or 0))
-    suffix = str(count)
-    if code in {"TRY", "NOW"}:
-        return code + ("▲" if signal.direction >= 0 else "▼") + suffix
-    return code + suffix
+    return f"{code}{count}"
 
 
 def _market_bias(signal: Signal) -> float | None:
@@ -1360,11 +1358,23 @@ def _invalid_code(item: Signal) -> str:
     return "DATA!"
 
 
+WARNING_DISPLAY_PRIORITY = {
+    "K!": 90,   # execution cost can invalidate the trade immediately
+    "L!": 88,   # insufficient depth/liquidity
+    "CH!": 86,  # late/chased entry
+    "F!": 80,   # missing/adverse funding
+    "RS!": 78,  # relative reversal weakness
+    "R!": 72,   # opposing multi-week regime
+    "B!": 68,   # weak BTC context
+    "V!": 60,   # weak/uneven tape
+}
+
+
 def _warning_codes(item: Signal, config: Mapping[str, Any]) -> list[str]:
     if item.state == "INVALID_DATA":
         return [_invalid_code(item)]
     result: list[str] = []
-    if item.event_block_new and item.event_code:
+    if item.event_block_new and item.event_code and not item.event_is_global:
         result.append(item.event_code)
     if item.tape_quality < float(config.get("minimum_tape_quality", 68)) or item.volume_confirmation < 38:
         result.append("V!")
@@ -1387,7 +1397,11 @@ def _warning_codes(item: Signal, config: Mapping[str, Any]) -> list[str]:
         result.append("F!")
     elif _directional(item.funding_hourly_pct, _direction(item.direction)) > funding_watch:
         result.append("F!")
-    return list(dict.fromkeys(code for code in result if code))
+    unique = list(dict.fromkeys(code for code in result if code))
+    event_code = item.event_code if item.event_code in unique else None
+    ordinary = [code for code in unique if code != event_code]
+    ordinary.sort(key=lambda code: WARNING_DISPLAY_PRIORITY.get(code, 50), reverse=True)
+    return ([event_code] if event_code else []) + ordinary
 
 
 class LighterMonitor:
@@ -2389,6 +2403,7 @@ class LighterMonitor:
             )
             applicable = [mark for mark in (own_mark, global_mark) if mark is not None]
             if not applicable:
+                item.event_is_global = False
                 item.event_display_code = str(display_codes.get(item.symbol, "") or "")
                 continue
 
@@ -2396,6 +2411,7 @@ class LighterMonitor:
             # macro event is additionally applied as market-wide risk without
             # duplicating its label on every altcoin.
             primary = own_mark or global_mark
+            item.event_is_global = own_mark is None and global_mark is not None
             item.event_code = str(field(primary, "code", "") or "")
             display_default = item.event_code if own_mark is not None and not display_codes_provided else ""
             item.event_display_code = str(display_codes.get(item.symbol, display_default) or "")
@@ -2530,14 +2546,23 @@ class LighterMonitor:
             candidates,
             key=lambda item: (
                 float(item.event_priority + item.event_risk),
+                float(item.event_risk),
+                float(item.event_priority),
                 float(item.attention_score),
-                float(item.trade_readiness),
                 item.alias,
             ),
             reverse=True,
         )
+        top_score = float(ordered[0].event_priority + ordered[0].event_risk)
+        # Urgent/current events get the reserved slot first. Lower-priority news
+        # still rotates once the urgent band clears instead of competing equally.
+        urgent = [
+            item for item in ordered
+            if float(item.event_priority + item.event_risk) >= max(145.0, top_score - 8.0)
+        ]
+        pool = urgent if urgent else ordered
         minute_bucket = int(now.timestamp() // 60)
-        return ordered[minute_bucket % len(ordered)].symbol
+        return pool[minute_bucket % len(pool)].symbol
 
     def _summary_items(
         self,
@@ -2611,12 +2636,10 @@ class LighterMonitor:
             "GAP!", "BOOK!", "CND!",
         }
 
-        def summary_line(compact_clock: bool = False) -> str:
+        def summary_line() -> str:
             tokens: list[str] = []
             for item in summary:
                 event = event_codes.get(item.symbol, "")
-                if compact_clock:
-                    event = re.sub(r"@(\d{2}):\d{2}$", r"@\1", event)
                 warnings = [
                     code for code in warning_codes.get(item.symbol, [])
                     if not event or code not in event
@@ -2675,11 +2698,7 @@ class LighterMonitor:
                 and _discord_display_columns(value) <= header_max_columns
             )
 
-        compact_clock = False
-        header = summary_line(False)
-        if not header_fits(header):
-            compact_clock = True
-            header = summary_line(True)
+        header = summary_line()
 
         # Keep the BTC macro/event token and the deliberately reserved altcoin
         # event intact. Trim ordinary warning suffixes before hiding news.
@@ -2693,7 +2712,7 @@ class LighterMonitor:
                         continue
                     del codes[index]
                     changed = True
-                    header = summary_line(compact_clock)
+                    header = summary_line()
                     break
                 if header_fits(header):
                     break
@@ -2710,7 +2729,7 @@ class LighterMonitor:
                 if item.symbol in reserved_symbols or code in critical_warnings:
                     continue
                 event_codes[item.symbol] = ""
-                header = summary_line(compact_clock)
+                header = summary_line()
                 if header_fits(header):
                     break
 
@@ -2731,7 +2750,7 @@ class LighterMonitor:
                     if codes[index] not in data_warnings:
                         continue
                     del codes[index]
-                    header = summary_line(compact_clock)
+                    header = summary_line()
                     break
                 if header_fits(header):
                     break

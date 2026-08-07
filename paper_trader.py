@@ -1,5 +1,5 @@
 # Package revision: r1
-"""Deterministic, multi-candidate paper-trading engine for CF v5.4.0."""
+"""Deterministic, multi-candidate paper-trading engine for CF v5.5.0."""
 from __future__ import annotations
 
 import json
@@ -11,7 +11,7 @@ from typing import Any, Iterable, Mapping
 
 
 STATE_SCHEMA = 1
-APP_VERSION = "5.4.0"
+APP_VERSION = "5.5.0"
 ENTRY_STATES = {
     "BUY": 1, "SELL": -1,
     "STRONG_LONG": 1, "STRONG_SHORT": -1,
@@ -275,6 +275,13 @@ class PaperTrader:
             raise ValueError("paper_flip_try_min_streak ist ungültig")
         if not 0 <= int(self.config.get("paper_max_scale_count", 1)) <= 3:
             raise ValueError("paper_max_scale_count ist ungültig")
+        add_interval = int(self.config.get("paper_add_min_interval_minutes", 5))
+        if not 1 <= add_interval <= 30:
+            raise ValueError("paper_add_min_interval_minutes ist ungültig")
+        target_one_roi = float(self.config.get("paper_profit_target_one_roi_pct", 3.0))
+        target_two_roi = float(self.config.get("paper_profit_target_two_roi_pct", 8.0))
+        if not 2.0 <= target_one_roi < target_two_roi <= 10.0:
+            raise ValueError("Paper-Gewinnziele müssen zwischen 2% und 10% liegen")
         same_direction = int(self.config.get("paper_max_same_direction_positions", 2))
         if not 1 <= same_direction <= positions:
             raise ValueError("paper_max_same_direction_positions ist ungültig")
@@ -695,19 +702,25 @@ class PaperTrader:
         entry: float,
         direction: int,
         stop_pct: float,
+        leverage: int,
+        roundtrip_cost_pct: float = 0.0,
     ) -> tuple[float, float, float]:
         sign = 1 if direction > 0 else -1
         stop = entry * (1.0 - sign * stop_pct / 100.0)
-        target_one = entry * (
-            1.0 + sign * stop_pct * float(
-                self.config.get("paper_target_one_r", 1.15)
-            ) / 100.0
+        lev = max(1, int(leverage))
+        cost = max(0.0, float(roundtrip_cost_pct))
+        # Profit targets are expressed as leveraged paper ROI after the
+        # measured round-trip cost. This aims to realize gains quickly in the
+        # requested low-single to high-single digit range.
+        target_one_move = cost + (
+            float(self.config.get("paper_profit_target_one_roi_pct", 3.0)) / lev
         )
-        target_two = entry * (
-            1.0 + sign * stop_pct * float(
-                self.config.get("paper_target_two_r", 2.1)
-            ) / 100.0
+        target_two_move = max(
+            cost + float(self.config.get("paper_profit_target_two_roi_pct", 8.0)) / lev,
+            target_one_move * 1.25,
         )
+        target_one = entry * (1.0 + sign * target_one_move / 100.0)
+        target_two = entry * (1.0 + sign * target_two_move / 100.0)
         return stop, target_one, target_two
 
     def _open(
@@ -818,6 +831,8 @@ class PaperTrader:
             entry,
             direction,
             stop_pct,
+            leverage,
+            actual_roundtrip_cost,
         )
         entry_fee = notional * taker_fee_pct / 100.0
         self.state["balance_usd"] = round(
@@ -845,6 +860,7 @@ class PaperTrader:
             "target_one_taken": False,
             "degrade_streak": 0,
             "scale_count": 0,
+            "last_scale_at": None,
             "entry_fee_remaining_usd": entry_fee,
             "funding_accrued_usd": 0.0,
             "realized_pnl_usd": 0.0,
@@ -1294,6 +1310,13 @@ class PaperTrader:
         ):
             return
         observation = self.state.get("observations", {}).get(signal.symbol, {})
+        add_interval = int(self.config.get("paper_add_min_interval_minutes", 5))
+        last_add = _parse_time(
+            position.get("last_scale_at") or position.get("opened_at"),
+            self.now,
+        )
+        if (self.now - last_add).total_seconds() < add_interval * 60:
+            return
         streak_needed = 1 if signal.state in IMMEDIATE_STATES else 2
         if int(observation.get("entry_streak", 0)) < streak_needed:
             return
@@ -1346,16 +1369,24 @@ class PaperTrader:
         position["base_size"] = round(new_base, 14)
         position["entry_price"] = weighted_entry
         position["entry_fee_remaining_usd"] = round(_f(position.get("entry_fee_remaining_usd")) + fee, 10)
-        candidate_stop, candidate_one, candidate_two = self._price_levels(weighted_entry, int(position["direction"]), stop_pct)
+        candidate_stop, candidate_one, candidate_two = self._price_levels(
+            weighted_entry,
+            int(position["direction"]),
+            stop_pct,
+            leverage,
+            actual_roundtrip_cost,
+        )
         if int(position["direction"]) > 0:
             position["stop_price"] = max(_f(position["stop_price"]), candidate_stop)
-            position["target_one_price"] = max(_f(position["target_one_price"]), candidate_one)
-            position["target_two_price"] = max(_f(position["target_two_price"]), candidate_two)
         else:
             position["stop_price"] = min(_f(position["stop_price"]), candidate_stop)
-            position["target_one_price"] = min(_f(position["target_one_price"]), candidate_one)
-            position["target_two_price"] = min(_f(position["target_two_price"]), candidate_two)
+        # Re-anchor profit targets to the new weighted entry after a slow add.
+        # This preserves the configured leveraged ROI instead of pushing the
+        # target farther away each time the position is scaled.
+        position["target_one_price"] = candidate_one
+        position["target_two_price"] = candidate_two
         position["scale_count"] = int(position.get("scale_count", 0)) + 1
+        position["last_scale_at"] = _iso(self.now)
         position["probe_entry"] = False
         position["risk_usd"] = round(_f(position.get("risk_usd")) + added_risk, 10)
         reason = "Probe bestätigt" if upgrade else "zweite starke Bestätigung"
@@ -1402,7 +1433,7 @@ class PaperTrader:
         for symbol, position in list((self.state.get("positions") or {}).items()):
             reason: str | None = None
             if symbol not in allowed_symbols:
-                reason = "Symbol nicht im v5.4.0-Kandidatenpool"
+                reason = "Symbol nicht im v5.5.0-Kandidatenpool"
             if reason is None:
                 continue
             signal = self.signals.get(symbol)

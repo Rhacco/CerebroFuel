@@ -1,38 +1,38 @@
 <!-- Package revision: r1 -->
-# Crypto Signal Monitor v5.4.0
+# Crypto Signal Monitor v5.5.0
 
 ## Pool
 `BTC ETH SOL HYPE ENA ZEC PUMP AAVE ADA AVAX JUP APT NEAR ONDO SUI TIA`
 
 ## Anzeige
-Oben stehen drei auffällige Altcoins; BTC bleibt rechts. Warnungen und Ereignisse stehen direkt am Symbol. BTC wechselt zwischen aktuellem Kurs, heutigen US-Terminen und frischen ETF-Zuflussdaten.
+Oben: drei auffällige Altcoins, BTC immer rechts. Warnungen/Ereignisse stehen direkt am betroffenen Coin; BTC wechselt kompakt zwischen Kurs, heutigen US-Makroterminen und frischen ETF-Flows.
 
-Unten: `Druck · 5/20/60 Minuten · Coin-Score · Aktion · OB/OS · Setup`
+Unten: `Trenddruck · 5/20/60 · Score · Aktion/Zähler · OB/OS · Setup`
 
-## Farben und Aktionen
-- `🟣▲/▼` NOW-Freigabe
-- `🟢▲` starker, `🔵▲` leichter Long-Druck
+## Farben & Signale
+- `🟣▲/▼` aktive NOW-Freigabe
+- `🟢▲` starker / `🔵▲` leichter Long-Druck
 - `🟡 ▷  ` beruhigt/seitwärts
-- `🟠▼` leichter, `🔴▼` starker Short-Druck
-- `NOW▲3/NOW▼3` Freigabe · `TRY▲2/TRY▼2` Probe · `NEAR3` Vor-Signal · `WAIT` keine Freigabe
-- `E` früher Impuls · `T` Trendfortsetzung · `W` bestätigte Umkehr · `W?` unbestätigte Umkehr · `a0–a9` Alter
-- `OB03` obere, `OS01` untere Überdehnung
+- `🟠▼` leichter / `🔴▼` starker Short-Druck
+- `NEAR3` Vor-Signal · `TRY2` Probe · `NOW4` Freigabe · `WAIT` keine Freigabe
+- `E` früher Impuls · `T` Trendfortsetzung · `W` bestätigte Umkehr · `W?` noch unbestätigte Umkehr · `a0–a9` Setup-Alter
+- `OB03` obere / `OS01` untere Überdehnung
 
-## Coin-Ereignisse und Warnungen
+## Warnungen & Coin-Ereignisse
 - `SEC!` Sicherheitsvorfall · `NET!` Netz-/Dienststörung · `SHK!` ungewöhnlicher Marktschock
-- `N!` relevante News · `UPG` Upgrade · `GOV` Abstimmung/Entscheidung · `MNT` Wartung
-- `ETF` ETF-/Regulierungstermin · `SUP` Angebotsänderung · `U!` Unlock heute · `U5D` Unlock in fünf Tagen
-- `V!` schwaches Volumen/Tape · `L!` geringe Liquidität · `K!` hohe Kosten
+- `N!` relevante News · `UPG` Upgrade · `GOV` Governance · `MNT` Wartung · `SUP` Angebotsänderung
+- `ETF` ETF-/Regulierungsereignis · `U!` Unlock heute · `U5D` Unlock in fünf Tagen
+- `V!` schwaches Tape/Volumen · `L!` geringe Liquidität · `K!` hohe Ausführungskosten
 - `B!` schwacher BTC-Kontext · `R!` ungünstiges Mehrwochen-Regime · `RS!` relative Umkehrschwäche
 - `CH!` Bewegung weit gelaufen · `F!` Funding fehlt/ungünstig
 - `DATA!/STALE!/GAP!/BOOK!/CND!` Daten-, Aktualitäts-, Kerzen- oder Orderbuchproblem
 
-## BTC-Meldungen
-- `E+123M/E-67M` neu gemeldeter Nettozufluss/-abfluss der US-Spot-Bitcoin-ETFs in Mio. USD
-- `FED` US-Zinsentscheid/FOMC · `BB` Beige Book der US-Notenbank
-- `CPI` Verbraucherpreise · `PPI` Erzeugerpreise · `PCE` bevorzugtes Inflationsmaß der Fed · `IMP` Importpreise
-- `NFP` offizieller US-Arbeitsmarktbericht · `ADP` private Beschäftigung · `JOLTS` offene Stellen/Kündigungen · `CLM` Erstanträge auf Arbeitslosenhilfe · `ECI` Arbeitskosten
-- `GDP` Bruttoinlandsprodukt · `PROD` Produktivität · `TRD` Handelsbilanz
+## BTC-News
+- `E+123M/E-67M` neuer US-Spot-Bitcoin-ETF-Nettozufluss/-abfluss in Mio. USD
+- `FED` FOMC/Zinsentscheid · `BB` Beige Book der Fed
+- `CPI` Verbraucherpreise · `PPI` Erzeugerpreise · `PCE` Fed-Inflationsmaß · `IMP` Import-/Exportpreise
+- `NFP` offizieller US-Arbeitsmarktbericht · `ADP` privater Beschäftigungsbericht · `JOLTS` offene Stellen/Kündigungen · `CLM` Erstanträge Arbeitslosenhilfe · `ECI` Arbeitskostenindex
+- `GDP` Bruttoinlandsprodukt · `PROD` Produktivität/Arbeitskosten · `TRD` Handelsbilanz
 - `RET` Einzelhandel · `DUR` langlebige Güter · `HOU` Baubeginne/Baugenehmigungen · `NHS` Neubauverkäufe
-- `FAC` Industrieaufträge · `CON` Bauausgaben · `INV` Unternehmenslager · `AEI` vorläufige Wirtschaftsindikatoren
+- `FAC` Fabrikaufträge · `CON` Bauausgaben · `INV` Unternehmenslager · `AEI` vorläufige Handels-/Lagerindikatoren
 - `ISMM/ISMS` ISM-Einkaufsmanager Industrie/Dienstleistungen · `CONF` Conference-Board-Verbrauchervertrauen · `MICH` Michigan-Verbraucherstimmung/Inflationserwartungen

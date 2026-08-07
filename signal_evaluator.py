@@ -1,5 +1,5 @@
 # Package revision: r1
-"""Rolling NEAR/TRY/NOW outcome evaluation for CF v5.4.0."""
+"""Rolling NEAR/TRY/NOW outcome evaluation for CF v5.5.0."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-STATE_VERSION = "signal-evaluation-v540-r1"
+STATE_VERSION = "signal-evaluation-v550-r1"
 TRACKED_ACTIONS = {"NEAR", "TRY", "NOW"}
 HORIZONS = (3, 5, 10, 20)
 RECENT_LIMIT = 200

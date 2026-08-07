@@ -1,5 +1,5 @@
 # Package revision: r1
-name: Crypto Signal Monitor v5.4.0
+name: Crypto Signal Monitor v5.5.0
 on:
   workflow_dispatch:
     inputs:
@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: crypto-signal-monitor-v540
+  group: crypto-signal-monitor-v550
   cancel-in-progress: false
 
 jobs:
@@ -39,11 +39,11 @@ jobs:
             output/signal_streak_state.json
             output/signal_evaluation_state.json
             output/parameter_review.json
-          key: runtime-state-v540-${{ github.run_id }}
+          key: runtime-state-v550-${{ github.run_id }}
           # actions/cache accepts at most ten keys total, including `key`.
-          # Keep this fresh v5.4 state independent and use one restore prefix.
+          # Keep this fresh v5.5 state independent and use one restore prefix.
           restore-keys: |
-            runtime-state-v540-
+            runtime-state-v550-
       - name: Paper-State wiederherstellen
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -73,4 +73,4 @@ jobs:
             output/signal_streak_state.json
             output/signal_evaluation_state.json
             output/parameter_review.json
-          key: runtime-state-v540-${{ github.run_id }}
+          key: runtime-state-v550-${{ github.run_id }}

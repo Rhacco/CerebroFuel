@@ -1,17 +1,20 @@
 // Package revision: r1
-// Crypto event feed and GitHub scheduler for v5.4.0.
+// Crypto event feed and GitHub scheduler for v5.5.0.
 
-const APP_VERSION = "5.4.0";
+const APP_VERSION = "5.5.0";
 const PACKAGE_REVISION = "r1";
-const STORE_KEY = "crypto-events-v540";
-const CACHE_URL = "https://crypto-events.internal/v5.4.0/events.json";
+const STORE_KEY = "crypto-events-v550";
+const CACHE_URL = "https://crypto-events.internal/v5.5.0/events.json";
 const ACTIVE_RETENTION_MS = 25 * 60 * 1000;
 const STATUS_GRACE_MS = 10 * 60 * 1000;
+const STATUS_BATCH_COUNT = 2;
+const KV_HEARTBEAT_MS = 10 * 60 * 1000;
 const NEWS_REFRESH_MS = 5 * 60 * 1000;
 const ETF_REFRESH_MS = 5 * 60 * 1000;
 const ETF_ACTIVE_RETENTION_MS = 10 * 60 * 1000;
 const ETF_SOURCE_URL = "https://farside.co.uk/btc/";
-const UNLOCK_REFRESH_MS = 6 * 60 * 60 * 1000;
+const UNLOCK_REFRESH_MS = 60 * 60 * 1000;
+const UNLOCK_BATCH_SIZE = 4;
 const SEEN_RETENTION_MS = 48 * 60 * 60 * 1000;
 
 const PROJECTS = Object.freeze({
@@ -171,10 +174,20 @@ async function refreshEventFeed(env, now) {
   const diagnostics = [];
   const fresh = [];
 
-  const statusResults = await Promise.allSettled([
-    ...STATUSPAGE_SOURCES.map(([symbol, url, name, collection]) => fetchStatuspage(symbol, url, name, collection, now)),
-    ...HTML_STATUS_SOURCES.map(([symbol, url, healthy, name]) => fetchHtmlStatus(symbol, url, healthy, name, now)),
-  ]);
+  const allStatusSources = [
+    ...STATUSPAGE_SOURCES.map((row) => ["statuspage", ...row]),
+    ...HTML_STATUS_SOURCES.map((row) => ["html", ...row]),
+  ];
+  const statusBatchIndex = Math.floor(now.getTime() / 60_000) % STATUS_BATCH_COUNT;
+  const statusBatch = allStatusSources.filter((_, index) => index % STATUS_BATCH_COUNT === statusBatchIndex);
+  const statusResults = await Promise.allSettled(statusBatch.map((row) => {
+    if (row[0] === "statuspage") {
+      const [, symbol, url, name, collection] = row;
+      return fetchStatuspage(symbol, url, name, collection, now);
+    }
+    const [, symbol, url, healthy, name] = row;
+    return fetchHtmlStatus(symbol, url, healthy, name, now);
+  }));
   let statusOk = 0;
   for (const result of statusResults) {
     if (result.status === "fulfilled") {
@@ -266,13 +279,19 @@ async function refreshEventFeed(env, now) {
 
   const lastUnlock = parseMillis(previousMeta.unlocks_checked_at);
   let unlocksCheckedAt = previousMeta.unlocks_checked_at || null;
+  let unlockBatch = Number(previousMeta.unlock_batch || 0);
   let unlockOk = Number(previousMeta?.source_health?.unlock_ok || 0);
   let unlockTotal = Number(previousMeta?.source_health?.unlock_total || 0);
   if (!lastUnlock || now.getTime() - lastUnlock >= UNLOCK_REFRESH_MS) {
+    const unlockSources = Object.entries(PROJECTS).filter(([, project]) => project.unlockSlug);
+    const unlockBatchCount = Math.max(1, Math.ceil(unlockSources.length / UNLOCK_BATCH_SIZE));
+    unlockBatch = Math.floor(now.getTime() / UNLOCK_REFRESH_MS) % unlockBatchCount;
+    const rows = unlockSources.slice(
+      unlockBatch * UNLOCK_BATCH_SIZE,
+      unlockBatch * UNLOCK_BATCH_SIZE + UNLOCK_BATCH_SIZE,
+    );
     const unlockResults = await Promise.allSettled(
-      Object.entries(PROJECTS)
-        .filter(([, project]) => project.unlockSlug)
-        .map(([symbol, project]) => fetchTokenomistUnlock(symbol, project.unlockSlug, now)),
+      rows.map(([symbol, project]) => fetchTokenomistUnlock(symbol, project.unlockSlug, now)),
     );
     unlockOk = 0;
     unlockTotal = unlockResults.length;
@@ -298,7 +317,11 @@ async function refreshEventFeed(env, now) {
       etf_last_date: etfLastDate || null,
       etf_last_total_m: etfLastTotal,
       unlocks_checked_at: unlocksCheckedAt,
+      unlock_batch: unlockBatch,
       github_batch: batchIndex,
+      status_batch: statusBatchIndex,
+      kv_written_at: previousMeta.kv_written_at || null,
+      kv_signature: previousMeta.kv_signature || null,
       source_health: {
         status_ok: statusOk,
         status_total: statusResults.length,
@@ -324,7 +347,8 @@ function emptyFeed(now) {
     events: [],
     diagnostics: [],
     meta: {
-      news_checked_at: null, etf_checked_at: null, etf_last_date: null, etf_last_total_m: null, unlocks_checked_at: null, github_batch: 0,
+      news_checked_at: null, etf_checked_at: null, etf_last_date: null, etf_last_total_m: null, unlocks_checked_at: null, unlock_batch: 0, github_batch: 0, status_batch: 0,
+      kv_written_at: null, kv_signature: null,
       source_health: { status_ok: 0, status_total: 0, news_ok: 0, news_total: 0, etf_ok: 0, etf_total: 1, release_ok: 0, release_total: 0, unlock_ok: 0, unlock_total: 0 },
       seen_events: {},
     },
@@ -752,14 +776,6 @@ async function fetchJson(url) {
 
 async function readStoredFeed(env) {
   try {
-    if (env.EVENTS_KV?.get) {
-      const value = await env.EVENTS_KV.get(STORE_KEY, { type: "json" });
-      if (isObject(value) && Array.isArray(value.events)) return value;
-    }
-  } catch (error) {
-    console.warn(`KV read failed: ${shortError(error)}`);
-  }
-  try {
     const response = await caches.default.match(new Request(CACHE_URL));
     if (response) {
       const value = await response.json();
@@ -768,20 +784,76 @@ async function readStoredFeed(env) {
   } catch (error) {
     console.warn(`Cache read failed: ${shortError(error)}`);
   }
-  return null;
+  if (!env.EVENTS_KV?.get) return null;
+  try {
+    const value = await env.EVENTS_KV.get(STORE_KEY, { type: "json" });
+    return isObject(value) && Array.isArray(value.events) ? value : null;
+  } catch (error) {
+    console.warn(`KV read failed: ${shortError(error)}`);
+    return null;
+  }
+}
+
+function durableFeedSignature(feed) {
+  const rows = Array.isArray(feed?.events) ? feed.events : [];
+  const stableEvents = rows.map((event) => ({
+    symbol: event?.symbol || "",
+    kind: event?.kind || "",
+    title: event?.title || "",
+    starts_at: event?.starts_at || null,
+    ends_at: event?.ends_at || null,
+    active: Boolean(event?.active),
+    source_url: event?.source_url || "",
+  })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  const meta = isObject(feed?.meta) ? feed.meta : {};
+  const text = JSON.stringify({
+    events: stableEvents,
+    etf_last_date: meta.etf_last_date || null,
+    etf_last_total_m: Number.isFinite(Number(meta.etf_last_total_m)) ? Number(meta.etf_last_total_m) : null,
+  });
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
 async function writeStoredFeed(env, feed) {
+  feed.meta = isObject(feed.meta) ? feed.meta : {};
+  const signature = durableFeedSignature(feed);
+  const previousSignature = String(feed.meta.kv_signature || "");
+  const previousWrite = parseMillis(feed.meta.kv_written_at);
+  const generatedAt = parseMillis(feed.generated_at) || Date.now();
+  const kvDue = !previousWrite
+    || signature !== previousSignature
+    || generatedAt - previousWrite >= KV_HEARTBEAT_MS;
+
+  if (kvDue) {
+    feed.meta.kv_signature = signature;
+    feed.meta.kv_written_at = feed.generated_at || new Date(generatedAt).toISOString();
+  }
   const body = JSON.stringify(feed);
-  const jobs = [];
-  if (env.EVENTS_KV?.put) jobs.push(env.EVENTS_KV.put(STORE_KEY, body));
-  jobs.push(caches.default.put(
-    new Request(CACHE_URL),
-    new Response(body, { headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=120" } }),
-  ));
-  const results = await Promise.allSettled(jobs);
-  const failed = results.filter((result) => result.status === "rejected");
-  if (failed.length === results.length) throw new Error("Event feed could not be persisted");
+  let cacheOk = false;
+  let kvOk = Boolean(env.EVENTS_KV?.put) && !kvDue;
+  try {
+    await caches.default.put(
+      new Request(CACHE_URL),
+      new Response(body, { headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=120" } }),
+    );
+    cacheOk = true;
+  } catch (error) {
+    console.warn(`Cache write failed: ${shortError(error)}`);
+  }
+  if (kvDue && env.EVENTS_KV?.put) {
+    try {
+      await env.EVENTS_KV.put(STORE_KEY, body);
+      kvOk = true;
+    } catch (error) {
+      console.warn(`KV write failed: ${shortError(error)}`);
+    }
+  }
+  if (!cacheOk && !kvOk) throw new Error("Event feed could not be persisted");
 }
 
 function githubHeaders(env) {

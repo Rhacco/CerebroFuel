@@ -1,5 +1,5 @@
 # Package revision: r1
-"""Verified scheduled and externally confirmed event context for CF v5.4.0.
+"""Verified scheduled and externally confirmed event context for CF v5.5.0.
 
 Automatic facts come only from official public schedules/status pages. Project-
 specific events such as token unlocks are accepted only from a local or remote
@@ -25,13 +25,15 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-CACHE_VERSION = "event-cache-v540-r1"
-USER_AGENT = "crypto-signal-monitor/5.4.0"
+CACHE_VERSION = "event-cache-v550-r1"
+USER_AGENT = "crypto-signal-monitor/5.5.0"
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4,
     "may": 5, "june": 6, "july": 7, "august": 8,
     "september": 9, "october": 10, "november": 11, "december": 12,
 }
+
+
 US_MACRO_KINDS = {
     "FOMC", "BEIGE", "CPI", "NFP", "PPI", "JOLTS", "ECI",
     "PRODUCTIVITY", "IMPORT_PRICES", "GDP", "PCE", "TRADE",
@@ -277,20 +279,20 @@ def _unfold_ical(text: str) -> list[str]:
 
 
 def _ical_datetime(key: str, value: str) -> tuple[datetime | None, bool]:
-    params = key.split(";")[1:]
-    tzid = None
-    date_only = False
-    for param in params:
-        if param.upper().startswith("TZID="):
-            tzid = param.split("=", 1)[1]
-        if param.upper() == "VALUE=DATE":
-            date_only = True
+    # This parser is intentionally BLS-specific. BLS states that all wall
+    # times in its release calendar are Eastern Time, while the ICS may carry
+    # Outlook/Windows TZIDs that Python's IANA-only ZoneInfo cannot resolve.
+    # Respect an explicit trailing Z; otherwise interpret the wall clock as ET.
+    date_only = any(
+        param.upper() == "VALUE=DATE"
+        for param in key.split(";")[1:]
+    )
     raw = value.strip()
+    eastern = ZoneInfo("America/New_York")
     if date_only or re.fullmatch(r"\d{8}", raw):
         try:
-            parsed = datetime.strptime(raw[:8], "%Y%m%d").replace(tzinfo=ZoneInfo(tzid or "America/New_York"))
-            return parsed, False
-        except (ValueError, KeyError):
+            return datetime.strptime(raw[:8], "%Y%m%d").replace(tzinfo=eastern), False
+        except ValueError:
             return None, False
     utc = raw.endswith("Z")
     raw = raw[:-1] if utc else raw
@@ -299,14 +301,7 @@ def _ical_datetime(key: str, value: str) -> tuple[datetime | None, bool]:
         parsed = datetime.strptime(raw, fmt)
     except ValueError:
         return None, True
-    if utc:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    else:
-        try:
-            parsed = parsed.replace(tzinfo=ZoneInfo(tzid or "America/New_York"))
-        except KeyError:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed, True
+    return parsed.replace(tzinfo=timezone.utc if utc else eastern), True
 
 
 def _macro_kind_from_bls_summary(summary: str) -> str:
@@ -357,6 +352,45 @@ def _parse_bls_ics(text: str) -> list[CriticalEvent]:
             current[key] = value
     return events
 
+
+
+def _parse_bls_html_schedule(text: str) -> list[CriticalEvent]:
+    """Secondary official BLS schedule parser used to cross-cover the ICS feed."""
+    flat = _html_text(text)
+    weekdays = r"Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday"
+    months = r"January|February|March|April|May|June|July|August|September|October|November|December"
+    pattern = re.compile(
+        rf"(?:{weekdays}),?\s+({months})\s+(\d{{1,2}}),\s+(20\d{{2}})\s+"
+        rf"(\d{{1,2}}:\d{{2}})\s+(AM|PM)\s+(.+?)"
+        rf"(?=\s+(?:{weekdays}),?\s+(?:{months})\s+\d{{1,2}},\s+20\d{{2}}\s+\d{{1,2}}:\d{{2}}\s+(?:AM|PM)|\s+NOTE:|$)",
+        flags=re.IGNORECASE,
+    )
+    eastern = ZoneInfo("America/New_York")
+    result: list[CriticalEvent] = []
+    for month_name, day_text, year_text, clock, ampm, title in pattern.findall(flat):
+        title = re.sub(r"\s+", " ", title).strip(" |-.")
+        kind = _macro_kind_from_bls_summary(title)
+        if not kind:
+            continue
+        try:
+            local = datetime.strptime(
+                f"{year_text}-{MONTHS[month_name.lower()]:02d}-{int(day_text):02d} {clock} {ampm.upper()}",
+                "%Y-%m-%d %I:%M %p",
+            ).replace(tzinfo=eastern)
+        except (ValueError, KeyError):
+            continue
+        result.append(CriticalEvent(
+            symbol="BTC",
+            kind=kind,
+            title=title,
+            starts_at=_iso(local),
+            ends_at=None,
+            exact_time=True,
+            priority=DEFAULT_PRIORITIES[kind],
+            source_name="U.S. Bureau of Labor Statistics",
+            source_url=f"https://www.bls.gov/schedule/{local.year}/{local.month:02d}_sched_list.htm",
+        ))
+    return result
 
 def _html_text(text: str) -> str:
     parser = _TextParser()
@@ -933,7 +967,10 @@ def _verified_feed_events(
 def _dedupe(events: Iterable[CriticalEvent]) -> list[CriticalEvent]:
     best: dict[tuple[str, str, str | None, str], CriticalEvent] = {}
     for event in events:
-        key = (event.symbol, event.kind, event.starts_at, event.title.lower())
+        # Official macro calendars can overlap (for example BLS ICS + BLS HTML
+        # or ADP + FRED). Same release kind at the same instant is one event.
+        title_key = "" if event.kind in US_MACRO_KINDS else event.title.lower()
+        key = (event.symbol, event.kind, event.starts_at, title_key)
         old = best.get(key)
         if old is None or event.priority > old.priority:
             best[key] = event
@@ -1338,6 +1375,8 @@ def load_critical_events(
     fed_months = {(now.year, now.month), (next_month.year, next_month.month)}
     sources: dict[str, str] = {
         "bls": str(section.get("bls_ics_url", "https://www.bls.gov/schedule/news_release/bls.ics")),
+        f"blshtml-{now.year}-{now.month}": f"https://www.bls.gov/schedule/{now.year}/{now.month:02d}_sched_list.htm",
+        f"blshtml-{next_month.year}-{next_month.month}": f"https://www.bls.gov/schedule/{next_month.year}/{next_month.month:02d}_sched_list.htm",
         "bea": str(section.get("bea_schedule_url", "https://www.bea.gov/news/schedule")),
         "census": str(section.get("census_schedule_url", "https://www.census.gov/economic-indicators/calendar-listview.html")),
         "ism": str(section.get("ism_schedule_url", "https://www.ismworld.org/supply-management-news-and-reports/reports/rob-report-calendar/")),
@@ -1351,9 +1390,9 @@ def load_critical_events(
         sources[f"fedmonth-{year}-{month}"] = (
             f"https://www.federalreserve.gov/newsevents/{year}-{calendar.month_name[month].lower()}.htm"
         )
-    # Remove old monthly Fed pages once they are no longer current/next month.
+    # Remove monthly pages once they are no longer current/next month.
     for source_id in list(schedule_by_source):
-        if source_id.startswith("fedmonth-") and source_id not in sources:
+        if (source_id.startswith("fedmonth-") or source_id.startswith("blshtml-")) and source_id not in sources:
             schedule_by_source.pop(source_id, None)
             source_fetched_at.pop(source_id, None)
 
@@ -1371,6 +1410,8 @@ def load_critical_events(
         for name, value in fetched.items():
             if name == "bls":
                 parsed = _parse_bls_ics(value)
+            elif name.startswith("blshtml-"):
+                parsed = _parse_bls_html_schedule(value)
             elif name == "bea":
                 parsed = _parse_bea_schedule(value, now.year)
             elif name == "census":
