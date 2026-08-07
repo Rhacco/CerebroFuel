@@ -1,4 +1,4 @@
-# Package revision: r1
+# r3
 """Strict restore/checkpoint store for the independent v5.5.0 paper state."""
 from __future__ import annotations
 
@@ -15,9 +15,10 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 API = "https://api.github.com"
-BRANCH = "paper-state-v550"
-REMOTE_FILE = "paper_state_v550.json"
+BRANCH = "paper-state-v550-r3"
+REMOTE_FILE = "paper_state_v550_r3.json"
 APP_VERSION = "5.5.0"
+PACKAGE_REVISION = "r3"
 STATE_SCHEMA = 1
 
 
@@ -71,8 +72,8 @@ def _validate_state(raw: Any) -> dict[str, Any]:
         raise RuntimeError("Paper-State-Schema ist ungültig") from exc
     if schema != STATE_SCHEMA:
         raise RuntimeError("Paper-State-Schema ist inkompatibel")
-    if raw.get("app_version") != APP_VERSION:
-        raise RuntimeError("Paper-State gehört nicht zu v5.5.0")
+    if raw.get("app_version") != APP_VERSION or raw.get("package_revision") != PACKAGE_REVISION:
+        raise RuntimeError("Paper-State gehört nicht zu v5.5.0 r3")
     if not isinstance(raw.get("positions"), dict):
         raise RuntimeError("Paper-State-Positionen sind ungültig")
     try:

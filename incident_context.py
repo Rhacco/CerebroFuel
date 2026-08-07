@@ -1,4 +1,4 @@
-# Package revision: r1
+# r3
 """Persistent spontaneous-incident detection for CF v5.5.0.
 
 Confirmed external SECURITY/NETWORK events and strict Lighter market shocks use
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-STATE_VERSION = "incident-state-v550-r1"
+STATE_VERSION = "incident-state-v550-r3"
 
 
 @dataclass(frozen=True)
@@ -485,21 +485,34 @@ def detect_spontaneous_incidents(
         ):
             continue
         active_records.append(record)
+        kind = str(record.get("kind") or "MARKET_SHOCK")
+        confirmed = bool(record.get("confirmed"))
+        # A market-only SHK! remains visible for the full header window, but
+        # once the acute phase has elapsed and the shock is no longer firing,
+        # a structurally confirmed rebound/turnaround may be evaluated again.
+        # Confirmed SECURITY/NETWORK incidents remain hard blocks.
+        market_shock = kind == "MARKET_SHOCK" and not confirmed
+        acute_market_shock = market_shock and (still_triggering or now <= priority_until)
+        hard_active = acute_market_shock if market_shock else True
+        hard_block = acute_market_shock if market_shock else True
+        residual_risk = int(record.get("risk") or 100)
+        if market_shock and not hard_active:
+            residual_risk = min(residual_risk, 45)
         mark = IncidentMark(
             symbol=symbol,
             code=str(record.get("code") or "SHK!"),
-            kind=str(record.get("kind") or "MARKET_SHOCK"),
+            kind=kind,
             title=str(record.get("title") or "Spontaneous incident"),
             starts_at=_iso(detected_at),
             ends_at=_iso(header_until),
             priority=int(record.get("priority") or 98),
-            risk=int(record.get("risk") or 100),
-            active=True,
-            block_new=True,
-            leverage_cap=1,
+            risk=residual_risk,
+            active=hard_active,
+            block_new=hard_block,
+            leverage_cap=1 if hard_block else None,
             source_name=str(record.get("source_name") or "Lighter market evidence"),
             source_url=str(record.get("source_url") or lighter_base_url),
-            confirmed=bool(record.get("confirmed")),
+            confirmed=confirmed,
             detected_at=_iso(detected_at),
             priority_until=_iso(priority_until),
             header_until=_iso(header_until),

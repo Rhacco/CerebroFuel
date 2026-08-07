@@ -1,10 +1,10 @@
-// Package revision: r1
+// r3
 // Crypto event feed and GitHub scheduler for v5.5.0.
 
 const APP_VERSION = "5.5.0";
-const PACKAGE_REVISION = "r1";
-const STORE_KEY = "crypto-events-v550";
-const CACHE_URL = "https://crypto-events.internal/v5.5.0/events.json";
+const PACKAGE_REVISION = "r3";
+const STORE_KEY = "crypto-events-v550-r3";
+const CACHE_URL = "https://crypto-events.internal/v5.5.0-r3/events.json";
 const ACTIVE_RETENTION_MS = 25 * 60 * 1000;
 const STATUS_GRACE_MS = 10 * 60 * 1000;
 const STATUS_BATCH_COUNT = 2;
@@ -22,14 +22,9 @@ const PROJECTS = Object.freeze({
     domains: ["bitcoin.org", "bitcoincore.org"],
     github: ["bitcoin/bitcoin"],
   },
-  ETH: {
-    domains: ["ethereum.org"],
-    github: ["ethereum/go-ethereum", "ethereum/consensus-specs"],
-  },
   SOL: {
     domains: ["solana.com"],
     github: ["anza-xyz/agave"],
-    unlockSlug: "solana",
   },
   HYPE: {
     domains: ["hyperfoundation.org", "hyperliquid.xyz"],
@@ -39,33 +34,17 @@ const PROJECTS = Object.freeze({
     domains: ["ethena.fi", "ethenafoundation.com"],
     unlockSlug: "ethena",
   },
-  ZEC: {
-    domains: ["z.cash", "electriccoin.co"],
-    github: ["zcash/zcash"],
-    unlockSlug: "zcash",
-  },
   PUMP: {
     domains: ["pump.fun"],
-    unlockSlug: "pump-fun",
-  },
-  AAVE: {
-    domains: ["aave.com", "governance.aave.com"],
-    github: ["aave/aave-v3-core"],
-    unlockSlug: "aave",
   },
   ADA: {
     domains: ["cardano.org", "essentialcardano.io", "iohk.io"],
     github: ["IntersectMBO/cardano-node"],
-    unlockSlug: "cardano",
   },
   AVAX: {
     domains: ["avax.network"],
     github: ["ava-labs/avalanchego"],
-    unlockSlug: "avalanche",
-  },
-  JUP: {
-    domains: ["jup.ag"],
-    unlockSlug: "jupiter-exchange-solana",
+    unlockSlug: "avalanche-2",
   },
   APT: {
     domains: ["aptosfoundation.org", "aptoslabs.com", "aptos.dev"],
@@ -75,21 +54,25 @@ const PROJECTS = Object.freeze({
   NEAR: {
     domains: ["near.org", "nearfoundation.org"],
     github: ["near/nearcore"],
-    unlockSlug: "near",
+  },
+  JUP: {
+    domains: ["jup.ag"],
   },
   ONDO: {
     domains: ["ondo.finance"],
     unlockSlug: "ondo-finance",
   },
-  SUI: {
-    domains: ["sui.io"],
-    github: ["MystenLabs/sui"],
-    unlockSlug: "sui",
-  },
   TIA: {
     domains: ["celestia.org"],
     github: ["celestiaorg/celestia-app"],
-    unlockSlug: "celestia",
+  },
+  DOGE: {
+    domains: ["dogecoin.com", "dogecoin.org"],
+    github: ["dogecoin/dogecoin"],
+  },
+  XRP: {
+    domains: ["xrpl.org", "ripple.com"],
+    github: ["XRPLF/rippled"],
   },
 });
 
@@ -100,19 +83,15 @@ const STATUSPAGE_SOURCES = Object.freeze([
   ["HYPE", "https://hyperliquid.statuspage.io/api/v2/scheduled-maintenances/upcoming.json", "Hyperliquid Status", "scheduled_maintenances"],
   ["AVAX", "https://status.avax.network/api/v2/incidents/unresolved.json", "Avalanche Status", "incidents"],
   ["AVAX", "https://status.avax.network/api/v2/scheduled-maintenances/upcoming.json", "Avalanche Status", "scheduled_maintenances"],
-  ["SUI", "https://status.sui.io/api/v2/incidents/unresolved.json", "Sui Status", "incidents"],
-  ["SUI", "https://status.sui.io/api/v2/scheduled-maintenances/upcoming.json", "Sui Status", "scheduled_maintenances"],
 ]);
 
 const HTML_STATUS_SOURCES = Object.freeze([
-  ["AAVE", "https://status.aave.com/", "fully operational", "Aave Status"],
   ["JUP", "https://status.jup.ag/", "All services are online", "Jupiter Status"],
   ["NEAR", "https://status.near.org/", "No problems detected", "NEAR Status"],
   ["TIA", "https://status.celestia.org/", "fully operational", "Celestia Status"],
 ]);
 
 const OFFICIAL_FEEDS = Object.freeze([
-  ["ETH", "https://blog.ethereum.org/feed.xml", "Ethereum Foundation Blog"],
   ["SOL", "https://solana.com/changelog/rss.xml", "Solana Changelog"],
 ]);
 
@@ -195,6 +174,9 @@ async function refreshEventFeed(env, now) {
       fresh.push(...result.value);
     } else diagnostics.push(`status: ${shortError(result.reason)}`);
   }
+
+  const xrpEscrow = scheduledXrpEscrowUnlock(now);
+  if (xrpEscrow) fresh.push(xrpEscrow);
 
   const previousMeta = isObject(previous.meta) ? previous.meta : {};
   const lastNews = parseMillis(previousMeta.news_checked_at);
@@ -491,13 +473,15 @@ async function fetchGdeltBatch(batch, now) {
     "hack", "exploit", "security", "vulnerability", "outage", "degraded", "halt",
     "upgrade", "hardfork", "mainnet", "maintenance", "governance", "proposal", "vote",
     "unlock", "vesting", "buyback", "burn", "mint", "tokenomics", "supply", "ETF",
-    "airdrop", "listing", "delisting", "acquisition", "treasury", "strategic partnership",
+    "airdrop", "listing", "delisting", "acquisition", "treasury", "partnership",
+    "integration", "lawsuit", "legal settlement", "regulatory", "regulatory license", "staking",
+    "validator", "migration", "token sale",
   ];
   const query = `(${domainQuery}) AND (${eventTerms.map(quoteGdelt).join(" OR ")})`;
   const url = new URL("https://api.gdeltproject.org/api/v2/doc/doc");
   url.searchParams.set("query", query);
   url.searchParams.set("mode", "artlist");
-  url.searchParams.set("maxrecords", "75");
+  url.searchParams.set("maxrecords", "40");
   url.searchParams.set("format", "json");
   url.searchParams.set("sort", "datedesc");
   url.searchParams.set("timespan", "1d");
@@ -574,19 +558,23 @@ function classifyHeadline(title) {
   const text = String(title || "").toLowerCase();
   if (!text) return null;
   const retrospective = /(resolved|resolution|postmortem|post-mortem|incident report|root cause analysis|retrospective)/i.test(text);
-  const security = /(hack|exploit|security incident|critical vulnerability|breach|compromis|under attack|attack detected)/i.test(text);
+  const security = /(hack|exploit|security incident|critical(?: security)? vulnerability|security vulnerability.*critical|breach|compromis|under attack|attack detected|zero[- ]day|cve-\d{4}-\d+)/i.test(text);
+  const vulnerability = /\bvulnerabilit(?:y|ies)\b/i.test(text);
   const network = /(outage|network halt|chain halt|stalled|downtime|degraded|network disruption|consensus issue)/i.test(text);
   if (retrospective && (security || network)) return { kind: "NEWS", priority: 78 };
   if (security) return { kind: "SECURITY", priority: 100 };
   if (network) return { kind: "NETWORK", priority: 100 };
+  if (vulnerability) return { kind: "NEWS", priority: 88 };
   // A headline timestamp is not the execution time of a token release. Exact
   // unlock risk comes from the date-verified unlock calendar below.
   if (/(unlock|vesting|cliff release|buyback|token burn|burn program|mint|emission|tokenomics|supply change|airdrop)/i.test(text)) return { kind: "NEWS", priority: 82 };
   if (/(etf|sec filing|regulatory approval|regulatory decision)/i.test(text)) return { kind: "ETF", priority: 92 };
+  if (/(lawsuit|legal settlement|regulatory|regulator|regulatory license|court ruling|legal action)/i.test(text)) return { kind: "NEWS", priority: 88 };
   if (/(maintenance|scheduled downtime)/i.test(text)) return { kind: "MAINTENANCE", priority: 84 };
   if (/(governance|proposal|referendum|community vote|onchain vote)/i.test(text)) return { kind: "GOVERNANCE", priority: 86 };
   if (/(upgrade|hard fork|hardfork|mainnet launch|protocol release|security patch|new version)/i.test(text)) return { kind: "UPGRADE", priority: 88 };
-  if (/(listing|delisting|acquisition|treasury|strategic partnership|integration|token launch)/i.test(text)) return { kind: "NEWS", priority: 76 };
+  if (/(staking|validator)/i.test(text) && /(launch|change|update|reward|slashing|commission|requirement|migration|enable|disable|deprecat)/i.test(text)) return { kind: "NEWS", priority: 80 };
+  if (/(listing|delisting|acquisition|treasury|partnership|integration|token launch|token sale|migration)/i.test(text)) return { kind: "NEWS", priority: 78 };
   return null;
 }
 
@@ -598,17 +586,24 @@ async function fetchGithubReleases(symbol, repo, now) {
   for (const match of entries) {
     const block = match[1];
     const title = cleanText(decodeXml(capture(block, /<title[^>]*>([\s\S]*?)<\/title>/i)));
+    const summary = cleanText(decodeXml(stripHtml(
+      capture(block, /<(?:content|summary)(?:\s[^>]*)?>([\s\S]*?)<\/(?:content|summary)>/i),
+    )));
     const updated = parseDateValue(capture(block, /<updated>([^<]+)<\/updated>/i));
     const link = capture(block, /<link[^>]+href="([^"]+)"/i) || url;
     if (!title || !updated || now.getTime() - Date.parse(updated) > 24 * 60 * 60 * 1000) continue;
-    const emergency = /(active exploit|exploited|critical vulnerability|security incident|emergency hotfix|cve-\d{4}-\d+)/i.test(title);
+    // Routine version tags are not automatically market-moving news. Keep a
+    // GitHub release only when its official title/body actually contains one
+    // of the same relevant event signals used by the project-news pipeline.
+    const classification = classifyHeadline(`${title} ${summary}`);
+    if (!classification) continue;
     result.push(eventRow({
       symbol,
-      kind: emergency ? "SECURITY" : "UPGRADE",
+      kind: classification.kind,
       title,
       startsAt: updated,
       exactTime: true,
-      priority: emergency ? 100 : 88,
+      priority: classification.priority,
       sourceName: `GitHub ${repo}`,
       sourceUrl: link,
       active: true,
@@ -680,6 +675,35 @@ function parseFarsideNumber(value) {
   if (!match) return null;
   const number = Number(text);
   return Number.isFinite(number) ? sign * Math.abs(number) : null;
+}
+
+function scheduledXrpEscrowUnlock(now) {
+  // Ripple's official escrow schedule releases an on-ledger escrow on the
+  // first day of each month. Unused XRP can be re-escrowed, so this is an
+  // availability/supply-risk reminder, not an assumption that 1B XRP is sold.
+  const current = utcDay(now);
+  let release = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), 1));
+  if (current.getUTCDate() > 1) {
+    release = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth() + 1, 1));
+  }
+  // Ripple's Q1 2025 market report said escrow releases extend for the next
+  // 42 months; do not extrapolate this deterministic rule beyond that window.
+  const documentedEnd = Date.UTC(2028, 8, 1);
+  if (release.getTime() > documentedEnd) return null;
+  const days = Math.floor((release.getTime() - current.getTime()) / 86_400_000);
+  if (days < 0 || days > 14) return null;
+  return eventRow({
+    symbol: "XRP",
+    kind: "UNLOCK",
+    title: "XRP monthly Ripple escrow release window",
+    startsAt: release.toISOString(),
+    exactTime: false,
+    priority: 94,
+    sourceName: "Ripple XRP Markets Report",
+    sourceUrl: "https://ripple.com/insights/q1-2025-xrp-markets-report/",
+    active: false,
+    sourceType: "unlock",
+  });
 }
 
 async function fetchTokenomistUnlock(symbol, slug, now) {
@@ -974,13 +998,3 @@ function jsonResponse(value, status = 200, headers = {}) {
   });
 }
 
-export {
-  PROJECTS,
-  buildGdeltQueries,
-  classifyHeadline,
-  fetchOfficialFeed,
-  mergeEvents,
-  parseFarsideBitcoinEtfFlow,
-  parseTokenomistUnlock,
-  symbolForOfficialUrl,
-};

@@ -1,13 +1,15 @@
-<!-- Package revision: r1 -->
+<!-- r3 -->
 # Crypto Signal Monitor v5.5.0
 
 ## Pool
-`BTC ETH SOL HYPE ENA ZEC PUMP AAVE ADA AVAX JUP APT NEAR ONDO SUI TIA`
+`BTC SOL HYPE ENA PUMP ADA AVAX APT NEAR JUP ONDO TIA DOGE XRP`
 
 ## Anzeige
 Oben: drei auffällige Altcoins, BTC immer rechts. Warnungen/Ereignisse stehen direkt am betroffenen Coin; BTC wechselt kompakt zwischen Kurs, heutigen US-Makroterminen und frischen ETF-Flows.
 
 Unten: `Trenddruck · 5/20/60 · Score · Aktion/Zähler · OB/OS · Setup`
+
+Paper-Einstiege nur, wenn das aktuelle Lighter-Limit mindestens `10x` zulässt.
 
 ## Farben & Signale
 - `🟣▲/▼` aktive NOW-Freigabe

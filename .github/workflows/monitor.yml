@@ -1,4 +1,4 @@
-# Package revision: r1
+# r3
 name: Crypto Signal Monitor v5.5.0
 on:
   workflow_dispatch:
@@ -13,12 +13,12 @@ permissions:
   contents: write
 
 concurrency:
-  group: crypto-signal-monitor-v550
+  group: crypto-signal-monitor-v550-r3
   cancel-in-progress: false
 
 jobs:
   monitor:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
       - name: Repository laden
@@ -39,11 +39,11 @@ jobs:
             output/signal_streak_state.json
             output/signal_evaluation_state.json
             output/parameter_review.json
-          key: runtime-state-v550-${{ github.run_id }}
+            output/daily_candle_cache.json
+          key: runtime-state-v550-r3-${{ github.run_id }}
           # actions/cache accepts at most ten keys total, including `key`.
-          # Keep this fresh v5.5 state independent and use one restore prefix.
           restore-keys: |
-            runtime-state-v550-
+            runtime-state-v550-r3-
       - name: Paper-State wiederherstellen
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -73,4 +73,5 @@ jobs:
             output/signal_streak_state.json
             output/signal_evaluation_state.json
             output/parameter_review.json
-          key: runtime-state-v550-${{ github.run_id }}
+            output/daily_candle_cache.json
+          key: runtime-state-v550-r3-${{ github.run_id }}

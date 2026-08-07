@@ -1,4 +1,4 @@
-# Package revision: r1
+# r3
 """Crypto Signal Monitor v5.5.0 — Lighter pool with incident protection."""
 from __future__ import annotations
 
@@ -62,6 +62,7 @@ def main() -> int:
         signal_transition_state_path=output / "signal_transition_state.json",
         signal_streak_state_path=output / "signal_streak_state.json",
         signal_evaluation_state_path=output / "signal_evaluation_state.json",
+        daily_candle_cache_path=output / "daily_candle_cache.json",
         now=generated_at,
     )
     payload["events"] = event_snapshot.to_dict()
@@ -92,23 +93,6 @@ def main() -> int:
             )
             report += "\n" + alert_line
         payload["report"] = report
-        with (output / "paper_decisions.jsonl").open("a", encoding="utf-8") as handle:
-            handle.write(
-                json.dumps(
-                    {
-                        "generated_at": payload["generated_at"],
-                        "decision_key": paper_result["decision_key"],
-                        "fresh_decision": paper_result["fresh_decision"],
-                        "actions": paper_result["actions"],
-                        "account": paper_result["account"],
-                        "positions": paper_result["positions"],
-                        "logs": paper_result["logs"],
-                    },
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
-                + "\n"
-            )
     (output / "latest.txt").write_text(report + "\n", encoding="utf-8")
     (output / "latest.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

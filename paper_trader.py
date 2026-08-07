@@ -1,4 +1,4 @@
-# Package revision: r1
+# r3
 """Deterministic, multi-candidate paper-trading engine for CF v5.5.0."""
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from typing import Any, Iterable, Mapping
 
 STATE_SCHEMA = 1
 APP_VERSION = "5.5.0"
+PACKAGE_REVISION = "r3"
 ENTRY_STATES = {
     "BUY": 1, "SELL": -1,
     "STRONG_LONG": 1, "STRONG_SHORT": -1,
@@ -293,6 +294,7 @@ class PaperTrader:
         return {
             "schema": STATE_SCHEMA,
             "app_version": APP_VERSION,
+            "package_revision": PACKAGE_REVISION,
             "starting_balance_usd": capital,
             "balance_usd": capital,
             "positions": {},
@@ -330,6 +332,7 @@ class PaperTrader:
             not isinstance(payload, dict)
             or int(payload.get("schema", -1)) != STATE_SCHEMA
             or payload.get("app_version") != APP_VERSION
+            or payload.get("package_revision") != PACKAGE_REVISION
             or not isinstance(payload.get("positions"), dict)
             or _f(payload.get("balance_usd"), -1.0) < 0
             or invalid_position

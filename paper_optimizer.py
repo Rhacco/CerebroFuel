@@ -1,4 +1,4 @@
-# Package revision: r1
+# r3
 """Fast diagnostic plus evidence-based paper review for CF v5.5.0.
 
 No finding changes trading parameters automatically.  The rapid audit can flag
@@ -15,7 +15,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Callable, Iterable, Mapping
 
-STATE_VERSION = "paper-optimizer-v550-r1"
+STATE_VERSION = "paper-optimizer-v550-r3"
 
 
 def _f(value: Any, default: float = 0.0) -> float:

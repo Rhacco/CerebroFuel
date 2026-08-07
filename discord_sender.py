@@ -1,4 +1,4 @@
-# Package revision: r1
+# r3
 """Discord webhook sender: every call creates a new message."""
 from __future__ import annotations
 

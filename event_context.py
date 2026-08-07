@@ -1,4 +1,4 @@
-# Package revision: r1
+# r3
 """Verified scheduled and externally confirmed event context for CF v5.5.0.
 
 Automatic facts come only from official public schedules/status pages. Project-
@@ -25,7 +25,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-CACHE_VERSION = "event-cache-v550-r1"
+CACHE_VERSION = "event-cache-v550-r3"
 USER_AGENT = "crypto-signal-monitor/5.5.0"
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4,
@@ -1171,8 +1171,30 @@ def _pick_marks(
         if not rows:
             continue
 
+        def ranking(
+            row: tuple[CriticalEvent, bool, bool, int | None, int, float | None]
+        ) -> tuple[int, float, int, int]:
+            event, active, _, _, risk, hours = row
+            proximity_bonus = (
+                max(0.0, 28.0 - min(max(hours, 0.0), 168.0) / 6.0)
+                if hours is not None else 0.0
+            )
+            relevance = float(event.priority + risk) + proximity_bonus
+            return (1 if active else 0, relevance, risk, event.priority)
+
         macro_rows = [row for row in rows if row[0].kind in US_MACRO_KINDS]
-        if symbol == "BTC" and macro_rows:
+        # A confirmed BTC security/network incident must never be hidden by an
+        # otherwise valid macro appointment. Macro releases remain chronological
+        # when there is no active hard incident.
+        hard_btc_rows = [
+            row for row in rows
+            if symbol == "BTC"
+            and row[0].kind in {"SECURITY", "NETWORK"}
+            and (row[1] or row[2])
+        ]
+        if hard_btc_rows:
+            selected = max(hard_btc_rows, key=ranking)
+        elif symbol == "BTC" and macro_rows:
             active_rows = [row for row in macro_rows if row[1]]
             upcoming_rows = [row for row in macro_rows if row[5] is not None and row[5] >= 0]
             recent_rows = [row for row in macro_rows if row[5] is not None and row[5] < 0]
@@ -1183,16 +1205,6 @@ def _pick_marks(
             else:
                 selected = min(recent_rows, key=lambda row: abs(float(row[5] or 0.0)))
         else:
-            def ranking(
-                row: tuple[CriticalEvent, bool, bool, int | None, int, float | None]
-            ) -> tuple[int, float, int, int]:
-                event, active, _, _, risk, hours = row
-                proximity_bonus = (
-                    max(0.0, 28.0 - min(max(hours, 0.0), 168.0) / 6.0)
-                    if hours is not None else 0.0
-                )
-                relevance = float(event.priority + risk) + proximity_bonus
-                return (1 if active else 0, relevance, risk, event.priority)
             selected = max(rows, key=ranking)
         marks[symbol] = _mark_from_row(
             selected, now=now, timezone_name=timezone_name

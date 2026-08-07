@@ -1,10 +1,9 @@
-# Package revision: r1
+# r3
 """Lighter-native early-swing/T/W signal engine for CF v5.5.0."""
 from __future__ import annotations
 
 import json
 import math
-import re
 import statistics
 import time
 import unicodedata
@@ -24,7 +23,7 @@ from signal_transition_guard import apply_signal_transition_guard
 from signal_evaluator import update_signal_evaluation
 
 APP_VERSION = "5.5.0"
-PACKAGE_REVISION = "r1"
+PACKAGE_REVISION = "r3"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 GLOBAL_BTC_EVENT_KINDS = {
@@ -48,7 +47,89 @@ STATE_TIER = {
     "INVALID_DATA": 0,
 }
 
+DAILY_CACHE_SCHEMA = "daily-candles-v550-r3"
 
+
+def _load_daily_candle_cache(
+    path: Path | None,
+    *,
+    now: datetime,
+    allowed: set[str],
+    refresh_minutes: int,
+    max_stale_hours: int,
+) -> tuple[dict[str, list[Mapping[str, Any]]], dict[str, list[Mapping[str, Any]]], dict[str, str]]:
+    """Return fresh rows, stale fallback rows and original per-symbol timestamps."""
+    if path is None or not path.exists():
+        return {}, {}, {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}, {}, {}
+    if (
+        payload.get("schema") != DAILY_CACHE_SCHEMA
+        or payload.get("app_version") != APP_VERSION
+        or payload.get("package_revision") != PACKAGE_REVISION
+    ):
+        return {}, {}, {}
+    fresh: dict[str, list[Mapping[str, Any]]] = {}
+    fallback: dict[str, list[Mapping[str, Any]]] = {}
+    timestamps: dict[str, str] = {}
+    current = now.astimezone(timezone.utc)
+    for raw_symbol, item in (payload.get("symbols") or {}).items():
+        symbol = str(raw_symbol).upper()
+        if symbol not in allowed or not isinstance(item, Mapping):
+            continue
+        stamp = str(item.get("updated_at") or "")
+        try:
+            updated = datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone(timezone.utc)
+        except (TypeError, ValueError):
+            continue
+        rows = item.get("rows")
+        if not isinstance(rows, list) or len(rows) < 30:
+            continue
+        age_seconds = max(0.0, (current - updated).total_seconds())
+        if age_seconds <= max_stale_hours * 3600:
+            fallback[symbol] = rows
+            timestamps[symbol] = updated.isoformat()
+        if age_seconds <= refresh_minutes * 60:
+            fresh[symbol] = rows
+    return fresh, fallback, timestamps
+
+
+def _write_daily_candle_cache(
+    path: Path | None,
+    *,
+    now: datetime,
+    allowed: set[str],
+    rows_by_symbol: Mapping[str, list[Mapping[str, Any]]],
+    refreshed_symbols: set[str],
+    old_timestamps: Mapping[str, str],
+) -> None:
+    if path is None:
+        return
+    symbols: dict[str, Any] = {}
+    now_iso = now.astimezone(timezone.utc).isoformat()
+    for symbol in sorted(allowed):
+        rows = rows_by_symbol.get(symbol)
+        if not rows:
+            continue
+        stamp = now_iso if symbol in refreshed_symbols else old_timestamps.get(symbol)
+        if not stamp:
+            continue
+        symbols[symbol] = {"updated_at": stamp, "rows": rows}
+    payload = {
+        "schema": DAILY_CACHE_SCHEMA,
+        "app_version": APP_VERSION,
+        "package_revision": PACKAGE_REVISION,
+        "symbols": symbols,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
+        temporary.replace(path)
+    except OSError:
+        return
 
 
 def _discord_display_columns(value: str) -> int:
@@ -1431,6 +1512,19 @@ class LighterMonitor:
         ]
         if invalid_aliases:
             raise ValueError(f"Coin-Kürzel müssen drei Zeichen haben: {invalid_aliases}")
+        alias_values = [str(aliases.get(symbol, symbol[:3])).upper() for symbol in symbols]
+        if len(alias_values) != len(set(alias_values)):
+            raise ValueError("Coin-Kürzel müssen im Kandidatenpool eindeutig sein")
+        extra_aliases = set(str(key).upper() for key in aliases) - set(symbols)
+        if extra_aliases:
+            raise ValueError(f"Display-Aliase außerhalb des Kandidatenpools: {sorted(extra_aliases)}")
+        event_aliases = self.config.get("event_symbol_aliases") or {}
+        invalid_event_targets = sorted({
+            str(value).upper() for value in event_aliases.values()
+            if str(value).upper() not in set(symbols)
+        })
+        if invalid_event_targets:
+            raise ValueError(f"Event-Aliase zeigen außerhalb des Kandidatenpools: {invalid_event_targets}")
         summary_count = int(self.config.get("summary_coin_count", 5))
         summary_anchor = str(self.config.get("summary_anchor_symbol", "BTC")).upper()
         minimum_details = int(self.config.get("minimum_detail_count", 1))
@@ -1591,7 +1685,9 @@ class LighterMonitor:
         if int(self.config.get("candle_count", 360)) < 200:
             raise ValueError("candle_count muss mindestens 200 betragen")
         breadth_symbols = [str(value).upper() for value in self.config.get("btc_breadth_symbols", [])]
-        if len(set(breadth_symbols)) < 3 or "BTC" in breadth_symbols:
+        if len(breadth_symbols) != len(set(breadth_symbols)):
+            raise ValueError("btc_breadth_symbols muss eindeutig sein")
+        if len(breadth_symbols) < 3 or "BTC" in breadth_symbols:
             raise ValueError("btc_breadth_symbols braucht mindestens drei Nicht-BTC-Märkte")
         if not set(breadth_symbols).issubset(set(symbols)):
             raise ValueError("btc_breadth_symbols müssen im Kandidatenpool liegen")
@@ -2756,6 +2852,37 @@ class LighterMonitor:
                     break
 
         if not header_fits(header):
+            # Multiple simultaneous critical altcoin incidents can be wider than
+            # the mobile header even after all ordinary suffixes are gone. Keep
+            # the currently reserved/rotating urgent coin intact and suppress
+            # only duplicate critical labels on the other alt slots. Their
+            # trading protection remains active and equally urgent incidents
+            # rotate into the reserved slot on subsequent minutes.
+            reserved_symbols = {protected_anchor_symbol}
+            if incident_header_symbol:
+                reserved_symbols.add(str(incident_header_symbol).upper())
+            removable = sorted(
+                (item for item in summary if item.symbol not in reserved_symbols),
+                key=lambda item: (
+                    float(item.event_priority + item.event_risk),
+                    float(item.event_risk),
+                    float(item.event_priority),
+                    item.alias,
+                ),
+            )
+            for item in removable:
+                code = event_codes.get(item.symbol, "")
+                if code in critical_warnings:
+                    event_codes[item.symbol] = ""
+                codes = warning_codes.get(item.symbol, [])
+                warning_codes[item.symbol] = [
+                    value for value in codes if value not in critical_warnings
+                ]
+                header = summary_line()
+                if header_fits(header):
+                    break
+
+        if not header_fits(header):
             raise RuntimeError("Discord-Top-Zeilenlimit überschritten")
         self.last_header_event_symbols = tuple(
             item.symbol for item in summary if event_codes.get(item.symbol, "")
@@ -2874,6 +3001,7 @@ class LighterMonitor:
         signal_transition_state_path: Path | None = None,
         signal_streak_state_path: Path | None = None,
         signal_evaluation_state_path: Path | None = None,
+        daily_candle_cache_path: Path | None = None,
         now: datetime | None = None,
     ) -> tuple[str, dict[str, Any]]:
         now = now or datetime.now(timezone.utc)
@@ -2902,16 +3030,31 @@ class LighterMonitor:
         signals: list[Signal] = []
         snapshots: dict[str, dict[str, Any]] = {}
         daily_candles: dict[str, list[Mapping[str, Any]]] = {}
+        fresh_daily, fallback_daily, daily_timestamps = _load_daily_candle_cache(
+            daily_candle_cache_path,
+            now=now,
+            allowed=allowed,
+            refresh_minutes=max(5, int(self.config.get("daily_candle_cache_refresh_minutes", 30))),
+            max_stale_hours=max(1, int(self.config.get("daily_candle_cache_max_stale_hours", 6))),
+        )
+        refreshed_daily: set[str] = set()
         workers = min(8, max(1, int(self.config.get("parallel_requests", 6))))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {
-                pool.submit(self._load_one, row): symbol
+                pool.submit(
+                    self._load_one,
+                    row,
+                    fresh_daily.get(symbol),
+                    fallback_daily.get(symbol),
+                ): symbol
                 for symbol, row in markets.items()
             }
             for future in as_completed(futures):
                 symbol = futures[future]
                 try:
-                    candles, book, daily = future.result()
+                    candles, book, daily, daily_refreshed = future.result()
+                    if daily_refreshed:
+                        refreshed_daily.add(symbol)
                     snapshots[symbol] = {
                         "market": markets[symbol],
                         "candles": candles,
@@ -2943,6 +3086,15 @@ class LighterMonitor:
                     reasons=["kein aktiver Lighter-Krypto-Perp"],
                 )
             )
+
+        _write_daily_candle_cache(
+            daily_candle_cache_path,
+            now=now,
+            allowed=allowed,
+            rows_by_symbol={**fallback_daily, **daily_candles},
+            refreshed_symbols=refreshed_daily,
+            old_timestamps=daily_timestamps,
+        )
 
         self._apply_btc_context(signals)
         regime_payload = self._apply_regime_context(signals, snapshots, daily_candles, now)
@@ -3015,7 +3167,7 @@ class LighterMonitor:
             signals,
             now,
             incident_priority_symbol=incident_snapshot.priority_symbol,
-            incident_header_symbol=incident_snapshot.header_symbol or event_header_symbol,
+            incident_header_symbol=event_header_symbol or incident_snapshot.header_symbol,
         )
         minimum_lines = int(self.config.get("minimum_detail_count", 1)) + 1
         maximum_lines = len(allowed) + 1
@@ -3042,16 +3194,21 @@ class LighterMonitor:
     def _load_one(
         self,
         market: Mapping[str, Any],
-    ) -> tuple[list[Mapping[str, Any]], Mapping[str, Any], list[Mapping[str, Any]]]:
+        fresh_daily: list[Mapping[str, Any]] | None = None,
+        fallback_daily: list[Mapping[str, Any]] | None = None,
+    ) -> tuple[list[Mapping[str, Any]], Mapping[str, Any], list[Mapping[str, Any]], bool]:
         market_id = int(market["market_id"])
         candle_count = int(self.config.get("candle_count", 360))
         daily_count = int((self.config.get("regime") or {}).get("daily_candle_count", 40))
         candles = self.client.candles(market_id, count=candle_count)
         book = self.client.book(market_id)
+        if fresh_daily:
+            return candles, book, fresh_daily[-daily_count:], False
         try:
             daily = self.client.daily_candles(market_id, count=daily_count)
+            return candles, book, daily, bool(daily)
         except Exception:
-            daily = []
-        return candles, book, daily
+            daily = (fallback_daily or [])[-daily_count:]
+            return candles, book, daily, False
 
 
