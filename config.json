@@ -1,6 +1,6 @@
 {
-  "schema_version": "5.6.0",
-  "package_revision": "r2",
+  "schema_version": "5.7.0",
+  "package_revision": "r1",
   "lighter_base_url": "https://mainnet.zklighter.elliot.ai/api/v1",
   "timezone": "Europe/Berlin",
   "candidate_symbols": [
@@ -141,7 +141,7 @@
   "paper_close_cooldown_minutes": 1,
   "paper_stop_cooldown_minutes": 3,
   "paper_ledger_limit": 500,
-  "discord_username": "CF v5.6.0",
+  "discord_username": "CF v5.7.0",
   "discord_avatar_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Cryptocurrency_Logo.svg/330px-Cryptocurrency_Logo.svg.png",
   "minimum_tape_quality": 65,
   "paper_min_tape_quality": 49,
@@ -376,5 +376,13 @@
   "paper_min_bounce_score": 52,
   "paper_require_bounce_direction_alignment": true,
   "paper_swing_quality_weight": 0.24,
-  "paper_exit_bounce_score": 62
+  "paper_exit_bounce_score": 62,
+  "pre_extremity_min_abs": 30,
+  "pre_speed_min_score": 45,
+  "pre_activity_min_score": 45,
+  "pre_extension_lookback_minutes": 5,
+  "pre_extension_noise_fraction": 0.65,
+  "pre_extension_min_score": 52,
+  "pre_bounce_min_score": 52,
+  "pre_extension_min_aligned_moves": 2
 }

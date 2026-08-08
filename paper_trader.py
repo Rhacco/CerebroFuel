@@ -1,5 +1,5 @@
-# r2
-"""Deterministic, multi-candidate paper-trading engine for CF v5.6.0."""
+# r1
+"""Deterministic, multi-candidate paper-trading engine for CF v5.7.0."""
 from __future__ import annotations
 
 import json
@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 
-STATE_SCHEMA = 2
-APP_VERSION = "5.6.0"
-PACKAGE_REVISION = "r2"
+STATE_SCHEMA = 3
+APP_VERSION = "5.7.0"
+PACKAGE_REVISION = "r1"
 ENTRY_STATES = {
     "BUY": 1, "SELL": -1,
     "STRONG_LONG": 1, "STRONG_SHORT": -1,
@@ -955,6 +955,9 @@ class PaperTrader:
                 "swing_turnover_5m_pct": float(getattr(signal, "swing_turnover_5m_pct", 0.0)),
                 "swing_volume_pulse_ratio": float(getattr(signal, "swing_volume_pulse_ratio", 0.0)),
                 "live_activity_score": float(getattr(signal, "live_activity_score", 0.0)),
+                "extension_score": float(getattr(signal, "extension_score", 0.0)),
+                "pre_bounce_score": float(getattr(signal, "pre_bounce_score", 0.0)),
+                "pre_bounce_eligible": bool(getattr(signal, "pre_bounce_eligible", False)),
                 "two_sided_score": float(getattr(signal, "two_sided_score", 0.0)),
                 "bounce_score": float(getattr(signal, "bounce_score", 0.0)),
                 "bounce_direction": int(getattr(signal, "bounce_direction", 0) or 0),
@@ -1490,7 +1493,7 @@ class PaperTrader:
         for symbol, position in list((self.state.get("positions") or {}).items()):
             reason: str | None = None
             if symbol not in allowed_symbols:
-                reason = "Symbol nicht im v5.6.0-Kandidatenpool"
+                reason = "Symbol nicht im v5.7.0-Kandidatenpool"
             if reason is None:
                 continue
             signal = self.signals.get(symbol)

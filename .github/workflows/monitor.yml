@@ -1,5 +1,5 @@
-# r2
-name: Crypto Signal Monitor v5.6.0
+# r1
+name: Crypto Signal Monitor v5.7.0
 on:
   workflow_dispatch:
     inputs:
@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: crypto-signal-monitor-v560-r2
+  group: crypto-signal-monitor-v570-r1
   cancel-in-progress: false
 
 jobs:
@@ -40,10 +40,10 @@ jobs:
             output/signal_evaluation_state.json
             output/parameter_review.json
             output/daily_candle_cache.json
-          key: runtime-state-v560-r2-${{ github.run_id }}
+          key: runtime-state-v570-r1-${{ github.run_id }}
           # actions/cache accepts at most ten keys total, including `key`.
           restore-keys: |
-            runtime-state-v560-r2-
+            runtime-state-v570-r1-
       - name: Paper-State wiederherstellen
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -74,4 +74,4 @@ jobs:
             output/signal_evaluation_state.json
             output/parameter_review.json
             output/daily_candle_cache.json
-          key: runtime-state-v560-r2-${{ github.run_id }}
+          key: runtime-state-v570-r1-${{ github.run_id }}

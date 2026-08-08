@@ -1,58 +1,54 @@
-<!-- r2 -->
-# Crypto Signal Monitor v5.6.0
+<!-- r1 -->
+# Crypto Signal Monitor v5.7.0
 
 ## Pool
 `BTC SOL HYPE ENA PUMP ADA AVAX APT NEAR JUP ONDO TIA DOGE XRP`
 
-## Kernlogik
-Ein Altcoin wird als aktueller Bounce-/Comeback-Kandidat nur angezeigt, wenn **alles gleichzeitig** passt:
+## Discord-Logik
+**Zeile 1 = PRE/NEXT-Radar.** Ein Altcoin erscheint dort nur, wenn er bereits entscheidend gestreckt, schnell und auf Lighter aktiv ist, der jüngste Druck aber noch **zum Extrem** läuft. Ein bereits bestätigter Bounce verschwindet aus PRE und wandert nach unten.
 
+PRE-Gate:
 - `|EXT| >= 30`
-- echte aktuelle 1m-Geschwindigkeit: Median der letzten 12 Minuten mindestens `0,025%/min` und Speed-Score `>=45`
-- Live-Aktivität `>=45` aus 5m Quote-Volumen/OI + Volumenpuls + Tape-Qualität
-- nennenswerte 1m-Bewegung in **beide Richtungen**, mindestens 2 Bewegungen je Seite und Two-Sided `>=20`
-- kombinierter Bounce-Score `>=52`
-- Tape `>=45` und Lighter-Maximalhebel `>=5x`; Spread/Liquidität bleiben Warnungen statt zusätzlicher Anzeige-Blocker
+- echte 1m-Speed: Median der letzten 12m mindestens `0,025%/min`, Speed-Score `>=45`
+- Live-Aktivität `>=45` aus 5m Quote-Volumen/OI + Volumenpuls + Tape
+- jüngster 5m-Druck weiterhin zum Extrem, Extension-Score `>=52`; normalerweise mindestens zwei relevante gleichgerichtete 1m-Moves (ein außergewöhnlich großer Einzelimpuls darf früher reichen)
+- Tape `>=45`, Lighter-Maximalhebel `>=5x`
 
-Die erwartete Bounce-Richtung ist bewusst **gegen die Extremity**: `+EXT` = oben gestreckt → Short-Bounce-Kandidat; `-EXT` = unten gestreckt → Long-Bounce-Kandidat. Extremity allein reicht nie.
+**Zeile 2 = BTC fest.**
 
-## Discord
-**Zeile 1:** bis zu vier streng qualifizierte Altcoins, Farbe = Extremity-Zone. Normale News umgehen den Speed-/Aktivitätsfilter nicht. Eine akute/hochprioritäre Coin-Warnung kann separat als kompakte `⚠COIN CODE`-Zeile erscheinen.
+**Darunter = bestätigte Bounce-/Comeback-Kandidaten.** Zusätzlich zum schnellen/aktiven Extrem müssen mindestens zwei relevante 1m-Bewegungen je Richtung, Two-Sided `>=20` und Bounce-Score `>=52` vorliegen. `+EXT` bedeutet OB → erwarteter Short-Bounce; `-EXT` bedeutet OS → erwarteter Long-Bounce.
 
-**Zeile 2:** BTC ist fest verankert.
+## Einheitliche Detailzeilen
+Der Kern ist bei BTC und jedem Altcoin identisch aufgebaut:
 
-**Darunter:** alle weiteren qualifizierten Altcoins.
-
-Format:
-`Druck 5/20/60 COIN±EXT [News/Warnung] Sxx Axx [Pxx] [NEARn|TRYn|NOWn]`
+`Druck 05/20/60 COIN±EXT Sxx Axx |Spezial`
 
 Beispiel:
-`🟡▷ 5🟡20🟡60🟢 BTC+32 64,989 S07 A68 P84`
+`🟡▷ 05🟡20🟡60🟢 BTC+32 S07 A68 |64,989 P84`
+`🔴▼ 05🔴20🟠60🟡 ENA+47 S18 A82 |UPG NOW2`
 
-- `Sxx`: robuste aktuelle Geschwindigkeit in Basispunkten pro Minute
-- `Axx`: aktuelle Lighter-Aktivität `0–99`
-- `Pxx`: nur BTC, Pinning `0–99` an einer **aktuell noch nahen** runden Preiszone
-- `NEAR/TRY/NOW + Zähler`: nur bei passender Bounce-Richtung und nur solange die Zeilenbreite reicht
+Bis einschließlich `Axx` bleibt Reihenfolge und Breite möglichst konstant. Nur rechts vom `|` dürfen coin-spezifische Informationen abweichen:
+- News/Warnungen
+- BTC-Preis und `Pxx`
+- `NEAR/TRY/NOW + Zähler`, nur bei passender Bounce-Richtung und wenn Platz bleibt
 
-Readiness-Zahl sowie `E/T/W/W?` werden nicht mehr angezeigt; die bisherigen Setup-, Regime-, BTC-Kontext- und Transition-Sicherungen bleiben intern erhalten.
+`Sxx` = robuste aktuelle Geschwindigkeit in Basispunkten pro Minute.  
+`Axx` = aktuelle Lighter-Aktivität `0–99`.  
+`Pxx` = BTC-Pinning `0–99` an einer aktuell noch nahen runden Preiszone.
 
 ## News & Warnungen
-Die vorhandene Coin- und BTC-Ereignislogik bleibt aktiv, inklusive Coin-Upgrades/Governance/Supply/Unlocks, Security/Network/Shock, ETF/Regulierung sowie vollständigem BTC-US-Makro-Kontext (u. a. Fed/FOMC, CPI/PPI/PCE, NFP/ADP/JOLTS/Claims/ECI, GDP, Produktivität, Handel, Konsum, Industrie, Immobilien, ISM und Vertrauen).
+Coin- und BTC-Ereignislogik bleibt aktiv, inklusive Coin-Upgrades/Governance/Supply/Unlocks, Security/Network/Shock, ETF/Regulierung und relevantem US-Makro-Kontext. Akute wichtige Events bleiben sichtbar, auch wenn der Coin weder PRE noch bestätigter Bounce ist.
 
-Bestehende Qualitätswarnungen bleiben erhalten: `V! L! K! B! R! RS! CH! F!` sowie `DATA! STALE! GAP! BOOK! CND!`.
-
-## BTC Pin
-`Pxx` misst nicht bloß geringe Volatilität. Gewertet werden Verweildauer an der runden Zone, schnelle Rückkehr nach Ausbrüchen, historische Nähe und **aktuelle Nähe**. Ein alter 65k-Pin kann deshalb nicht weiter hoch ranken, wenn BTC inzwischen deutlich davon weggeflogen ist.
+Qualitätswarnungen bleiben erhalten: `V! L! K! B! R! RS! CH! F!` sowie `DATA! STALE! GAP! BOOK! CND!`.
 
 ## Paper Trading
-Paper Trading verwendet einen eigenen v5.6.0-State. Neue Positionen und Nachkäufe benötigen zusätzlich das Swing-Gate und müssen zur erwarteten Bounce-Richtung passen.
+Paper Trading verwendet einen **eigenen v5.7.0-State (Schema 3)**. PRE allein eröffnet keine Position. Neue Positionen/Nachkäufe benötigen weiterhin das bestätigte Bounce-Gate und passende Richtung.
 
-- Start: `$100`
-- mindestens `10x`, sofern Markt/Risiko es zulassen
-- max. Margin je Position: `18%`
-- max. gesamte Paper-Margin: `55%`
-- max. gesamtes technisches Risiko: `18%`
-- starke gegengerichtete Bounce-Lage darf bestehende Paper-Positionen früh reduzieren/schließen
+- Start `$100`
+- Paper-Hebel standardmäßig mindestens `10x`, soweit Markt/Risiko es zulassen
+- max. Margin je Position `18%`
+- max. gesamte Paper-Margin `55%`
+- max. gesamtes technisches Risiko `18%`
 
 ## Daten
-SPD/ACT/PIN verwenden die bereits geladenen Lighter-1m-Candles, Quote-Volumen, Open Interest, Tape-/Orderbook-Qualität und Extremity; dafür entstehen keine zusätzlichen Lighter-Abfragen pro Coin.
+PRE/SPD/ACT/Two-Sided/PIN verwenden die ohnehin geladenen Lighter-1m-Candles, Quote-Volumen, Open Interest sowie Tape-/Orderbook-Kontext. Es entstehen dadurch keine zusätzlichen Lighter-Abfragen pro Coin.
