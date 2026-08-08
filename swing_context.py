@@ -1,12 +1,10 @@
 # r1
-"""Live swing-speed, activity and BTC pinning context for CF v5.7.0.
+"""Live speed, activity, two-sided movement and BTC pinning context for CF v6.0.0.
 
-The layer is deliberately direction-agnostic until extremity is applied:
+The v5.5 signal state remains authoritative. This layer only adds timing context:
 - SPD measures how quickly price is moving now.
 - ACT measures how actively the Lighter market is turning over now.
-- PRE requires decisive extremity, speed/activity and continued pressure toward the extreme.
-- two_sided_score checks whether meaningful movement exists in both directions.
-- bounce_direction is the opposite side of a decisive OB/OS extremity.
+- two_sided_score measures recent meaningful movement in both directions.
 - PIN measures how persistently BTC is attracted to a nearby round level.
 """
 from __future__ import annotations
@@ -86,19 +84,9 @@ class SwingResult:
     turnover_5m_pct: float = 0.0
     volume_pulse_ratio: float = 0.0
     live_activity_score: float = 0.0
-    extension_score: float = 0.0
-    extension_net_pct: float = 0.0
-    extension_aligned_moves: int = 0
-    extension_opposed_moves: int = 0
-    pre_bounce_score: float = 0.0
-    pre_bounce_direction: int = 0
-    pre_bounce_eligible: bool = False
     two_sided_score: float = 0.0
     meaningful_up_moves: int = 0
     meaningful_down_moves: int = 0
-    bounce_score: float = 0.0
-    bounce_direction: int = 0
-    bounce_eligible: bool = False
     reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -128,22 +116,18 @@ def calculate_swing_metrics(
     candles: list[Mapping[str, Any]],
     open_interest_usd: float,
     tape_quality: float,
-    extremity_score: float,
-    extremity_available: bool,
     config: Mapping[str, Any],
 ) -> SwingResult:
-    """Measure live speed/activity and split PRE from confirmed bounce.
+    """Measure live speed/activity and diagnostic two-sided movement.
 
-    PRE deliberately means the market is still pressing toward the stretched
-    side.  A confirmed bounce deliberately means enough meaningful movement
-    exists on both sides.  A coin therefore cannot be PRE and confirmed at
-    the same time.
+    The result does not create or promote a trading state. v5.5-style
+    NEAR/TRY/NOW remains authoritative; these metrics only confirm, rank and
+    size those states.
     """
     speed_lookback = max(6, min(30, int(config.get("swing_speed_lookback_minutes", 12))))
     activity_lookback = max(3, min(15, int(config.get("swing_activity_lookback_minutes", 5))))
     two_sided_lookback = max(10, min(40, int(config.get("swing_two_sided_lookback_minutes", 20))))
-    extension_lookback = max(3, min(10, int(config.get("pre_extension_lookback_minutes", 5))))
-    needed = max(speed_lookback + 1, activity_lookback, two_sided_lookback + 1, extension_lookback + 1, 45)
+    needed = max(speed_lookback + 1, activity_lookback, two_sided_lookback + 1, 45)
     rows = candles[-needed:]
     if len(rows) < needed or not _contiguous(rows):
         return SwingResult(reason="insufficient contiguous 1m candles")
@@ -198,25 +182,7 @@ def calculate_swing_metrics(
         baseline_median * float(config.get("swing_two_sided_noise_fraction", 0.80)),
     )
 
-    # PRE pressure: the last few closed 1m moves must still lean toward the
-    # current extremity (OB -> still pushing up, OS -> still pushing down).
-    extremity_sign = 1 if extremity_score > 0 else (-1 if extremity_score < 0 else 0)
-    extension_returns = _returns(candles[-(extension_lookback + 1):])
-    aligned_extension = [value * extremity_sign for value in extension_returns] if extremity_sign else []
-    extension_threshold = max(0.008, baseline_median * float(config.get("pre_extension_noise_fraction", 0.65)))
-    extension_aligned = sum(value >= extension_threshold for value in aligned_extension)
-    extension_opposed = sum(value <= -extension_threshold for value in aligned_extension)
-    extension_meaningful = extension_aligned + extension_opposed
-    extension_balance = (
-        (extension_aligned - extension_opposed) / extension_meaningful
-        if extension_meaningful else 0.0
-    )
-    extension_net_pct = sum(aligned_extension)
-    expected_move = max(0.02, baseline_median * max(1, len(aligned_extension)))
-    net_component = _clamp(extension_net_pct / expected_move, -1.0, 1.0)
-    extension_score = _clamp(50.0 + extension_balance * 30.0 + net_component * 20.0)
-
-    # Confirmed bounce needs genuine movement in both directions.
+    # Two-sided context needs genuine movement in both directions.
     two_rows = candles[-(two_sided_lookback + 1):]
     directional = _returns(two_rows)
     up = sum(value >= meaningful_threshold for value in directional)
@@ -229,67 +195,70 @@ def calculate_swing_metrics(
     else:
         two_sided_score = 0.0
 
-    abs_extremity = abs(float(extremity_score)) if extremity_available else 0.0
-    bounce_direction = -1 if extremity_score > 0 else (1 if extremity_score < 0 else 0)
-    bounce_score = _clamp(
-        abs_extremity * 0.35
-        + speed_score * 0.25
-        + live_activity_score * 0.25
-        + two_sided_score * 0.15
+    return SwingResult(reason="insufficient contiguous 1m candles")
+
+    recent_speed_rows = candles[-(speed_lookback + 1):]
+    recent_returns = [abs(value) for value in _returns(recent_speed_rows)]
+    baseline = [abs(value) for value in _baseline_returns(candles, speed_lookback, 120)]
+    if not recent_returns or len(baseline) < 45:
+        return SwingResult(reason="missing/fragmented speed baseline")
+
+    recent_median = statistics.median(recent_returns)
+    baseline_median = max(0.004, statistics.median(baseline))
+    speed_ratio = recent_median / baseline_median
+    relative_score = _clamp(50.0 + 32.0 * math.log2(max(speed_ratio, 0.125)))
+    floor_pct = max(0.005, float(config.get("swing_speed_absolute_floor_pct", 0.025)))
+    strong_pct = max(floor_pct + 0.01, float(config.get("swing_speed_strong_pct", 0.16)))
+    absolute_score = _clamp((recent_median - floor_pct) / (strong_pct - floor_pct) * 100.0)
+    speed_score = _clamp(relative_score * 0.55 + absolute_score * 0.45)
+
+    recent_activity_rows = candles[-activity_lookback:]
+    recent_volume = sum(_f(row.get("V")) for row in recent_activity_rows)
+    turnover_pct = (
+        recent_volume / open_interest_usd * 100.0
+        if open_interest_usd > 0 and recent_volume > 0
+        else 0.0
     )
-    extremity_min = float(config.get("swing_extremity_min_abs", 30.0))
-    speed_min = float(config.get("swing_speed_min_score", 45.0))
-    activity_min = float(config.get("swing_activity_min_score", 45.0))
-    two_sided_min = float(config.get("swing_two_sided_min_score", 20.0))
-    two_sided_min_each = max(1, int(config.get("swing_two_sided_min_each_direction", 2)))
-    bounce_min = float(config.get("swing_bounce_min_score", 52.0))
-    eligible = bool(
-        extremity_available
-        and bounce_direction
-        and abs_extremity >= extremity_min
-        and recent_median >= floor_pct
-        and speed_score >= speed_min
-        and open_interest_usd > 0
-        and recent_volume > 0
-        and live_activity_score >= activity_min
-        and up >= two_sided_min_each
-        and down >= two_sided_min_each
-        and two_sided_score >= two_sided_min
-        and bounce_score >= bounce_min
+    baseline_volume = _baseline_volume(candles, activity_lookback, 120)
+    current_average = recent_volume / activity_lookback if activity_lookback else 0.0
+    pulse_ratio = current_average / baseline_volume if baseline_volume > 0 else 0.0
+    turnover_reference = max(
+        0.01,
+        float(config.get("swing_activity_turnover_reference_5m_pct", 0.30)),
+    )
+    turnover_score = (
+        _clamp(50.0 + 25.0 * math.log10(max(turnover_pct, 1e-6) / turnover_reference))
+        if turnover_pct > 0
+        else 0.0
+    )
+    pulse_score = (
+        _clamp(50.0 + 30.0 * math.log2(max(pulse_ratio, 0.125)))
+        if pulse_ratio > 0
+        else 0.0
+    )
+    live_activity_score = _clamp(
+        turnover_score * 0.50
+        + pulse_score * 0.35
+        + _clamp(float(tape_quality)) * 0.15
     )
 
-    pre_extremity_min = float(config.get("pre_extremity_min_abs", extremity_min))
-    pre_speed_min = float(config.get("pre_speed_min_score", speed_min))
-    pre_activity_min = float(config.get("pre_activity_min_score", activity_min))
-    pre_extension_min = float(config.get("pre_extension_min_score", 52.0))
-    pre_extension_min_aligned = max(1, int(config.get("pre_extension_min_aligned_moves", 2)))
-    pre_impulse_threshold = max(floor_pct * 2.5, baseline_median * 3.5)
-    extension_confirmed = bool(
-        extension_aligned >= pre_extension_min_aligned
-        or extension_net_pct >= pre_impulse_threshold
+    meaningful_threshold = max(
+        0.01,
+        baseline_median * float(config.get("swing_two_sided_noise_fraction", 0.80)),
     )
-    pre_score_min = float(config.get("pre_bounce_min_score", 52.0))
-    pre_score = _clamp(
-        abs_extremity * 0.40
-        + speed_score * 0.25
-        + live_activity_score * 0.25
-        + extension_score * 0.10
-    )
-    pre_eligible = bool(
-        extremity_available
-        and bounce_direction
-        and not eligible
-        and abs_extremity >= pre_extremity_min
-        and recent_median >= floor_pct
-        and speed_score >= pre_speed_min
-        and open_interest_usd > 0
-        and recent_volume > 0
-        and live_activity_score >= pre_activity_min
-        and extension_score >= pre_extension_min
-        and extension_net_pct > 0
-        and extension_confirmed
-        and pre_score >= pre_score_min
-    )
+
+    # Two-sided context needs genuine movement in both directions.
+    two_rows = candles[-(two_sided_lookback + 1):]
+    directional = _returns(two_rows)
+    up = sum(value >= meaningful_threshold for value in directional)
+    down = sum(value <= -meaningful_threshold for value in directional)
+    meaningful = up + down
+    if up > 0 and down > 0 and directional:
+        balance = 2.0 * min(up, down) / meaningful
+        coverage = meaningful / len(directional)
+        two_sided_score = _clamp(100.0 * math.sqrt(max(0.0, balance * coverage)))
+    else:
+        two_sided_score = 0.0
 
     return SwingResult(
         available=True,
@@ -300,23 +269,10 @@ def calculate_swing_metrics(
         turnover_5m_pct=round(turnover_pct, 6),
         volume_pulse_ratio=round(pulse_ratio, 4),
         live_activity_score=round(live_activity_score, 4),
-        extension_score=round(extension_score, 4),
-        extension_net_pct=round(extension_net_pct, 6),
-        extension_aligned_moves=extension_aligned,
-        extension_opposed_moves=extension_opposed,
-        pre_bounce_score=round(pre_score, 4),
-        pre_bounce_direction=bounce_direction,
-        pre_bounce_eligible=pre_eligible,
         two_sided_score=round(two_sided_score, 4),
         meaningful_up_moves=up,
         meaningful_down_moves=down,
-        bounce_score=round(bounce_score, 4),
-        bounce_direction=bounce_direction,
-        bounce_eligible=eligible,
-        reason=(
-            "PRE = extremity + absolute/relative speed + live Lighter activity + continued extension; "
-            "confirmed = extremity + speed/activity + two-sided movement"
-        ),
+        reason="live speed/activity plus two-sided movement context",
     )
 
 def calculate_pin(

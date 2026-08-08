@@ -1,5 +1,5 @@
 # r1
-"""Crypto Signal Monitor v5.7.0 — Lighter pool with incident protection."""
+"""Crypto Signal Monitor v6.0.0 — Lighter pool with incident protection."""
 from __future__ import annotations
 
 import argparse
@@ -122,7 +122,7 @@ def main() -> int:
         send_discord(
             webhook,
             report,
-            username=str(config.get("discord_username", "CF v5.7.0")),
+            username=str(config.get("discord_username", "CF v6.0.0")),
             avatar_url=str(config.get("discord_avatar_url", "")).strip(),
         )
         mark_event_displayed(

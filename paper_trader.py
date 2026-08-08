@@ -1,5 +1,5 @@
 # r1
-"""Deterministic, multi-candidate paper-trading engine for CF v5.7.0."""
+"""Deterministic, multi-candidate paper-trading engine for CF v6.0.0."""
 from __future__ import annotations
 
 import json
@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 
-STATE_SCHEMA = 3
-APP_VERSION = "5.7.0"
+STATE_SCHEMA = 4
+APP_VERSION = "6.0.0"
 PACKAGE_REVISION = "r1"
 ENTRY_STATES = {
     "BUY": 1, "SELL": -1,
@@ -30,7 +30,7 @@ SUPPORT_STATES = {
     "WATCH_SHORT": -1,
 }
 SETUP_CODES = {"EARLY": "E", "TREND": "T", "REVERSAL": "W"}
-LEVERAGE_STEPS = (10, 15, 20, 25, 30, 40, 50)
+LEVERAGE_STEPS = (5, 8, 10, 15, 20, 25, 30, 40, 50)
 
 
 def _f(value: Any, default: float = 0.0) -> float:
@@ -74,6 +74,25 @@ def _setup(signal: Any) -> Any:
 
 def _direction_letter(direction: int) -> str:
     return "L" if direction > 0 else "S"
+
+
+def _signal_tier(state: str) -> int:
+    if state in SCOUT_STATES:
+        return 1
+    if state in PROBE_STATES:
+        return 2
+    if state in IMMEDIATE_STATES:
+        return 3
+    return 0
+
+
+def _timing_score(signal: Any) -> float:
+    if not bool(getattr(signal, "swing_available", False)):
+        return 0.0
+    speed = _f(getattr(signal, "swing_speed_score", 0.0))
+    activity = _f(getattr(signal, "live_activity_score", 0.0))
+    two_sided = _f(getattr(signal, "two_sided_score", 0.0))
+    return max(0.0, min(100.0, speed * 0.42 + activity * 0.43 + two_sided * 0.15))
 
 
 def _money(value: float, signed: bool = False, compact: bool = True) -> str:
@@ -222,8 +241,8 @@ class PaperTrader:
             raise ValueError("paper_max_positions muss zwischen eins und sechs liegen")
         minimum = int(self.config.get("paper_min_leverage", 0))
         maximum = int(self.config.get("paper_max_leverage", 0))
-        if not 10 <= minimum <= maximum <= 50:
-            raise ValueError("Paper-Hebel müssen zwischen 10x und 50x liegen")
+        if not 5 <= minimum <= maximum <= 50:
+            raise ValueError("Paper-Hebel müssen zwischen 5x und 50x liegen")
         per_position = float(
             self.config.get("paper_max_margin_per_position_pct", 0.0)
         )
@@ -248,20 +267,12 @@ class PaperTrader:
             "paper_min_liquidity_score",
             "paper_min_volume_score",
             "paper_min_btc_context",
-            "paper_min_swing_speed_score",
-            "paper_min_live_activity_score",
-            "paper_min_two_sided_score",
-            "paper_min_bounce_score",
-            "paper_exit_bounce_score",
         )
         if any(
             not 0 <= float(self.config.get(key, -1.0)) <= 100
             for key in score_keys
         ):
             raise ValueError("Paper-Qualitätsschwellen müssen zwischen null und 100 liegen")
-        swing_weight = float(self.config.get("paper_swing_quality_weight", 0.24))
-        if not 0.0 <= swing_weight <= 0.40:
-            raise ValueError("paper_swing_quality_weight ist ungültig")
         early_age = int(self.config.get("paper_early_max_age_minutes", 1))
         early_used = float(self.config.get("paper_early_max_consumed_fraction", 0.55))
         max_stop = float(self.config.get("paper_max_technical_stop_pct", 1.20))
@@ -285,8 +296,15 @@ class PaperTrader:
         if not 0 <= int(self.config.get("paper_max_scale_count", 1)) <= 3:
             raise ValueError("paper_max_scale_count ist ungültig")
         add_interval = int(self.config.get("paper_add_min_interval_minutes", 5))
-        if not 1 <= add_interval <= 30:
-            raise ValueError("paper_add_min_interval_minutes ist ungültig")
+        upgrade_interval = int(self.config.get("paper_upgrade_min_interval_minutes", 1))
+        if not 1 <= add_interval <= 30 or not 1 <= upgrade_interval <= add_interval:
+            raise ValueError("Paper-Ausbauintervalle sind ungültig")
+        reduce_pct = float(self.config.get("paper_opposite_try_reduce_pct", 50))
+        if not 10 <= reduce_pct <= 100:
+            raise ValueError("paper_opposite_try_reduce_pct ist ungültig")
+        for key in ("paper_near_min_timing_score", "paper_try_min_timing_score"):
+            if not 0 <= float(self.config.get(key, -1)) <= 100:
+                raise ValueError("Paper-Timing-Schwelle ist ungültig")
         target_one_roi = float(self.config.get("paper_profit_target_one_roi_pct", 3.0))
         target_two_roi = float(self.config.get("paper_profit_target_two_roi_pct", 8.0))
         if not 2.0 <= target_one_roi < target_two_roi <= 10.0:
@@ -475,27 +493,21 @@ class PaperTrader:
         setup = _setup(signal)
         btc = 58.0 if signal.btc_context is None else float(signal.btc_context)
         tape = float(getattr(signal, "tape_quality", 0.0))
-        legacy = (
+        timing = _timing_score(signal)
+        return (
             float(signal.trade_readiness) * 0.30
-            + float(signal.confidence) * 0.22
-            + float(setup.score) * 0.16
-            + float(signal.execution_score) * 0.10
-            + float(signal.liquidity_score) * 0.06
-            + tape * 0.10
-            + btc * 0.06
+            + float(signal.confidence) * 0.21
+            + float(setup.score) * 0.17
+            + float(signal.execution_score) * 0.08
+            + float(signal.liquidity_score) * 0.05
+            + tape * 0.07
+            + btc * 0.05
+            + timing * 0.07
         )
-        swing = (
-            float(getattr(signal, "bounce_score", 0.0)) * 0.45
-            + float(getattr(signal, "swing_speed_score", 0.0)) * 0.25
-            + float(getattr(signal, "live_activity_score", 0.0)) * 0.22
-            + float(getattr(signal, "two_sided_score", 0.0)) * 0.08
-        )
-        weight = max(0.0, min(0.40, float(self.config.get("paper_swing_quality_weight", 0.24))))
-        return legacy * (1.0 - weight) + swing * weight
 
     def _leverage(self, signal: Any, stop_pct: float) -> int | None:
         platform = int(math.floor(_f(getattr(signal, "platform_max_leverage", 0.0))))
-        minimum = int(self.config.get("paper_min_leverage", 10))
+        minimum = int(self.config.get("paper_min_leverage", 5))
         maximum = int(self.config.get("paper_max_leverage", 50))
         if platform < minimum:
             return None
@@ -545,21 +557,6 @@ class PaperTrader:
         direction = ENTRY_STATES.get(signal.state)
         if direction is None:
             return "kein starkes Einstiegssignal"
-        if bool(self.config.get("paper_require_swing_gate", True)):
-            if not bool(getattr(signal, "bounce_eligible", False)):
-                return "Swing-Gate aus Extremity/Speed/Aktivität nicht erfüllt"
-            if float(getattr(signal, "swing_speed_score", 0.0)) < float(self.config.get("paper_min_swing_speed_score", 45.0)):
-                return "aktuelle Swing-Geschwindigkeit zu niedrig"
-            if float(getattr(signal, "live_activity_score", 0.0)) < float(self.config.get("paper_min_live_activity_score", 45.0)):
-                return "aktuelle Lighter-Aktivität zu niedrig"
-            if float(getattr(signal, "two_sided_score", 0.0)) < float(self.config.get("paper_min_two_sided_score", 20.0)):
-                return "Bewegung noch zu einseitig für verlässlichen Bounce"
-            if float(getattr(signal, "bounce_score", 0.0)) < float(self.config.get("paper_min_bounce_score", 52.0)):
-                return "Bounce-Score unter Paperfreigabe"
-            if bool(self.config.get("paper_require_bounce_direction_alignment", True)):
-                bounce_direction = int(getattr(signal, "bounce_direction", 0) or 0)
-                if bounce_direction and direction != bounce_direction:
-                    return "Signalrichtung widerspricht dem Extremity-Bounce"
         transition_active = bool(getattr(signal, "transition_guard_active", False))
         action_streak = int(getattr(signal, "action_streak_count", 0) or 0)
         if transition_active and signal.state in SCOUT_STATES:
@@ -578,8 +575,13 @@ class PaperTrader:
         if signal.selected_setup == "REVERSAL":
             setup = _setup(signal)
             if signal.state in SCOUT_STATES:
-                return "bestätigtes W wartet im Paper auf TRY/NOW"
-            if (
+                if (
+                    setup.phase not in {"forming", "strong", "ready"}
+                    or bool(getattr(setup, "new_extreme_after_event", False))
+                    or not bool(getattr(setup, "relative_confirmed", True))
+                ):
+                    return "W? noch nicht stabil genug für NEAR-Scout"
+            elif (
                 setup.phase != "ready"
                 or not bool(getattr(setup, "structural_reclaim", False))
                 or not bool(getattr(setup, "relative_confirmed", True))
@@ -604,6 +606,12 @@ class PaperTrader:
         btc_context = 58.0 if signal.btc_context is None else float(signal.btc_context)
         if btc_context < float(self.config.get("paper_min_btc_context", 38)):
             return "BTC/Marktbreite blockiert"
+        timing = _timing_score(signal)
+        if bool(getattr(signal, "swing_available", False)):
+            if signal.state in SCOUT_STATES and timing < float(self.config.get("paper_near_min_timing_score", 28)):
+                return "NEAR ohne ausreichende aktuelle Speed/Activity-Bestätigung"
+            if signal.state in PROBE_STATES and timing < float(self.config.get("paper_try_min_timing_score", 30)):
+                return "TRY ohne ausreichende aktuelle Speed/Activity-Bestätigung"
         readiness = float(signal.trade_readiness)
         confidence = float(signal.confidence)
         if signal.state in SCOUT_STATES:
@@ -905,6 +913,7 @@ class PaperTrader:
             "entry_confidence": float(signal.confidence),
             "entry_rank": rank,
             "entry_state": signal.state,
+            "signal_tier": _signal_tier(signal.state),
             "probe_entry": signal.state in PROBE_STATES | SCOUT_STATES,
             "entry_features": {
                 "setup": setup,
@@ -949,19 +958,6 @@ class PaperTrader:
                 "extremity_return_1d": getattr(signal, "extremity_return_1d", None),
                 "extremity_return_3d": getattr(signal, "extremity_return_3d", None),
                 "extremity_return_7d": getattr(signal, "extremity_return_7d", None),
-                "swing_speed_pct": float(getattr(signal, "swing_speed_pct", 0.0)),
-                "swing_speed_bps": float(getattr(signal, "swing_speed_bps", 0.0)),
-                "swing_speed_score": float(getattr(signal, "swing_speed_score", 0.0)),
-                "swing_turnover_5m_pct": float(getattr(signal, "swing_turnover_5m_pct", 0.0)),
-                "swing_volume_pulse_ratio": float(getattr(signal, "swing_volume_pulse_ratio", 0.0)),
-                "live_activity_score": float(getattr(signal, "live_activity_score", 0.0)),
-                "extension_score": float(getattr(signal, "extension_score", 0.0)),
-                "pre_bounce_score": float(getattr(signal, "pre_bounce_score", 0.0)),
-                "pre_bounce_eligible": bool(getattr(signal, "pre_bounce_eligible", False)),
-                "two_sided_score": float(getattr(signal, "two_sided_score", 0.0)),
-                "bounce_score": float(getattr(signal, "bounce_score", 0.0)),
-                "bounce_direction": int(getattr(signal, "bounce_direction", 0) or 0),
-                "bounce_eligible": bool(getattr(signal, "bounce_eligible", False)),
                 "technical_stop_price": getattr(signal, "technical_stop_price", None),
                 "technical_stop_pct": getattr(signal, "technical_stop_pct", None),
                 "reversal_structural_reclaim": bool(getattr(_setup(signal), "structural_reclaim", False)),
@@ -1244,6 +1240,20 @@ class PaperTrader:
             return False
         if not new_direction or new_direction == int(position["direction"]):
             return False
+        if signal.state in PROBE_STATES:
+            # TRY against an existing position is a correction first, not an
+            # automatic full flip. Reduce immediately and let NOW own reversal.
+            pct = max(10.0, min(100.0, float(self.config.get("paper_opposite_try_reduce_pct", 50))))
+            old_margin = _f(position["margin_usd"])
+            close_margin = max(1.0, old_margin * pct / 100.0)
+            close_margin = min(old_margin, close_margin)
+            self._close(
+                position,
+                close_margin,
+                "entgegengesetztes TRY; Risiko reduziert",
+                104.0,
+            )
+            return True
         reverse_block = self._entry_block(signal, additional=False)
         strict = (
             reverse_block is None
@@ -1273,11 +1283,11 @@ class PaperTrader:
             self.actions.append(close_action)
             self._record(
                 close_action,
-                close_details | {"reverse_block": f"Hebel unter {int(self.config.get('paper_min_leverage', 10))}x"},
+                close_details | {"reverse_block": f"Hebel unter {int(self.config.get('paper_min_leverage', 5))}x"},
             )
             self._log(
                 f"REVERSE {signal.alias} verworfen: Markt erlaubt keinen "
-                f"{int(self.config.get('paper_min_leverage', 10))}x-Paper-Hebel"
+                f"{int(self.config.get('paper_min_leverage', 5))}x-Paper-Hebel"
             )
             return True
         target = min(old_margin, self._target_margin(signal, rank))
@@ -1307,13 +1317,6 @@ class PaperTrader:
         hard_opposition = support == -direction and signal.state in {
             "BUY", "SELL", "STRONG_LONG", "STRONG_SHORT"
         }
-        bounce_opposition = bool(
-            getattr(signal, "bounce_eligible", False)
-            and int(getattr(signal, "bounce_direction", 0) or 0) == -direction
-            and float(getattr(signal, "bounce_score", 0.0))
-            >= float(self.config.get("paper_exit_bounce_score", 62.0))
-        )
-        hard_opposition = hard_opposition or bounce_opposition
         exit_hint = bool(setup_now.exit_hint) and signal.selected_setup == {
             "E": "EARLY",
             "T": "TREND",
@@ -1363,25 +1366,22 @@ class PaperTrader:
             or bool(position.get("target_one_taken"))
         ):
             return
-        if bool(self.config.get("paper_require_swing_gate", True)):
-            if not bool(getattr(signal, "bounce_eligible", False)):
-                return
-            bounce_direction = int(getattr(signal, "bounce_direction", 0) or 0)
-            if bounce_direction and bounce_direction != int(position["direction"]):
-                return
         observation = self.state.get("observations", {}).get(signal.symbol, {})
-        add_interval = int(self.config.get("paper_add_min_interval_minutes", 5))
+        current_tier = int(position.get("signal_tier", _signal_tier(str(position.get("entry_state", "")))))
+        new_tier = _signal_tier(signal.state)
+        upgrade = new_tier > current_tier
+        add_interval = int(
+            self.config.get("paper_upgrade_min_interval_minutes", 1)
+            if upgrade else self.config.get("paper_add_min_interval_minutes", 5)
+        )
         last_add = _parse_time(
             position.get("last_scale_at") or position.get("opened_at"),
             self.now,
         )
         if (self.now - last_add).total_seconds() < add_interval * 60:
             return
-        streak_needed = 1 if signal.state in IMMEDIATE_STATES else 2
+        streak_needed = 1 if upgrade or signal.state in IMMEDIATE_STATES else 2
         if int(observation.get("entry_streak", 0)) < streak_needed:
-            return
-        upgrade = bool(position.get("probe_entry")) and signal.state in IMMEDIATE_STATES
-        if not upgrade and signal.state not in IMMEDIATE_STATES and int(observation.get("entry_streak", 0)) < 2:
             return
         target = self._target_margin(signal, rank)
         current = _f(position["margin_usd"])
@@ -1447,9 +1447,11 @@ class PaperTrader:
         position["target_two_price"] = candidate_two
         position["scale_count"] = int(position.get("scale_count", 0)) + 1
         position["last_scale_at"] = _iso(self.now)
-        position["probe_entry"] = False
+        position["signal_tier"] = max(int(position.get("signal_tier", 0)), new_tier)
+        position["entry_state"] = signal.state
+        position["probe_entry"] = new_tier < 3
         position["risk_usd"] = round(_f(position.get("risk_usd")) + added_risk, 10)
-        reason = "Probe bestätigt" if upgrade else "zweite starke Bestätigung"
+        reason = "Signalstufe erhöht" if upgrade else "erneute starke Bestätigung"
         action = PaperAction(
             symbol=signal.symbol, alias=signal.alias, kind="OPEN",
             direction=int(position["direction"]), margin_usd=add, leverage=leverage,
@@ -1493,7 +1495,7 @@ class PaperTrader:
         for symbol, position in list((self.state.get("positions") or {}).items()):
             reason: str | None = None
             if symbol not in allowed_symbols:
-                reason = "Symbol nicht im v5.7.0-Kandidatenpool"
+                reason = "Symbol nicht im v6.0.0-Kandidatenpool"
             if reason is None:
                 continue
             signal = self.signals.get(symbol)
@@ -1594,7 +1596,7 @@ class PaperTrader:
                     platform = _f(getattr(signal, "platform_max_leverage", 0.0))
                     block = (
                         f"Lighter-Maximalhebel {platform:g}x liegt unter "
-                        f"{int(self.config.get('paper_min_leverage', 10))}x"
+                        f"{int(self.config.get('paper_min_leverage', 5))}x"
                     )
                 if block:
                     self._log(
