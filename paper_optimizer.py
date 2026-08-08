@@ -1,5 +1,5 @@
-# r3
-"""Fast diagnostic plus evidence-based paper review for CF v5.5.0.
+# r2
+"""Fast diagnostic plus evidence-based paper review for CF v5.6.0.
 
 No finding changes trading parameters automatically.  The rapid audit can flag
 one objectively poor entry after only one to three closed trades, but labels it
@@ -15,7 +15,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Callable, Iterable, Mapping
 
-STATE_VERSION = "paper-optimizer-v550-r3"
+STATE_VERSION = "paper-optimizer-v560-r2"
 
 
 def _f(value: Any, default: float = 0.0) -> float:
@@ -140,6 +140,15 @@ def _rapid_rules(config: Mapping[str, Any]) -> list[tuple[str, str, Callable[[Ma
             ),
         ),
         (
+            "WEAK_SWING_GATE",
+            "Einstieg hatte zu wenig Speed/Aktivität für den erwarteten Bounce",
+            lambda row: (
+                _f(row["features"].get("swing_speed_score")) < float(config.get("paper_min_swing_speed_score", 45))
+                or _f(row["features"].get("live_activity_score")) < float(config.get("paper_min_live_activity_score", 45))
+                or _f(row["features"].get("bounce_score")) < float(config.get("paper_min_bounce_score", 52))
+            ),
+        ),
+        (
             "COST_HEAVY",
             "Ausführungskosten waren im Verhältnis zum Stop zu hoch",
             lambda row: (
@@ -197,6 +206,10 @@ def _feature_rules() -> list[tuple[str, str, Callable[[Mapping[str, Any]], bool]
         ("HIGH_COST", "hohe Roundtrip-Kosten", lambda f: _f(f.get("cost_pct")) > 0.065),
         ("REGIME_AGAINST", "7/14/30D-Regime gegen Einstieg", lambda f: bool(f.get("regime_available", False)) and _f(f.get("regime_modifier")) <= -4),
         ("EXTREME_CHASE", "Einstieg in Richtung einer Überdehnung", lambda f: bool(f.get("extremity_available", False)) and _f(f.get("extremity_score")) * int(_f(f.get("direction"))) >= 45),
+        ("LOW_SPEED", "niedrige aktuelle Swing-Geschwindigkeit", lambda f: _f(f.get("swing_speed_score"), 100) < 50),
+        ("LOW_LIVE_ACTIVITY", "niedrige aktuelle Lighter-Aktivität", lambda f: _f(f.get("live_activity_score"), 100) < 50),
+        ("ONE_SIDED", "zu einseitige Mikro-Bewegung", lambda f: _f(f.get("two_sided_score"), 100) < 30),
+        ("LOW_BOUNCE", "niedriger Extremity/Speed/Aktivitäts-Bounce-Score", lambda f: _f(f.get("bounce_score"), 100) < 58),
         ("SETUP_T", "T-Setup", lambda f: str(f.get("setup")) == "T"),
         ("SETUP_E", "E-Setup", lambda f: str(f.get("setup")) == "E"),
         ("SETUP_W", "W-Setup", lambda f: str(f.get("setup")) == "W"),

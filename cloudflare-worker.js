@@ -1,10 +1,10 @@
-// r3
-// Crypto event feed and GitHub scheduler for v5.5.0.
+// r2
+// Crypto event feed and GitHub scheduler for v5.6.0.
 
-const APP_VERSION = "5.5.0";
-const PACKAGE_REVISION = "r3";
-const STORE_KEY = "crypto-events-v550-r3";
-const CACHE_URL = "https://crypto-events.internal/v5.5.0-r3/events.json";
+const APP_VERSION = "5.6.0";
+const PACKAGE_REVISION = "r2";
+const STORE_KEY = "crypto-events-v560-r2";
+const CACHE_URL = "https://crypto-events.internal/v5.6.0-r2/events.json";
 const ACTIVE_RETENTION_MS = 25 * 60 * 1000;
 const STATUS_GRACE_MS = 10 * 60 * 1000;
 const STATUS_BATCH_COUNT = 2;

@@ -1,5 +1,5 @@
-# r3
-"""Lighter-native early-swing/T/W signal engine for CF v5.5.0."""
+# r2
+"""Lighter-native extremity, swing-speed and activity signal engine for CF v5.6.0."""
 from __future__ import annotations
 
 import json
@@ -16,14 +16,15 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from regime_context import calculate_regimes
-from extremity_context import calculate_extremity, extremity_code, extremity_color
+from extremity_context import calculate_extremity, extremity_color
+from swing_context import calculate_pin, calculate_swing_metrics
 from incident_context import IncidentSnapshot, detect_spontaneous_incidents
 from signal_streak_state import apply_signal_streaks
 from signal_transition_guard import apply_signal_transition_guard
 from signal_evaluator import update_signal_evaluation
 
-APP_VERSION = "5.5.0"
-PACKAGE_REVISION = "r3"
+APP_VERSION = "5.6.0"
+PACKAGE_REVISION = "r2"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 GLOBAL_BTC_EVENT_KINDS = {
@@ -47,7 +48,7 @@ STATE_TIER = {
     "INVALID_DATA": 0,
 }
 
-DAILY_CACHE_SCHEMA = "daily-candles-v550-r3"
+DAILY_CACHE_SCHEMA = "daily-candles-v560-r2"
 
 
 def _load_daily_candle_cache(
@@ -275,6 +276,21 @@ class Signal:
     extremity_return_1d: float | None = None
     extremity_return_3d: float | None = None
     extremity_return_7d: float | None = None
+    swing_available: bool = False
+    swing_speed_pct: float = 0.0
+    swing_speed_bps: float = 0.0
+    swing_speed_score: float = 0.0
+    swing_speed_ratio: float = 0.0
+    swing_turnover_5m_pct: float = 0.0
+    swing_volume_pulse_ratio: float = 0.0
+    live_activity_score: float = 0.0
+    two_sided_score: float = 0.0
+    bounce_score: float = 0.0
+    bounce_direction: int = 0
+    bounce_eligible: bool = False
+    btc_pin_available: bool = False
+    btc_pin_level: float = 0.0
+    btc_pin_score: float = 0.0
     technical_stop_price: float | None = None
     technical_stop_pct: float | None = None
     regime_available: bool = False
@@ -1310,6 +1326,43 @@ def _btc_price_code(price: float) -> str:
     return f"{value:,.0f}" if value > 0.0 else ""
 
 
+def _signed_extremity_token(signal: Signal) -> str:
+    if not signal.extremity_available:
+        return f"{signal.alias}?"
+    value = min(99, int(round(abs(float(signal.extremity_score)))))
+    sign = "+" if float(signal.extremity_score) >= 0.0 else "-"
+    return f"{signal.alias}{sign}{value:02d}"
+
+
+def _speed_token(signal: Signal) -> str:
+    bps = max(0, min(99, int(round(float(signal.swing_speed_bps)))))
+    return f"S{bps:02d}"
+
+
+def _activity_token(signal: Signal) -> str:
+    value = max(0, min(99, int(round(float(signal.live_activity_score)))))
+    return f"A{value:02d}"
+
+
+def _pin_token(signal: Signal) -> str:
+    if not signal.btc_pin_available:
+        return ""
+    value = max(0, min(99, int(round(float(signal.btc_pin_score)))))
+    return f"P{value:02d}"
+
+
+def _swing_display_eligible(signal: Signal, config: Mapping[str, Any]) -> bool:
+    # Display eligibility follows the live rebound thesis. Execution/spread and
+    # slower liquidity diagnostics remain visible as warnings; Paper Trading
+    # retains its own stricter execution/liquidity risk gates.
+    return bool(
+        signal.bounce_eligible
+        and signal.state != "INVALID_DATA"
+        and signal.tape_quality >= float(config.get("swing_min_tape_quality", 45.0))
+        and signal.platform_max_leverage >= float(config.get("swing_min_platform_leverage", 5.0))
+    )
+
+
 def _detail_head(signal: Signal) -> str:
     """Show current multi-window pressure; purple is reserved for NOW."""
     if signal.state == "INVALID_DATA":
@@ -1321,7 +1374,7 @@ def _detail_head(signal: Signal) -> str:
     if pressure is None:
         pressure = float(signal.direction)
     if abs(pressure) < 8.0:
-        return "🟡 ▷  "
+        return "🟡▷"
     if pressure >= 22.0:
         return "🟢▲"
     if pressure > 0.0:
@@ -1525,14 +1578,14 @@ class LighterMonitor:
         })
         if invalid_event_targets:
             raise ValueError(f"Event-Aliase zeigen außerhalb des Kandidatenpools: {invalid_event_targets}")
-        summary_count = int(self.config.get("summary_coin_count", 5))
+        summary_count = int(self.config.get("summary_alt_count", 4))
         summary_anchor = str(self.config.get("summary_anchor_symbol", "BTC")).upper()
         minimum_details = int(self.config.get("minimum_detail_count", 1))
         maximum_details = int(self.config.get("maximum_detail_count", 4))
-        if not 1 <= summary_count <= len(symbols):
-            raise ValueError("summary_coin_count liegt außerhalb der Kandidatenzahl")
         if summary_anchor not in symbols:
             raise ValueError("summary_anchor_symbol muss im Kandidatenpool liegen")
+        if not 1 <= summary_count <= max(1, len(symbols) - 1):
+            raise ValueError("summary_alt_count liegt außerhalb der Altcoin-Kandidatenzahl")
         if not 1 <= minimum_details <= maximum_details <= len(symbols):
             raise ValueError("Detailzeilen-Konfiguration ist ungültig")
         line_limit = int(self.config.get("discord_max_codepoints_per_line", 34))
@@ -1605,7 +1658,6 @@ class LighterMonitor:
             "btc_trend_immediate_breadth_score",
             "btc_reversal_immediate_breadth_score",
             "minimum_tape_quality",
-            "detail_attention_threshold",
         )
         if any(not 0 <= float(self.config.get(key, 100)) <= 100 for key in setup_thresholds):
             raise ValueError("Setup- und Qualitätswerte müssen zwischen null und 100 liegen")
@@ -1682,6 +1734,39 @@ class LighterMonitor:
         )
         if any(float(self.config.get(key, 0)) <= 0 for key in positive_keys):
             raise ValueError("Ausführungs- und Datenparameter müssen positiv sein")
+        swing_scores = (
+            "swing_extremity_min_abs", "swing_speed_min_score",
+            "swing_activity_min_score", "swing_two_sided_min_score",
+            "swing_bounce_min_score", "swing_min_tape_quality",
+        )
+        if any(not 0 <= float(self.config.get(key, -1.0)) <= 100 for key in swing_scores):
+            raise ValueError("Swing-Gates müssen zwischen null und 100 liegen")
+        if not 5 <= int(self.config.get("swing_speed_lookback_minutes", 12)) <= 30:
+            raise ValueError("swing_speed_lookback_minutes ist ungültig")
+        if not 3 <= int(self.config.get("swing_activity_lookback_minutes", 5)) <= 15:
+            raise ValueError("swing_activity_lookback_minutes ist ungültig")
+        if not 10 <= int(self.config.get("swing_two_sided_lookback_minutes", 20)) <= 40:
+            raise ValueError("swing_two_sided_lookback_minutes ist ungültig")
+        if not 100 <= float(self.config.get("btc_pin_level_step_usd", 1000)) <= 10_000:
+            raise ValueError("btc_pin_level_step_usd ist ungültig")
+        speed_floor = float(self.config.get("swing_speed_absolute_floor_pct", 0.025))
+        speed_strong = float(self.config.get("swing_speed_strong_pct", 0.16))
+        if not 0 < speed_floor < speed_strong <= 5.0:
+            raise ValueError("Swing-Speed-Absolutschwellen sind ungültig")
+        if not 0.01 <= float(self.config.get("swing_activity_turnover_reference_5m_pct", 0.30)) <= 20.0:
+            raise ValueError("swing_activity_turnover_reference_5m_pct ist ungültig")
+        if not 0.05 <= float(self.config.get("swing_two_sided_noise_fraction", 0.80)) <= 3.0:
+            raise ValueError("swing_two_sided_noise_fraction ist ungültig")
+        if not 1 <= int(self.config.get("swing_two_sided_min_each_direction", 2)) <= 6:
+            raise ValueError("swing_two_sided_min_each_direction ist ungültig")
+        if not 5 <= float(self.config.get("swing_min_platform_leverage", 5.0)) <= 100:
+            raise ValueError("swing_min_platform_leverage ist ungültig")
+        if not 30 <= int(self.config.get("btc_pin_lookback_minutes", 60)) <= 180:
+            raise ValueError("btc_pin_lookback_minutes ist ungültig")
+        if not 0.03 <= float(self.config.get("btc_pin_band_pct", 0.15)) <= 2.0:
+            raise ValueError("btc_pin_band_pct ist ungültig")
+        if not 1.0 <= float(self.config.get("btc_pin_current_band_multiple", 2.0)) <= 4.0:
+            raise ValueError("btc_pin_current_band_multiple ist ungültig")
         if int(self.config.get("candle_count", 360)) < 200:
             raise ValueError("candle_count muss mindestens 200 betragen")
         breadth_symbols = [str(value).upper() for value in self.config.get("btc_breadth_symbols", [])]
@@ -1715,7 +1800,9 @@ class LighterMonitor:
             market.get("mark_price"),
             _f(market.get("last_trade_price")),
         )
-        signal.open_interest_usd = _f(market.get("open_interest")) * reference_price
+        # Lighter exposes open_interest as quote/notional market value; do not
+        # multiply it by price a second time.
+        signal.open_interest_usd = _f(market.get("open_interest"))
         signal.volume_oi = (
             signal.volume_24h / signal.open_interest_usd
             if signal.open_interest_usd > 0
@@ -2471,6 +2558,63 @@ class LighterMonitor:
             payload[item.symbol] = result.to_dict()
         return payload
 
+    def _apply_swing_context(
+        self,
+        signals: list[Signal],
+        snapshots: Mapping[str, Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        """Calculate directionless live speed/activity and bounce readiness.
+
+        Extremity supplies only the stretched side.  The opposite side becomes
+        the prospective bounce direction; speed/activity/two-sided movement
+        decide whether that idea is timely enough to surface.
+        """
+        payload: dict[str, Any] = {}
+        for item in signals:
+            rows = list((snapshots.get(item.symbol) or {}).get("candles") or [])
+            result = calculate_swing_metrics(
+                candles=rows,
+                open_interest_usd=item.open_interest_usd,
+                tape_quality=item.tape_quality,
+                extremity_score=item.extremity_score,
+                extremity_available=item.extremity_available,
+                config=self.config,
+            )
+            item.swing_available = result.available
+            item.swing_speed_pct = result.speed_pct_per_min
+            item.swing_speed_bps = result.speed_bps
+            item.swing_speed_score = result.speed_score
+            item.swing_speed_ratio = result.speed_ratio
+            item.swing_turnover_5m_pct = result.turnover_5m_pct
+            item.swing_volume_pulse_ratio = result.volume_pulse_ratio
+            item.live_activity_score = result.live_activity_score
+            item.two_sided_score = result.two_sided_score
+            item.bounce_score = result.bounce_score
+            item.bounce_direction = result.bounce_direction
+            item.bounce_eligible = result.bounce_eligible
+            row_payload = result.to_dict()
+
+            if item.symbol == "BTC":
+                pin = calculate_pin(
+                    candles=rows,
+                    current_price=item.live_price or item.price,
+                    noise_pct=item.noise_pct,
+                    config=self.config,
+                )
+                item.btc_pin_available = pin.available
+                item.btc_pin_level = pin.level
+                item.btc_pin_score = pin.score
+                row_payload["pin"] = pin.to_dict()
+
+            if item.bounce_eligible:
+                side = "Long" if item.bounce_direction > 0 else "Short"
+                item.reasons.append(
+                    f"Swing-Gate {side}: EXT {abs(item.extremity_score):.0f} / "
+                    f"S {item.swing_speed_score:.0f} / A {item.live_activity_score:.0f}"
+                )
+            payload[item.symbol] = row_payload
+        return payload
+
     def _apply_event_context(
         self,
         signals: list[Signal],
@@ -2591,39 +2735,37 @@ class LighterMonitor:
             }.get(item.state, 0.0)
             late_penalty = 40.0 if setup.exit_hint or setup.phase in {"late", "invalidated"} else 0.0
             item.attention_score = _clamp(
-                item.trade_readiness * 0.34
-                + item.confidence * 0.18
-                + item.opportunity * 0.20
-                + setup.score * 0.18
-                + item.tape_quality * 0.10
+                item.trade_readiness * 0.24
+                + item.confidence * 0.14
+                + item.opportunity * 0.14
+                + setup.score * 0.10
+                + item.tape_quality * 0.07
+                + item.bounce_score * 0.23
+                + item.live_activity_score * 0.08
                 + state_bonus
                 - late_penalty
-                - (float(5.0) if item.selected_setup == "TREND" else 0.0)
+                - (float(4.0) if item.selected_setup == "TREND" else 0.0)
             )
         return sorted(
             signals,
             key=lambda item: (
+                -float(item.bounce_score),
                 -STATE_TIER.get(item.state, 0),
                 -item.attention_score,
-                -item.trade_readiness,
-                -item.confidence,
+                -abs(float(item.extremity_score)),
                 item.alias,
             ),
         )
 
     @staticmethod
-    def _summary_sort_key(item: Signal) -> tuple[float, float, float, float, str]:
-        """Sort from quiet to strongly overbought/oversold.
-
-        The absolute extremity is the primary measure. Readiness and attention
-        only break ties; unavailable rows remain behind valid candidates.
-        """
-        available = bool(item.extremity_available and item.state != "INVALID_DATA")
+    def _summary_sort_key(item: Signal) -> tuple[float, float, float, float, float, str]:
+        """Rank only timely rebound candidates; extremity alone is insufficient."""
         return (
-            1.0 if available else 0.0,
-            abs(float(item.extremity_score)) if available else 0.0,
-            float(item.trade_readiness) if available else 0.0,
-            float(item.attention_score) if available else 0.0,
+            1.0 if item.bounce_eligible else 0.0,
+            float(item.bounce_score),
+            abs(float(item.extremity_score)),
+            float(item.swing_speed_score),
+            float(item.live_activity_score),
             item.alias,
         )
 
@@ -2656,60 +2798,26 @@ class LighterMonitor:
             item for item in ordered
             if float(item.event_priority + item.event_risk) >= max(145.0, top_score - 8.0)
         ]
-        pool = urgent if urgent else ordered
+        if not urgent:
+            return None
         minute_bucket = int(now.timestamp() // 60)
-        return pool[minute_bucket % len(pool)].symbol
+        return urgent[minute_bucket % len(urgent)].symbol
 
     def _summary_items(
         self,
         signals: list[Signal],
         priority_alt_symbol: str | None = None,
     ) -> list[Signal]:
-        """Select three alternative coins and keep BTC fixed on the far right.
-
-        A currently displayed non-BTC event or acute incident reserves one of
-        the alternative slots. It never replaces the BTC macro/event anchor.
-        """
-        requested = {
-            str(value).upper()
-            for value in self.config.get("candidate_symbols", [])
-        }
-        anchor_symbol = str(
-            self.config.get("summary_anchor_symbol", "BTC")
-        ).upper()
-        count = int(self.config.get("summary_coin_count", 4))
-        anchor = next(
-            (item for item in signals if item.symbol == anchor_symbol),
-            None,
-        )
-        alt_slots = max(0, count - (1 if anchor is not None else 0))
+        """Top row: strictly fast/active decisive-extremity altcoins."""
+        requested = {str(value).upper() for value in self.config.get("candidate_symbols", [])}
+        anchor_symbol = str(self.config.get("summary_anchor_symbol", "BTC")).upper()
+        count = int(self.config.get("summary_alt_count", 4))
         alternatives = [
-            item
-            for item in signals
+            item for item in signals
             if item.symbol in requested and item.symbol != anchor_symbol
         ]
-        priority_symbol = str(priority_alt_symbol or "").upper()
-        priority_item = next(
-            (
-                item for item in alternatives
-                if item.symbol == priority_symbol and item.symbol != anchor_symbol
-            ),
-            None,
-        )
-
-        ranked = sorted(
-            (item for item in alternatives if item is not priority_item),
-            key=self._summary_sort_key,
-            reverse=True,
-        )
-        selected = ranked[: max(0, alt_slots - (1 if priority_item is not None else 0))]
-        selected.sort(key=self._summary_sort_key)
-        if priority_item is not None and alt_slots > 0:
-            # Keep the reserved event/incident coin immediately before BTC.
-            selected.append(priority_item)
-        if anchor is not None:
-            selected.append(anchor)
-        return selected[:count]
+        eligible = [item for item in alternatives if _swing_display_eligible(item, self.config)]
+        return sorted(eligible, key=self._summary_sort_key, reverse=True)[:count]
 
     def _format(
         self,
@@ -2721,275 +2829,172 @@ class LighterMonitor:
     ) -> str:
         ranked = self._rank(signals)
         summary = self._summary_items(signals, incident_header_symbol)
-        base_anchor_symbol = str(
-            self.config.get("summary_anchor_symbol", "BTC")
-        ).upper()
-        protected_anchor_symbol = base_anchor_symbol
-        event_codes = {item.symbol: str(item.event_display_code or "") for item in summary}
-        warning_codes = {item.symbol: _warning_codes(item, self.config) for item in summary}
-        critical_warnings = {
-            "SEC!", "NET!", "SHK!", "DATA!", "STALE!",
-            "GAP!", "BOOK!", "CND!",
-        }
-
-        def summary_line() -> str:
-            tokens: list[str] = []
-            for item in summary:
-                event = event_codes.get(item.symbol, "")
-                warnings = [
-                    code for code in warning_codes.get(item.symbol, [])
-                    if not event or code not in event
-                ]
-                color = (
-                    "⚫" if item.state == "INVALID_DATA"
-                    else extremity_color(item.extremity_score, item.extremity_available)
-                )
-                price = (
-                    _btc_price_code(item.live_price or item.price)
-                    if item.symbol == protected_anchor_symbol and not event
-                    else ""
-                )
-                tokens.append(
-                    f"{item.alias}{color}{''.join(warnings)}{event}{price}"
-                )
-            return " ".join(tokens)
-
         max_len = int(self.config.get("discord_max_codepoints_per_line", 42))
-        max_columns = int(
-            self.config.get("discord_max_display_columns_per_line", max_len + 4)
-        )
-        # Header tokens are wider in Discord's mobile proportional font than
-        # the compact detail rows. Keep a separate empirical mobile cap and
-        # dynamically remove ordinary suffixes before Discord can wrap them.
-        header_max_len = int(
-            self.config.get("discord_max_header_codepoints_per_line", max_len)
-        )
-        header_max_columns = int(
-            self.config.get(
-                "discord_max_header_display_columns_per_line", max_columns
-            )
-        )
-        anchor_has_event = bool(event_codes.get(protected_anchor_symbol, ""))
-        if anchor_has_event:
-            header_max_len = min(
-                header_max_len,
-                int(self.config.get(
-                    "discord_max_event_codepoints_per_line", header_max_len
-                )),
-            )
-            header_max_columns = min(
-                header_max_columns,
-                int(self.config.get(
-                    "discord_max_event_display_columns_per_line",
-                    header_max_columns,
-                )),
-            )
+        max_columns = int(self.config.get("discord_max_display_columns_per_line", max_len + 4))
+        header_max_len = int(self.config.get("discord_max_header_codepoints_per_line", max_len))
+        header_max_columns = int(self.config.get("discord_max_header_display_columns_per_line", max_columns))
+        critical_warnings = {"SEC!", "NET!", "SHK!", "DATA!", "STALE!", "GAP!", "BOOK!", "CND!"}
 
         def line_fits(value: str) -> bool:
             return len(value) <= max_len and _discord_display_columns(value) <= max_columns
 
         def header_fits(value: str) -> bool:
-            return (
-                len(value) <= header_max_len
-                and _discord_display_columns(value) <= header_max_columns
-            )
+            return len(value) <= header_max_len and _discord_display_columns(value) <= header_max_columns
 
-        header = summary_line()
+        event_codes = {item.symbol: str(item.event_display_code or "") for item in summary}
+        warning_codes = {item.symbol: _warning_codes(item, self.config) for item in summary}
 
-        # Keep the BTC macro/event token and the deliberately reserved altcoin
-        # event intact. Trim ordinary warning suffixes before hiding news.
+        def header_line() -> str:
+            if not summary:
+                return "WAIT"
+            tokens: list[str] = []
+            for item in summary:
+                event = event_codes.get(item.symbol, "")
+                warnings = [code for code in warning_codes.get(item.symbol, []) if not event or code not in event]
+                color = "⚫" if item.state == "INVALID_DATA" else extremity_color(item.extremity_score, item.extremity_available)
+                tokens.append(f"{item.alias}{color}{''.join(warnings)}{event}")
+            return " ".join(tokens)
+
+        header = header_line()
+        # Preserve verified event/incident labels and hard data warnings first;
+        # ordinary quality warnings are the first removable material on mobile.
         changed = True
         while not header_fits(header) and changed:
             changed = False
-            for item in summary:
+            for item in reversed(summary):
                 codes = warning_codes.get(item.symbol, [])
                 for index in range(len(codes) - 1, -1, -1):
                     if codes[index] in critical_warnings:
                         continue
                     del codes[index]
                     changed = True
-                    header = summary_line()
+                    header = header_line()
                     break
                 if header_fits(header):
                     break
-
-        # Several simultaneous normal coin events can still exceed the compact
-        # mobile width. Preserve the rotating/reserved event and BTC; hide only
-        # non-reserved normal event duplicates. Critical events remain protected.
         if not header_fits(header):
-            reserved_symbols = {protected_anchor_symbol}
-            if incident_header_symbol:
-                reserved_symbols.add(str(incident_header_symbol).upper())
-            for item in summary:
-                code = event_codes.get(item.symbol, "")
-                if item.symbol in reserved_symbols or code in critical_warnings:
+            # Keep the rotating event slot; suppress only duplicate non-reserved
+            # event labels. Their protection remains active internally.
+            reserved = str(incident_header_symbol or "").upper()
+            for item in reversed(summary):
+                if item.symbol == reserved:
                     continue
                 event_codes[item.symbol] = ""
-                header = summary_line()
+                header = header_line()
                 if header_fits(header):
                     break
-
-        if not header_fits(header):
-            # In a broad data outage, repeated long DATA/STALE/GAP codes can
-            # otherwise exceed the mobile cap by one or two characters. The
-            # black invalid-data color and detail token still expose the issue;
-            # keep the BTC/reserved warning and trim only redundant alt codes.
-            data_warnings = {"DATA!", "STALE!", "GAP!", "BOOK!", "CND!"}
-            reserved_symbols = {protected_anchor_symbol}
-            if incident_header_symbol:
-                reserved_symbols.add(str(incident_header_symbol).upper())
-            for item in summary:
-                if item.symbol in reserved_symbols:
-                    continue
-                codes = warning_codes.get(item.symbol, [])
-                for index in range(len(codes) - 1, -1, -1):
-                    if codes[index] not in data_warnings:
-                        continue
-                    del codes[index]
-                    header = summary_line()
-                    break
-                if header_fits(header):
-                    break
-
-        if not header_fits(header):
-            # Multiple simultaneous critical altcoin incidents can be wider than
-            # the mobile header even after all ordinary suffixes are gone. Keep
-            # the currently reserved/rotating urgent coin intact and suppress
-            # only duplicate critical labels on the other alt slots. Their
-            # trading protection remains active and equally urgent incidents
-            # rotate into the reserved slot on subsequent minutes.
-            reserved_symbols = {protected_anchor_symbol}
-            if incident_header_symbol:
-                reserved_symbols.add(str(incident_header_symbol).upper())
-            removable = sorted(
-                (item for item in summary if item.symbol not in reserved_symbols),
-                key=lambda item: (
-                    float(item.event_priority + item.event_risk),
-                    float(item.event_risk),
-                    float(item.event_priority),
-                    item.alias,
-                ),
-            )
-            for item in removable:
-                code = event_codes.get(item.symbol, "")
-                if code in critical_warnings:
-                    event_codes[item.symbol] = ""
-                codes = warning_codes.get(item.symbol, [])
-                warning_codes[item.symbol] = [
-                    value for value in codes if value not in critical_warnings
-                ]
-                header = summary_line()
-                if header_fits(header):
-                    break
-
         if not header_fits(header):
             raise RuntimeError("Discord-Top-Zeilenlimit überschritten")
-        self.last_header_event_symbols = tuple(
-            item.symbol for item in summary if event_codes.get(item.symbol, "")
-        )
-        lines = [header]
+        displayed_event_symbols = {item.symbol for item in summary if event_codes.get(item.symbol, "")}
 
-        maximum_details = int(self.config.get("maximum_detail_count", 4))
-        threshold = float(self.config.get("detail_attention_threshold", 70))
-        near_threshold = float(self.config.get("detail_near_attention_threshold", 74))
         btc = next((item for item in ranked if item.symbol == "BTC"), None)
-
-        def detail_key(item: Signal) -> tuple[int, float, float, float, str]:
-            return (
-                STATE_TIER.get(item.state, 0),
-                float(item.attention_score),
-                float(item.trade_readiness),
-                float(item.confidence),
-                item.alias,
-            )
-
-        mandatory: list[Signal] = []
-        optional: list[Signal] = []
-        for item in ranked:
-            if item.symbol == "BTC":
-                continue
-            setup = _selected_setup(item)
-            valid_setup = setup.phase in {"ready", "strong", "forming"} and not setup.exit_hint
-            action = _action_code(item)
-            near_stronger_than_btc = (
-                btc is None or detail_key(item) > detail_key(btc)
-            )
-            is_mandatory = (
-                action in {"NOW", "TRY"}
-                or (
-                    action == "NEAR"
-                    and valid_setup
-                    and (
-                        item.attention_score >= near_threshold
-                        or near_stronger_than_btc
-                    )
-                )
-            )
-            if is_mandatory:
-                mandatory.append(item)
-            elif (
-                valid_setup
-                and STATE_TIER.get(item.state, 0) >= 2
-                and item.attention_score >= threshold
-            ):
-                optional.append(item)
-
-        selected: list[Signal] = []
-        seen: set[str] = set()
-
-        def add(item: Signal | None) -> None:
-            if item is None or item.symbol in seen:
-                return
-            selected.append(item)
-            seen.add(item.symbol)
+        eligible_alts = [
+            item for item in ranked
+            if item.symbol != "BTC" and _swing_display_eligible(item, self.config)
+        ]
+        max_details = int(self.config.get("maximum_detail_count", 7))
+        max_alt_details = max(0, max_details - (1 if btc is not None else 0))
 
         priority_symbol = str(incident_priority_symbol or "").upper()
-        priority_item = next((item for item in ranked if item.symbol == priority_symbol), None)
-        add(priority_item)
-        for item in sorted(mandatory, key=detail_key, reverse=True):
-            add(item)
+        priority_item = next((item for item in eligible_alts if item.symbol == priority_symbol), None)
+        ordered_alts = sorted(eligible_alts, key=self._summary_sort_key, reverse=True)
+        if priority_item is not None and priority_item in ordered_alts:
+            ordered_alts.remove(priority_item)
+            ordered_alts.insert(0, priority_item)
+        ordered_alts = ordered_alts[:max_alt_details]
 
-        soft_alt_slots = max(0, maximum_details - (1 if btc is not None else 0))
-        for item in sorted(optional, key=detail_key, reverse=True):
-            non_btc_count = sum(row.symbol != "BTC" for row in selected)
-            if non_btc_count >= soft_alt_slots:
-                break
-            add(item)
-        add(btc)
-        if not selected and ranked:
-            add(ranked[0])
-
-        details = sorted(selected, key=detail_key, reverse=True)
-        if priority_item is not None and priority_item in details:
-            details.remove(priority_item)
-            details.insert(0, priority_item)
-
-        for item in details:
+        def detail_line(item: Signal) -> str:
             if item.state == "INVALID_DATA":
-                lines.append(f"⚫? {item.alias}00")
-                continue
+                return f"⚫? {_signed_extremity_token(item)} DATA!"
             windows = "".join(
                 f"{minutes}{_window_color(item.windows.get(minutes, Window(minutes)))}"
                 for minutes in DISPLAY_WINDOWS
             )
-            setup_token = f"{_setup_code(item)}{_setup_age_code(item)}"
-            extreme_token = extremity_code(
-                item.extremity_score,
-                item.extremity_available,
-                item.direction,
-            )
-            tail = " ".join(
-                value for value in (
-                    f"{item.alias}{round(item.trade_readiness):02d}",
-                    _action_token(item),
-                    extreme_token,
-                    setup_token,
-                ) if value
-            )
-            lines.append(f"{_detail_head(item)} {windows} {tail}")
+            head = f"{_detail_head(item)} {windows}"
+            signed_ext = _signed_extremity_token(item)
+            warnings = _warning_codes(item, self.config)
+            event = str(item.event_display_code or "")
+            if event:
+                displayed_event_symbols.add(item.symbol)
+                warnings = [code for code in warnings if code not in event]
+            news_tokens = list(warnings) + ([event] if event else [])
+            metric_tokens = [_speed_token(item), _activity_token(item)]
+            if item.symbol == "BTC":
+                pin = _pin_token(item)
+                if pin:
+                    metric_tokens.append(pin)
+            price = _btc_price_code(item.live_price or item.price) if item.symbol == "BTC" and not event else ""
+            action = _action_code(item)
+            action_token = ""
+            if action in {"NEAR", "TRY", "NOW"}:
+                action_direction = _direction(item.direction)
+                if item.bounce_direction == 0 or action_direction == item.bounce_direction:
+                    action_token = _action_token(item)
 
+            def build(include_action: bool = True, include_price: bool = True) -> str:
+                tail = [signed_ext]
+                tail.extend(news_tokens)
+                if include_price and price:
+                    tail.append(price)
+                tail.extend(metric_tokens)
+                if include_action and action_token:
+                    tail.append(action_token)
+                return f"{head} {' '.join(tail)}"
+
+            line = build()
+            if line_fits(line):
+                return line
+            line = build(include_action=False)
+            if line_fits(line):
+                return line
+            line = build(include_action=False, include_price=False)
+            if line_fits(line):
+                return line
+            # Ordinary quality suffixes may be trimmed to protect the
+            # compact mobile line; verified event and critical warnings stay.
+            for index in range(len(news_tokens) - 1, -1, -1):
+                token = news_tokens[index]
+                if token == event or token in critical_warnings:
+                    continue
+                del news_tokens[index]
+                line = build(include_action=False, include_price=False)
+                if line_fits(line):
+                    return line
+            if not line_fits(line):
+                raise RuntimeError(f"Discord-Detailzeilenlimit überschritten: {item.symbol}")
+            return line
+
+        lines = [header]
+        # BTC is deliberately fixed as line two. It is context, not a competitor
+        # for the altcoin bounce slots in line one.
+        if btc is not None:
+            lines.append(detail_line(btc))
+
+        # A rare urgent coin event is a warning, not a bounce candidate. Keep it
+        # visible without letting a slow market bypass the strict first-row gate.
+        urgent_symbol = str(incident_header_symbol or "").upper()
+        urgent_item = next((item for item in ranked if item.symbol == urgent_symbol), None)
+        if (
+            urgent_item is not None
+            and urgent_item.symbol != "BTC"
+            and urgent_item not in summary
+            and urgent_item.event_display_code
+        ):
+            warning_line = f"⚠{urgent_item.alias} {urgent_item.event_display_code}"
+            hard = [code for code in _warning_codes(urgent_item, self.config) if code in critical_warnings]
+            if hard:
+                warning_line = f"⚠{urgent_item.alias} {''.join(hard)}{urgent_item.event_display_code}"
+            if line_fits(warning_line):
+                lines.append(warning_line)
+                displayed_event_symbols.add(urgent_item.symbol)
+
+        for item in ordered_alts:
+            lines.append(detail_line(item))
+        if len(lines) == 1 and ranked:
+            lines.append(detail_line(ranked[0]))
         if any(not line_fits(line) for line in lines):
             raise RuntimeError("Discord-Zeilenlimit überschritten")
+        self.last_header_event_symbols = tuple(sorted(displayed_event_symbols))
         return "\n".join(lines)
 
     def run(
@@ -3099,6 +3104,7 @@ class LighterMonitor:
         self._apply_btc_context(signals)
         regime_payload = self._apply_regime_context(signals, snapshots, daily_candles, now)
         extremity_payload = self._apply_extremity_context(signals, snapshots, daily_candles)
+        swing_payload = self._apply_swing_context(signals, snapshots)
         incident_snapshot = detect_spontaneous_incidents(
             self.config,
             signals=signals,
@@ -3125,9 +3131,9 @@ class LighterMonitor:
             }
         merged_display_codes.update(incident_snapshot.display_codes)
         self._apply_event_context(signals, merged_marks, merged_display_codes)
-        # Normal project events share the reserved header slot instead of
-        # permanently hiding one another. Acute incidents still override this
-        # choice through incident_snapshot.header_symbol below.
+        # Only urgent/current project events receive an event-only warning slot.
+        # Normal coin news remains attached to a qualifying coin without
+        # bypassing the speed/activity gate. Acute incidents still take priority.
         event_header_symbol = self._rotating_event_header_symbol(signals, now)
         transition_payload: dict[str, Any] = {}
         if signal_transition_state_path is not None:
@@ -3167,7 +3173,7 @@ class LighterMonitor:
             signals,
             now,
             incident_priority_symbol=incident_snapshot.priority_symbol,
-            incident_header_symbol=event_header_symbol or incident_snapshot.header_symbol,
+            incident_header_symbol=incident_snapshot.header_symbol or event_header_symbol,
         )
         minimum_lines = int(self.config.get("minimum_detail_count", 1)) + 1
         maximum_lines = len(allowed) + 1
@@ -3181,6 +3187,7 @@ class LighterMonitor:
             "signals": [asdict(item) for item in self.last_signals],
             "regime": regime_payload,
             "extremity": extremity_payload,
+            "swing": swing_payload,
             "signal_transition": transition_payload,
             "signal_evaluation": evaluation_payload,
             "incidents": incident_snapshot.to_dict(),

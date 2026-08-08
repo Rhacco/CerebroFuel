@@ -1,5 +1,5 @@
-# r3
-"""Persistent direction-transition protection for CF v5.5.0."""
+# r2
+"""Persistent direction-transition protection for CF v5.6.0."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-STATE_VERSION = "signal-transition-v550-r3"
+STATE_VERSION = "signal-transition-v560-r2"
 TRACKED_ACTIONS = {"NEAR", "TRY", "NOW"}
 STRONG_ACTIONS = {"TRY", "NOW"}
 MAX_ENTRY_AGE_MINUTES = 90
