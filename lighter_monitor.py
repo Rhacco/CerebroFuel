@@ -1,9 +1,10 @@
-# r1
+# r2
 """Lighter-native v5.5-style signal engine with live speed/activity context for CF v6.0.0."""
 from __future__ import annotations
 
 import json
 import math
+import re
 import statistics
 import time
 import unicodedata
@@ -24,7 +25,7 @@ from signal_transition_guard import apply_signal_transition_guard
 from signal_evaluator import update_signal_evaluation
 
 APP_VERSION = "6.0.0"
-PACKAGE_REVISION = "r1"
+PACKAGE_REVISION = "r2"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 GLOBAL_BTC_EVENT_KINDS = {
@@ -48,7 +49,7 @@ STATE_TIER = {
     "INVALID_DATA": 0,
 }
 
-DAILY_CACHE_SCHEMA = "daily-candles-v600-r1"
+DAILY_CACHE_SCHEMA = "daily-candles-v600-r2"
 
 
 def _load_daily_candle_cache(
@@ -1319,8 +1320,11 @@ def _setup_priority(item: Setup) -> tuple[int, float]:
 
 
 def _btc_price_code(price: float) -> str:
+    """Compact BTC header price: keep exactly the last four whole-dollar digits."""
     value = _f(price)
-    return f"{value:,.0f}" if value > 0.0 else ""
+    if value <= 0.0:
+        return ""
+    return f"{int(value) % 10000:04d}"
 
 
 def _signed_extremity_token(signal: Signal) -> str:
@@ -1526,6 +1530,46 @@ WARNING_DISPLAY_PRIORITY = {
     "B!": 68,   # weak BTC context
     "V!": 60,   # weak/uneven tape
 }
+
+
+HEADER_HIGH_IMPACT_EVENT_KINDS = {
+    "SECURITY",
+    "NETWORK",
+    "MARKET_SHOCK",
+    "UNLOCK",
+    "SUPPLY",
+    "ETF",
+    "ETF_FLOW",
+}
+
+
+def _header_high_impact_event_code(item: Signal) -> str:
+    """Return at most one genuinely price-moving coin event for the compact top row."""
+    code = str(item.event_display_code or "")
+    if not code:
+        return ""
+
+    kind = str(item.event_kind or "").upper().strip()
+    unlock_match = re.search(r"U(?:!|0D|\d+D|@\d{2}(?::\d{2})?)", code)
+    unlock_code = unlock_match.group(0) if unlock_match else ""
+
+    # Acute security/network/shock information outranks everything else. If an
+    # unlock was appended to that label, show only the acute code in the top
+    # row; the full event context remains available elsewhere.
+    if kind in {"SECURITY", "NETWORK", "MARKET_SHOCK"}:
+        if unlock_code:
+            primary = code.replace(unlock_code, "", 1)
+            return primary or code
+        return code
+
+    # A verified unlock outranks lower-priority coin events and is the most
+    # useful compact supply warning for this radar row.
+    if unlock_code:
+        return unlock_code
+
+    if kind in {"UNLOCK", "SUPPLY", "ETF", "ETF_FLOW"}:
+        return code
+    return ""
 
 
 def _warning_codes(item: Signal, config: Mapping[str, Any]) -> list[str]:
@@ -2772,7 +2816,7 @@ class LighterMonitor:
     ) -> str | None:
         candidates = [
             item for item in signals
-            if item.symbol != "BTC" and item.event_display_code
+            if item.symbol != "BTC" and _header_high_impact_event_code(item)
         ]
         if not candidates:
             return None
@@ -2847,9 +2891,20 @@ class LighterMonitor:
         ranked = self._rank(signals)
         summary = self._summary_items(signals, priority_header_symbol)
         anchor_symbol = str(self.config.get("summary_anchor_symbol", "BTC")).upper()
-        event_codes = {item.symbol: str(item.event_display_code or "") for item in summary}
-        warning_codes = {item.symbol: _warning_codes(item, self.config) for item in summary}
-        critical_warnings = {"SEC!", "NET!", "SHK!", "DATA!", "STALE!", "GAP!", "BOOK!", "CND!"}
+        event_codes = {
+            item.symbol: (
+                str(item.event_display_code or "")
+                if item.symbol == anchor_symbol
+                else _header_high_impact_event_code(item)
+            )
+            for item in summary
+        }
+        # The top row is a neutral early radar. Keep only true price-moving
+        # event/incident labels there; execution/data-quality warnings remain
+        # active in the signal engine and detail rows but do not consume header
+        # width.
+        warning_codes = {item.symbol: [] for item in summary}
+        critical_warnings = {"SEC!", "NET!", "SHK!"}
 
         max_len = int(self.config.get("discord_max_codepoints_per_line", 42))
         max_columns = int(self.config.get("discord_max_display_columns_per_line", max_len + 4))
@@ -2866,11 +2921,16 @@ class LighterMonitor:
             tokens: list[str] = []
             for item in summary:
                 event = event_codes.get(item.symbol, "")
-                warnings = [code for code in warning_codes.get(item.symbol, []) if not event or code not in event]
                 color = "⚫" if item.state == "INVALID_DATA" else extremity_color(item.extremity_score, item.extremity_available)
-                price = _btc_price_code(item.live_price or item.price) if item.symbol == anchor_symbol and not event else ""
-                pin = _pin_token(item) if item.symbol == anchor_symbol else ""
-                tokens.append(f"{item.alias}{color}{''.join(warnings)}{event}{price}{pin}")
+                if item.symbol == anchor_symbol:
+                    # Pxx replaces the literal BTC alias in the top row. The
+                    # alternating BTC payload stays unchanged: macro/event on
+                    # event minutes, otherwise the compact four-digit price.
+                    pin = _pin_token(item)
+                    payload = event or _btc_price_code(item.live_price or item.price)
+                    tokens.append(f"{pin}{color}{payload}")
+                else:
+                    tokens.append(f"{item.alias}{color}{event}")
             return " ".join(tokens)
 
         header = summary_line()
@@ -2903,6 +2963,53 @@ class LighterMonitor:
                     header = summary_line()
                     if header_fits(header):
                         break
+        if not header_fits(header):
+            # Broad data outages can repeat long DATA/STALE/GAP/BOOK/CND labels
+            # across all radar slots. Keep BTC and the reserved event/incident
+            # coin intact; redundant alt labels may be dropped exactly as in
+            # the robust v5.5 header fallback.
+            data_warnings = {"DATA!", "STALE!", "GAP!", "BOOK!", "CND!"}
+            reserved = {anchor_symbol, str(priority_header_symbol or "").upper()}
+            for item in summary:
+                if item.symbol in reserved:
+                    continue
+                codes = warning_codes.get(item.symbol, [])
+                for index in range(len(codes) - 1, -1, -1):
+                    if codes[index] not in data_warnings:
+                        continue
+                    del codes[index]
+                    header = summary_line()
+                    break
+                if header_fits(header):
+                    break
+
+        if not header_fits(header):
+            # If several altcoins carry simultaneous critical labels, preserve
+            # BTC and the currently reserved urgent coin. Other critical labels
+            # remain active in risk logic and rotate into the reserved slot, but
+            # duplicate header text may be suppressed to prevent wrapping.
+            reserved = {anchor_symbol, str(priority_header_symbol or "").upper()}
+            removable = sorted(
+                (item for item in summary if item.symbol not in reserved),
+                key=lambda item: (
+                    float(item.event_priority + item.event_risk),
+                    float(item.event_risk),
+                    float(item.event_priority),
+                    item.alias,
+                ),
+            )
+            for item in removable:
+                code = event_codes.get(item.symbol, "")
+                if code in critical_warnings:
+                    event_codes[item.symbol] = ""
+                warning_codes[item.symbol] = [
+                    value for value in warning_codes.get(item.symbol, [])
+                    if value not in critical_warnings
+                ]
+                header = summary_line()
+                if header_fits(header):
+                    break
+
         if not header_fits(header):
             raise RuntimeError("Discord-Top-Zeilenlimit überschritten")
 

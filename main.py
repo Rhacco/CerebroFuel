@@ -1,4 +1,4 @@
-# r1
+# r2
 """Crypto Signal Monitor v6.0.0 — Lighter pool with incident protection."""
 from __future__ import annotations
 

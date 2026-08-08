@@ -1,6 +1,6 @@
 {
   "schema_version": "6.0.0",
-  "package_revision": "r1",
+  "package_revision": "r2",
   "lighter_base_url": "https://mainnet.zklighter.elliot.ai/api/v1",
   "timezone": "Europe/Berlin",
   "candidate_symbols": [
@@ -341,8 +341,8 @@
   "discord_max_display_columns_per_line": 46,
   "discord_max_event_codepoints_per_line": 38,
   "discord_max_event_display_columns_per_line": 40,
-  "discord_max_header_codepoints_per_line": 38,
-  "discord_max_header_display_columns_per_line": 40,
+  "discord_max_header_codepoints_per_line": 42,
+  "discord_max_header_display_columns_per_line": 44,
   "paper_add_min_interval_minutes": 3,
   "paper_profit_target_one_roi_pct": 3.0,
   "paper_profit_target_two_roi_pct": 8.0,

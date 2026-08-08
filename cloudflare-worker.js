@@ -1,10 +1,10 @@
-// r1
+// r2
 // Crypto event feed and GitHub scheduler for v6.0.0.
 
 const APP_VERSION = "6.0.0";
-const PACKAGE_REVISION = "r1";
-const STORE_KEY = "crypto-events-v600-r1";
-const CACHE_URL = "https://crypto-events.internal/v6.0.0-r1/events.json";
+const PACKAGE_REVISION = "r2";
+const STORE_KEY = "crypto-events-v600-r2";
+const CACHE_URL = "https://crypto-events.internal/v6.0.0-r2/events.json";
 const ACTIVE_RETENTION_MS = 25 * 60 * 1000;
 const STATUS_GRACE_MS = 10 * 60 * 1000;
 const STATUS_BATCH_COUNT = 2;

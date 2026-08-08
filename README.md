@@ -1,12 +1,12 @@
-<!-- r1 -->
+<!-- r2 -->
 # Crypto Signal Monitor v6.0.0
 
 ## Anzeige
-Oben: drei aktuell aktivste Altcoins, nach Reversal-Seite von Short → Long sortiert; Warnungen/Events direkt am Coin. BTC bleibt rechts und wechselt wie bisher zwischen Kurs und aktuellen Makro-/ETF-Hinweisen.
+Oben: drei aktuell aktivste Altcoins, nach Reversal-Seite von Short → Long sortiert; Warnungen/Events direkt am Coin. BTC bleibt rechts, wechselt wie bisher zwischen Kurs und aktuellen Makro-/ETF-Hinweisen und trägt ganz am Zeilenende `Pxx`.
 
 Unten: BTC fest zuerst, danach nur die stärksten v5.5-artigen NEAR/TRY/NOW-Kandidaten von Short → Long. Fester Kern:
 `Druck · 05/20/60 · COIN±EXT · Sxx · Axx · R±xx`
-BTC ergänzt `Pxx`; variable News/Warnungen stehen ausschließlich rechts.
+Variable News/Warnungen stehen ausschließlich rechts.
 
 - `COIN+47/-47`: obere/untere Extremity
 - `Sxx`: Median der aktuellen 1m-Bewegung in bp/min

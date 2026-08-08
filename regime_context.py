@@ -1,4 +1,4 @@
-# r1
+# r2
 """Bounded 7/14/30-day regime context for CF v6.0.0.
 
 The regime layer never creates a trade direction. It only adjusts an already

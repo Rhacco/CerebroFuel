@@ -1,4 +1,4 @@
-# r1
+# r2
 """Live speed, activity, two-sided movement and BTC pinning context for CF v6.0.0.
 
 The v5.5 signal state remains authoritative. This layer only adds timing context:
@@ -181,73 +181,6 @@ def calculate_swing_metrics(
         0.01,
         baseline_median * float(config.get("swing_two_sided_noise_fraction", 0.80)),
     )
-
-    # Two-sided context needs genuine movement in both directions.
-    two_rows = candles[-(two_sided_lookback + 1):]
-    directional = _returns(two_rows)
-    up = sum(value >= meaningful_threshold for value in directional)
-    down = sum(value <= -meaningful_threshold for value in directional)
-    meaningful = up + down
-    if up > 0 and down > 0 and directional:
-        balance = 2.0 * min(up, down) / meaningful
-        coverage = meaningful / len(directional)
-        two_sided_score = _clamp(100.0 * math.sqrt(max(0.0, balance * coverage)))
-    else:
-        two_sided_score = 0.0
-
-    return SwingResult(reason="insufficient contiguous 1m candles")
-
-    recent_speed_rows = candles[-(speed_lookback + 1):]
-    recent_returns = [abs(value) for value in _returns(recent_speed_rows)]
-    baseline = [abs(value) for value in _baseline_returns(candles, speed_lookback, 120)]
-    if not recent_returns or len(baseline) < 45:
-        return SwingResult(reason="missing/fragmented speed baseline")
-
-    recent_median = statistics.median(recent_returns)
-    baseline_median = max(0.004, statistics.median(baseline))
-    speed_ratio = recent_median / baseline_median
-    relative_score = _clamp(50.0 + 32.0 * math.log2(max(speed_ratio, 0.125)))
-    floor_pct = max(0.005, float(config.get("swing_speed_absolute_floor_pct", 0.025)))
-    strong_pct = max(floor_pct + 0.01, float(config.get("swing_speed_strong_pct", 0.16)))
-    absolute_score = _clamp((recent_median - floor_pct) / (strong_pct - floor_pct) * 100.0)
-    speed_score = _clamp(relative_score * 0.55 + absolute_score * 0.45)
-
-    recent_activity_rows = candles[-activity_lookback:]
-    recent_volume = sum(_f(row.get("V")) for row in recent_activity_rows)
-    turnover_pct = (
-        recent_volume / open_interest_usd * 100.0
-        if open_interest_usd > 0 and recent_volume > 0
-        else 0.0
-    )
-    baseline_volume = _baseline_volume(candles, activity_lookback, 120)
-    current_average = recent_volume / activity_lookback if activity_lookback else 0.0
-    pulse_ratio = current_average / baseline_volume if baseline_volume > 0 else 0.0
-    turnover_reference = max(
-        0.01,
-        float(config.get("swing_activity_turnover_reference_5m_pct", 0.30)),
-    )
-    turnover_score = (
-        _clamp(50.0 + 25.0 * math.log10(max(turnover_pct, 1e-6) / turnover_reference))
-        if turnover_pct > 0
-        else 0.0
-    )
-    pulse_score = (
-        _clamp(50.0 + 30.0 * math.log2(max(pulse_ratio, 0.125)))
-        if pulse_ratio > 0
-        else 0.0
-    )
-    live_activity_score = _clamp(
-        turnover_score * 0.50
-        + pulse_score * 0.35
-        + _clamp(float(tape_quality)) * 0.15
-    )
-
-    meaningful_threshold = max(
-        0.01,
-        baseline_median * float(config.get("swing_two_sided_noise_fraction", 0.80)),
-    )
-
-    # Two-sided context needs genuine movement in both directions.
     two_rows = candles[-(two_sided_lookback + 1):]
     directional = _returns(two_rows)
     up = sum(value >= meaningful_threshold for value in directional)

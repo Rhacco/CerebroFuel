@@ -1,4 +1,4 @@
-# r1
+# r2
 """Persistent spontaneous-incident detection for CF v6.0.0.
 
 Confirmed external SECURITY/NETWORK events and strict Lighter market shocks use
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-STATE_VERSION = "incident-state-v600-r1"
+STATE_VERSION = "incident-state-v600-r2"
 
 
 @dataclass(frozen=True)
