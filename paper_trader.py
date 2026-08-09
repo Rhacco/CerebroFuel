@@ -1,4 +1,4 @@
-# r3
+# r4
 """Deterministic, multi-candidate paper-trading engine for CF v6.1.0."""
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from typing import Any, Iterable, Mapping
 
 STATE_SCHEMA = 6
 APP_VERSION = "6.1.0"
-PACKAGE_REVISION = "r3"
-COMPATIBLE_PACKAGE_REVISIONS = {"r2", PACKAGE_REVISION}
+PACKAGE_REVISION = "r4"
+COMPATIBLE_PACKAGE_REVISIONS = {"r2", "r3", PACKAGE_REVISION}
 ENTRY_STATES = {
     "BUY": 1, "SELL": -1,
     "STRONG_LONG": 1, "STRONG_SHORT": -1,

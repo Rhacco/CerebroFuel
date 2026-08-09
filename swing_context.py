@@ -1,4 +1,4 @@
-# r3
+# r4
 """Live speed, activity, two-sided movement and BTC pinning context for CF v6.1.0.
 
 The v5.5 signal state remains authoritative. This layer only adds timing context:
@@ -103,6 +103,9 @@ class PinResult:
     proximity_score: float = 0.0
     current_proximity_score: float = 0.0
     band_pct: float = 0.0
+    band_usd: float = 0.0
+    current_distance_usd: float = 0.0
+    level_step_usd: float = 0.0
     observations: int = 0
     coverage_pct: float = 0.0
     largest_gap_minutes: float = 0.0
@@ -221,6 +224,21 @@ def calculate_swing_metrics(
         ),
     )
 
+def _round_level_affinity(distance_usd: float, step_usd: float) -> float:
+    """Continuous 0..100 affinity to a round level within half a level step.
+
+    A price exactly on the level scores 100. At the midpoint between two round
+    levels it reaches zero smoothly. This makes the geometry independent of the
+    absolute BTC price and avoids the old percentage-based P00 cliff.
+    """
+    radius = max(step_usd * 0.5, 1e-9)
+    distance = max(0.0, _f(distance_usd))
+    x = _clamp(1.0 - distance / radius, 0.0, 1.0)
+    # Smoothstep: continuous value and slope at both ends, so tiny price/noise
+    # changes cannot create an artificial 00 -> high-score discontinuity.
+    return _clamp((x * x * (3.0 - 2.0 * x)) * 100.0)
+
+
 def calculate_pin(
     *,
     candles: list[Mapping[str, Any]],
@@ -228,12 +246,18 @@ def calculate_pin(
     noise_pct: float,
     config: Mapping[str, Any],
 ) -> PinResult:
-    """Measure whether BTC is currently attracted to a nearby round USD level.
+    """Measure persistent BTC attraction to the nearest round USD level.
 
-    PIN is deliberately tolerant of a small number of missing 1m bars. Coverage
-    and the largest actual timestamp gap are checked explicitly so a single
-    missing candle does not turn a healthy feed into an unavailable PIN marker,
-    while fragmented history still cannot manufacture a score.
+    The score is deliberately normalized to the configured round-level spacing,
+    not to BTC's absolute price. Current and historical proximity therefore mean
+    the same thing at 65k, 115k or any other price. There is no hard current-price
+    gate: affinity fades continuously to zero only at the exact midpoint between
+    neighbouring round levels.
+
+    P?? is reserved for unusable history. A valid P00 is possible only when the
+    continuous pin score itself rounds to zero (normally around a midpoint with
+    no meaningful attraction), never because a percentage threshold rejected the
+    candidate before scoring.
     """
     if not bool(config.get("btc_pin_enabled", True)):
         return PinResult(reason="disabled")
@@ -245,9 +269,8 @@ def calculate_pin(
     min_coverage = max(0.75, min(1.0, float(config.get("btc_pin_min_coverage", 0.90))))
     max_gap_minutes = max(1.0, min(5.0, float(config.get("btc_pin_max_gap_minutes", 3.0))))
 
-    # Deduplicate/sort valid closes and keep an actual wall-clock lookback. Using
-    # the last N rows would silently stretch a 60m PIN window when candles are
-    # missing, which is exactly the situation this metric must diagnose cleanly.
+    # Deduplicate and use an actual wall-clock window. Missing observations are
+    # visible in coverage and may not silently stretch a nominal 60-minute PIN.
     by_stamp: dict[int, float] = {}
     for row in candles:
         stamp = _timestamp_ms(row)
@@ -283,96 +306,120 @@ def calculate_pin(
 
     closes = [close for _, close in points]
     step = max(100.0, float(config.get("btc_pin_level_step_usd", 1000.0)))
-    nearest = round(current_price / step) * step
-    candidates = sorted({nearest - step, nearest, nearest + step})
-    band_pct_cfg = max(0.03, float(config.get("btc_pin_band_pct", 0.15)))
-    noise_band_pct = max(0.0, float(noise_pct)) * float(config.get("btc_pin_noise_multiple", 3.0))
-    band_pct = max(band_pct_cfg, noise_band_pct)
+    lower = math.floor(current_price / step) * step
+    upper = lower + step
+    candidates = sorted({level for level in (lower, upper) if level > 0})
+
+    # Return detection needs a compact inner band, but the final score does not
+    # use this band as a current-price gate. The band itself is step-normalized;
+    # noise may widen it modestly, capped well before the half-step midpoint.
+    base_band_fraction = max(
+        0.05,
+        min(0.40, float(config.get("btc_pin_return_band_step_fraction", 0.18))),
+    )
+    max_band_fraction = max(
+        base_band_fraction,
+        min(0.45, float(config.get("btc_pin_return_band_max_step_fraction", 0.30))),
+    )
+    noise_multiple = max(0.0, float(config.get("btc_pin_noise_multiple", 3.0)))
+    noise_usd = current_price * max(0.0, _f(noise_pct)) / 100.0
+    return_band = min(
+        step * max_band_fraction,
+        max(step * base_band_fraction, noise_usd * noise_multiple),
+    )
+    # Hysteresis avoids counting one-bar boundary chatter as repeated exits.
+    exit_band = min(step * 0.45, max(return_band * 1.35, return_band + step * 0.04))
     return_minutes = max(1, min(15, int(config.get("btc_pin_return_minutes", 5))))
-    current_band_multiple = max(1.0, min(4.0, float(config.get("btc_pin_current_band_multiple", 2.0))))
 
     best: PinResult | None = None
     for level in candidates:
-        if level <= 0:
-            continue
-        band = level * band_pct / 100.0
         current_distance = abs(current_price - level)
-        # Historical attraction only matters while BTC is still close enough to
-        # the same level now. A past pin must not survive a genuine move away.
-        if current_distance > band * current_band_multiple:
-            continue
+        current_affinity = _round_level_affinity(current_distance, step)
+        historical_affinities = [
+            _round_level_affinity(abs(close - level), step)
+            for close in closes
+        ]
 
-        inside = [abs(close - level) <= band for close in closes]
-        # Missing observations count conservatively against dwell instead of
-        # inflating it. This still leaves a one-candle API hole almost neutral.
-        dwell = sum(inside) / float(lookback)
-        distances = [abs(close - level) for close in closes]
-        median_distance = statistics.median(distances)
-        historical_proximity = _clamp(
-            (1.0 - median_distance / max(2.0 * band, 1e-9)) * 100.0
-        )
-        current_proximity = _clamp(
-            (1.0 - current_distance / max(band * current_band_multiple, 1e-9)) * 100.0
-        )
-        proximity = _clamp(
-            historical_proximity * 0.60 + current_proximity * 0.40
-        )
+        # Missing minutes count conservatively as zero dwell; proximity uses the
+        # observed distribution and receives the separate coverage quality factor.
+        dwell_score = _clamp(sum(historical_affinities) / float(lookback))
+        historical_proximity = _clamp(statistics.median(historical_affinities))
 
+        inside = [abs(close - level) <= return_band for close in closes]
+        outside = [abs(close - level) >= exit_band for close in closes]
         exits = 0
         returns = 0
         horizon_ms = return_minutes * 60_000
+        armed_inside = bool(inside[0]) if inside else False
         for index in range(1, len(points)):
             previous_stamp = points[index - 1][0]
             stamp = points[index][0]
-            # Do not infer an exit across a missing candle.
+            # Never infer an exit or return across a missing candle.
             if stamp - previous_stamp > 75_000:
+                armed_inside = bool(inside[index])
                 continue
-            if not inside[index] and inside[index - 1]:
-                # An exit too close to the end has not yet had its full return
-                # opportunity, so it is not counted as a failed return.
+            if inside[index]:
+                armed_inside = True
+                continue
+            if armed_inside and outside[index]:
+                # A late exit without a full return opportunity is not a failure.
                 if latest_stamp - stamp < horizon_ms:
+                    armed_inside = False
                     continue
                 exits += 1
                 deadline = stamp + horizon_ms
-                if any(
-                    inside[later]
-                    for later in range(index + 1, len(points))
-                    if points[later][0] <= deadline
-                ):
+                # A return is evidence only if the observation chain from the
+                # exit to the return is continuous. A missing 1m candle may hide
+                # an unobserved crossing and therefore must not be bridged.
+                previous_return_stamp = stamp
+                returned = False
+                for later in range(index + 1, len(points)):
+                    later_stamp = points[later][0]
+                    if later_stamp > deadline:
+                        break
+                    if later_stamp - previous_return_stamp > 75_000:
+                        break
+                    if inside[later]:
+                        returned = True
+                        break
+                    previous_return_stamp = later_stamp
+                if returned:
                     returns += 1
-        if exits:
-            return_score = returns / exits * 100.0
-        elif dwell >= 0.70:
-            return_score = 100.0
-        elif dwell >= 0.50:
-            return_score = 70.0
-        elif dwell >= 0.30:
-            return_score = 40.0
-        elif dwell >= 0.15:
-            return_score = 15.0
-        else:
-            return_score = 0.0
+                armed_inside = False
 
-        dwell_score = _clamp(dwell * 100.0)
-        raw_score = _clamp(dwell_score * 0.45 + return_score * 0.25 + proximity * 0.30)
-        # Coverage is already represented in dwell. A mild square-root quality
-        # factor prevents sparse-but-allowed history from looking stronger than
-        # a complete window without overreacting to one isolated missing bar.
-        score = _clamp(raw_score * math.sqrt(coverage))
+        # If BTC never left the pin area, persistence itself is the relevant
+        # evidence; do not invent either a perfect or failed return event.
+        return_score = (returns / exits * 100.0) if exits else dwell_score
+
+        raw_score = _clamp(
+            dwell_score * 0.45
+            + return_score * 0.20
+            + historical_proximity * 0.20
+            + current_affinity * 0.15
+        )
+        # Current affinity smoothly retires a historical pin as price moves toward
+        # the midpoint. sqrt keeps a strong, recently-held level visible while BTC
+        # is still reasonably near it, without allowing a stale pin at midpoint.
+        current_factor = math.sqrt(max(0.0, current_affinity) / 100.0)
+        score = _clamp(raw_score * current_factor * math.sqrt(coverage))
+
         result = PinResult(
             available=True,
             level=round(level, 8),
             score=round(score, 4),
             dwell_score=round(dwell_score, 4),
             return_score=round(return_score, 4),
-            proximity_score=round(proximity, 4),
-            current_proximity_score=round(current_proximity, 4),
-            band_pct=round(band_pct, 6),
+            proximity_score=round(historical_proximity, 4),
+            current_proximity_score=round(current_affinity, 4),
+            band_pct=round(return_band / step * 100.0, 6),
+            band_usd=round(return_band, 6),
+            current_distance_usd=round(current_distance, 6),
+            level_step_usd=round(step, 6),
             observations=observations,
             coverage_pct=round(coverage * 100.0, 4),
             largest_gap_minutes=round(largest_gap, 4),
             exits=exits,
-            reason="current-nearby level + dwell + return-to-level + proximity",
+            reason="step-normalized continuous proximity + dwell + return-to-level",
         )
         if best is None or result.score > best.score:
             best = result
@@ -380,16 +427,8 @@ def calculate_pin(
     if best is not None:
         return best
 
-    # No nearby round level is a valid market finding, not a data error. This is
-    # the only normal case that should legitimately display P00.
-    return PinResult(
-        available=True,
-        level=round(nearest, 8) if nearest > 0 else 0.0,
-        score=0.0,
-        band_pct=round(band_pct, 6),
-        observations=observations,
-        coverage_pct=round(coverage * 100.0, 4),
-        largest_gap_minutes=round(largest_gap, 4),
-        reason="current BTC price not near a round level",
-    )
+    # With a valid positive price at least one neighbouring level must exist.
+    # Keep this defensive path distinct from a valid P00 rather than hiding an
+    # internal geometry error as 'no pin'.
+    return PinResult(**diagnostics, reason="no valid BTC round-level candidate")
 

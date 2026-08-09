@@ -1,4 +1,4 @@
-<!-- r3 -->
+<!-- r4 -->
 # Crypto Signal Monitor v6.1.0
 
 ## Anzeige
@@ -10,7 +10,7 @@ Erst danach dürfen Coin-News/Warnungen abweichen.
 
 - `ER-99 … ER-00 … ER+99`: aktuelle Pfadstruktur aus 30m/2h/5h; nur tatsächlich relevante Range zählt. Stark negativ = schnelle beidseitige Sprünge, um 00 = gemischt/ruhiger, stark positiv = effizient laufende Bewegung. Das Vorzeichen ist **keine** Long/Short-Richtung.
 - `AGE00 … AGE99`: Beständigkeit derselben Struktur über 2h → 5h → 2d → 3d → 7d → 14d → 30d. Lange Stufen zählen nur, wenn auch rollende Teilfenster zur aktuellen Lage passen.
-- `COIN+47/-47`: Extremity wie bisher; `Pxx`: BTC-Pinning. `P??` = Pin-Daten nicht belastbar; `P00` = gültig kein aktueller Pin.
+- `COIN+47/-47`: Extremity wie bisher; `Pxx`: BTC-Pinning an 1.000-$-Marken. P wird relativ zum 1.000-$-Abstand kontinuierlich aus aktueller/historischer Nähe, Verweildauer und Rückkehr berechnet; kein preisabhängiger Hartfilter. `P??` = Pin-Daten nicht belastbar; `P00` = gültig praktisch keine Bindung.
 
 Speed/Activity, Two-Sided, 7/14/30D-Regime, Orderbuch- und Qualitätswerte bleiben intern für Auswahl/Risiko aktiv.
 

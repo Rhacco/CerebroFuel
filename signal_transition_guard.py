@@ -1,4 +1,4 @@
-# r3
+# r4
 """Persistent direction-transition protection for CF v6.1.0."""
 from __future__ import annotations
 

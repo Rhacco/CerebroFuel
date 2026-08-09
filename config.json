@@ -1,6 +1,6 @@
 {
   "schema_version": "6.1.0",
-  "package_revision": "r3",
+  "package_revision": "r4",
   "lighter_base_url": "https://mainnet.zklighter.elliot.ai/api/v1",
   "timezone": "Europe/Berlin",
   "candidate_symbols": [
@@ -371,9 +371,9 @@
   "btc_pin_enabled": true,
   "btc_pin_lookback_minutes": 60,
   "btc_pin_level_step_usd": 1000,
-  "btc_pin_band_pct": 0.15,
+  "btc_pin_return_band_step_fraction": 0.18,
+  "btc_pin_return_band_max_step_fraction": 0.3,
   "btc_pin_noise_multiple": 3.0,
-  "btc_pin_current_band_multiple": 2.0,
   "btc_pin_return_minutes": 5,
   "btc_pin_min_coverage": 0.9,
   "btc_pin_max_gap_minutes": 3,

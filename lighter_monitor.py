@@ -1,4 +1,4 @@
-# r3
+# r4
 """Lighter-native v5.5-style signal engine with compact flow context for CF v6.1.0."""
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from signal_transition_guard import apply_signal_transition_guard
 from signal_evaluator import update_signal_evaluation
 
 APP_VERSION = "6.1.0"
-PACKAGE_REVISION = "r3"
+PACKAGE_REVISION = "r4"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 GLOBAL_BTC_EVENT_KINDS = {
@@ -51,7 +51,7 @@ STATE_TIER = {
 }
 
 DAILY_CACHE_SCHEMA = "daily-candles-v610-r2"
-COMPATIBLE_CACHE_REVISIONS = {"r2", PACKAGE_REVISION}
+COMPATIBLE_CACHE_REVISIONS = {"r2", "r3", PACKAGE_REVISION}
 
 
 def _load_daily_candle_cache(
@@ -1899,9 +1899,9 @@ class LighterMonitor:
                 raise ValueError("Flow-AGE benötigt mindestens 31 Tageskerzen")
         pin_lookback = int(self.config.get("btc_pin_lookback_minutes", 60))
         pin_step = float(self.config.get("btc_pin_level_step_usd", 1000.0))
-        pin_band = float(self.config.get("btc_pin_band_pct", 0.15))
+        pin_return_band = float(self.config.get("btc_pin_return_band_step_fraction", 0.18))
+        pin_return_band_max = float(self.config.get("btc_pin_return_band_max_step_fraction", 0.30))
         pin_noise_multiple = float(self.config.get("btc_pin_noise_multiple", 3.0))
-        pin_current_multiple = float(self.config.get("btc_pin_current_band_multiple", 2.0))
         pin_return_minutes = int(self.config.get("btc_pin_return_minutes", 5))
         pin_min_coverage = float(self.config.get("btc_pin_min_coverage", 0.90))
         pin_max_gap = float(self.config.get("btc_pin_max_gap_minutes", 3.0))
@@ -1909,12 +1909,10 @@ class LighterMonitor:
             raise ValueError("btc_pin_lookback_minutes ist ungültig")
         if not 100.0 <= pin_step <= 10_000.0:
             raise ValueError("btc_pin_level_step_usd ist ungültig")
-        if not 0.03 <= pin_band <= 1.0:
-            raise ValueError("btc_pin_band_pct ist ungültig")
+        if not 0.05 <= pin_return_band < pin_return_band_max <= 0.45:
+            raise ValueError("BTC-Pin-Rückkehrband ist ungültig")
         if not 0.0 <= pin_noise_multiple <= 10.0:
             raise ValueError("btc_pin_noise_multiple ist ungültig")
-        if not 1.0 <= pin_current_multiple <= 4.0:
-            raise ValueError("btc_pin_current_band_multiple ist ungültig")
         if not 1 <= pin_return_minutes <= 15:
             raise ValueError("btc_pin_return_minutes ist ungültig")
         if not 0.75 <= pin_min_coverage <= 1.0:

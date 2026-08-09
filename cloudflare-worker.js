@@ -1,8 +1,8 @@
-// r3
+// r4
 // Crypto event feed and GitHub scheduler for v6.1.0.
 
 const APP_VERSION = "6.1.0";
-const PACKAGE_REVISION = "r3";
+const PACKAGE_REVISION = "r4";
 const STORE_KEY = "crypto-events-v610-r2";
 const CACHE_URL = "https://crypto-events.internal/v6.1.0-r2/events.json";
 const ACTIVE_RETENTION_MS = 25 * 60 * 1000;
@@ -674,7 +674,9 @@ function parseFarsideNumber(value) {
   const match = text.match(/^-?\d+(?:\.\d+)?$/);
   if (!match) return null;
   const number = Number(text);
-  return Number.isFinite(number) ? sign * Math.abs(number) : null;
+  if (!Number.isFinite(number)) return null;
+  // Preserve an explicit leading minus. Parenthesized values are negative too.
+  return sign < 0 ? -Math.abs(number) : number;
 }
 
 function scheduledXrpEscrowUnlock(now) {
