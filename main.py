@@ -1,4 +1,4 @@
-# r4
+# r5
 """Crypto Signal Monitor v6.1.0 — Lighter pool with incident protection."""
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from lighter_monitor import APP_VERSION, PACKAGE_REVISION, LighterMonitor
 from paper_trader import PaperTrader
 from event_context import load_critical_events
 from event_display_state import mark_event_displayed, plan_event_display
-from paper_optimizer import review_paper_parameters
+from paper_optimizer import acknowledge_paper_review, review_paper_parameters
 
 ROOT = Path(__file__).resolve().parent
 
@@ -67,6 +67,9 @@ def main() -> int:
     )
     payload["events"] = event_snapshot.to_dict()
     paper_result = None
+    parameter_review = None
+    parameter_alert_text: str | None = None
+    review_state_path = output / "parameter_review.json"
     if bool(config.get("paper_trading_enabled", True)) and not args.no_paper:
         paper_result = PaperTrader(
             config,
@@ -79,25 +82,26 @@ def main() -> int:
         payload["paper"] = paper_result
         parameter_review = review_paper_parameters(
             paper_state_path=Path(args.paper_state),
-            review_state_path=output / "parameter_review.json",
+            review_state_path=review_state_path,
             config=config,
         )
         payload["parameter_review"] = parameter_review
         for line in parameter_review.get("logs", []):
             paper_result.setdefault("logs", []).append(str(line))
         if parameter_review.get("alert"):
-            alert_line = (
-                "Parameter-Optimierung bestätigt!"
-                if parameter_review.get("alert_level") == "statistical"
+            parameter_alert_text = (
+                "Parameter-Vergleichshinweis!"
+                if parameter_review.get("alert_level") == "comparative"
                 else "Früher Diagnosehinweis!"
             )
-            report += "\n" + alert_line
         payload["report"] = report
     (output / "latest.txt").write_text(report + "\n", encoding="utf-8")
     (output / "latest.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     print(report)
+    if parameter_alert_text:
+        print(parameter_alert_text)
     for signal in monitor.last_signals:
         if signal.state == "INVALID_DATA":
             reason = "; ".join(signal.reasons) or "unbekannter Datenfehler"
@@ -131,6 +135,22 @@ def main() -> int:
             now=generated_at,
             displayed_symbols=monitor.last_header_event_symbols,
         )
+        # Parameter hints are deliberately a separate one-line Discord message:
+        # the fixed monitor report therefore always keeps its configured line
+        # count. A finding is acknowledged only after that alert was actually
+        # delivered; a failed alert remains pending for the next run.
+        if parameter_alert_text:
+            send_discord(
+                webhook,
+                parameter_alert_text,
+                username=str(config.get("discord_username", "CF v6.1.0")),
+                avatar_url=str(config.get("discord_avatar_url", "")).strip(),
+            )
+        if parameter_review is not None and (not parameter_review.get("alert") or parameter_alert_text):
+            acknowledge_paper_review(
+                review_state_path,
+                parameter_review.get("pending_report_keys", []),
+            )
         print("Discord als neue Nachricht gesendet.")
     return 0
 

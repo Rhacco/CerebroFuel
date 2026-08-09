@@ -1,4 +1,4 @@
-# r4
+# r5
 """Persistent spontaneous-incident detection for CF v6.1.0.
 
 Confirmed external SECURITY/NETWORK events and strict Lighter market shocks use

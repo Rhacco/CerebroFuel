@@ -1,4 +1,4 @@
-# r4
+# r5
 """Deterministic, multi-candidate paper-trading engine for CF v6.1.0."""
 from __future__ import annotations
 
@@ -12,8 +12,10 @@ from typing import Any, Iterable, Mapping
 
 STATE_SCHEMA = 6
 APP_VERSION = "6.1.0"
-PACKAGE_REVISION = "r4"
-COMPATIBLE_PACKAGE_REVISIONS = {"r2", "r3", PACKAGE_REVISION}
+PACKAGE_REVISION = "r5"
+COMPATIBLE_PACKAGE_REVISIONS = {"r2", "r3", "r4", PACKAGE_REVISION}
+FUNDING_MODEL_VERSION = "lighter-8h-normalized-to-hourly-v1"
+FUNDING_SOURCE_HOURS = 8.0
 ENTRY_STATES = {
     "BUY": 1, "SELL": -1,
     "STRONG_LONG": 1, "STRONG_SHORT": -1,
@@ -246,6 +248,7 @@ class PaperTrader:
         self.snapshots: Mapping[str, Mapping[str, Any]] = {}
         self.signals: dict[str, Any] = {}
         self.now = datetime.now(timezone.utc)
+        self._stale_valuation_symbols: set[str] = set()
 
     def _validate_config(self) -> None:
         if float(self.config.get("paper_starting_capital_usd", 0.0)) <= 0:
@@ -386,7 +389,130 @@ class PaperTrader:
             "last_decision_key": None,
             "last_checkpoint_at": None,
             "checkpoint_requested": True,
+            "funding_model_version": FUNDING_MODEL_VERSION,
         }
+
+    def _migrate_funding_model(self, payload: dict[str, Any]) -> None:
+        """One-time migration from the pre-r5 8h-as-hourly funding model."""
+        if payload.get("funding_model_version") == FUNDING_MODEL_VERSION:
+            return
+
+        def corrected_close(
+            action: dict[str, Any],
+            details: dict[str, Any],
+            prior_realized: float,
+        ) -> tuple[float, float]:
+            old_funding = _f(details.get("funding_usd"))
+            corrected_funding = old_funding / FUNDING_SOURCE_HOURS
+            gross = _f(details.get("gross_pnl_usd"))
+            exit_fee = _f(details.get("exit_fee_usd"))
+            entry_fee = _f(details.get("entry_fee_usd"))
+            raw_net = gross - exit_fee - corrected_funding - entry_fee
+            close_margin = max(0.0, _f(action.get("margin_usd")))
+            corrected_net = max(raw_net, -close_margin) if close_margin > 0 else raw_net
+            old_net = _f(action.get("realized_pnl_usd"))
+            details["funding_usd"] = round(corrected_funding, 12)
+            details["raw_net_pnl_usd"] = round(raw_net, 12)
+            details["isolated_loss_capped"] = bool(raw_net < -close_margin) if close_margin > 0 else False
+            details["trade_net_pnl_usd"] = round(prior_realized + corrected_net, 12)
+            return corrected_net, corrected_net - old_net
+
+        def mark_legacy_features(container: Mapping[str, Any] | dict[str, Any]) -> None:
+            if not isinstance(container, dict):
+                return
+            features = container.get("entry_features")
+            if not isinstance(features, dict):
+                return
+            if features.get("funding_hourly_pct") is not None:
+                features["funding_hourly_pct"] = round(
+                    _f(features.get("funding_hourly_pct")) / FUNDING_SOURCE_HOURS,
+                    12,
+                )
+            # Pre-r5 readiness/extremity were calculated with the 8h-equivalent
+            # funding value treated as hourly. Monetary P/L can be corrected,
+            # but those historical derived features cannot be reconstructed from
+            # the ledger alone. Keep the trade history, but never mix it into new
+            # optimizer evidence as though feature semantics were identical.
+            features["funding_model_version"] = "pre-r5-8h-as-hourly"
+            features["optimizer_compatible"] = False
+
+        balance_delta = 0.0
+        running_realized: dict[str, float] = {}
+        ledger = payload.get("ledger")
+        if isinstance(ledger, list):
+            for row in ledger:
+                if not isinstance(row, dict):
+                    continue
+                action = row.get("action")
+                details = row.get("details")
+                if not isinstance(action, dict) or not isinstance(details, dict):
+                    continue
+                symbol = str(action.get("symbol") or "")
+                kind = str(action.get("kind") or "")
+                mark_legacy_features(details)
+                reverse_features = details.get("reverse_close")
+                if isinstance(reverse_features, dict):
+                    mark_legacy_features(reverse_features)
+                if kind == "OPEN" and not bool(action.get("is_add", False)):
+                    running_realized[symbol] = 0.0
+                    continue
+                if kind == "CLOSE":
+                    prior = running_realized.get(symbol, 0.0)
+                    corrected_net, delta = corrected_close(action, details, prior)
+                    balance_delta += delta
+                    action["realized_pnl_usd"] = round(corrected_net, 12)
+                    running_realized[symbol] = prior + corrected_net
+                    if bool(details.get("full_close", False)):
+                        running_realized.pop(symbol, None)
+                    continue
+                if kind == "REVERSE":
+                    reverse_close = details.get("reverse_close")
+                    if isinstance(reverse_close, dict):
+                        prior = running_realized.get(symbol, 0.0)
+                        old_reverse_net = _f(action.get("realized_pnl_usd"))
+                        synthetic_action = {
+                            # For old REVERSE rows the new-position margin is not
+                            # necessarily the closed margin.  If the old close was
+                            # isolated-loss capped, the realised loss itself gives
+                            # the exact cap; otherwise use a non-binding ceiling.
+                            "margin_usd": (
+                                abs(old_reverse_net)
+                                if bool(reverse_close.get("isolated_loss_capped", False))
+                                else 1_000_000_000.0
+                            ),
+                            "realized_pnl_usd": old_reverse_net,
+                        }
+                        corrected_net, delta = corrected_close(synthetic_action, reverse_close, prior)
+                        balance_delta += delta
+                        action["realized_pnl_usd"] = round(corrected_net, 12)
+                    # REVERSE closes the old trade and immediately starts a new one.
+                    running_realized[symbol] = 0.0
+
+        positions = payload.get("positions")
+        if isinstance(positions, dict):
+            for symbol, position in positions.items():
+                if not isinstance(position, dict):
+                    continue
+                mark_legacy_features(position)
+                if position.get("last_funding_hourly_pct") is not None:
+                    position["last_funding_hourly_pct"] = round(
+                        _f(position.get("last_funding_hourly_pct")) / FUNDING_SOURCE_HOURS,
+                        12,
+                    )
+                position["funding_accrued_usd"] = round(
+                    _f(position.get("funding_accrued_usd")) / FUNDING_SOURCE_HOURS,
+                    12,
+                )
+                if symbol in running_realized:
+                    position["realized_pnl_usd"] = round(running_realized[symbol], 12)
+                position.setdefault("funding_estimated_hours", 0.0)
+                position.setdefault("funding_unknown_hours", 0.0)
+                position.setdefault("last_mark_price", _f(position.get("entry_price")))
+                position.setdefault("last_mark_at", position.get("opened_at"))
+
+        payload["balance_usd"] = round(_f(payload.get("balance_usd")) + balance_delta, 10)
+        payload["funding_model_version"] = FUNDING_MODEL_VERSION
+        payload["checkpoint_requested"] = True
 
     def _load_state(self) -> dict[str, Any]:
         if not self.state_path.exists():
@@ -418,6 +544,7 @@ class PaperTrader:
             or invalid_position
         ):
             raise RuntimeError("Paper-State ist inkompatibel oder beschädigt")
+        self._migrate_funding_model(payload)
         payload["package_revision"] = PACKAGE_REVISION
         return payload
 
@@ -475,24 +602,66 @@ class PaperTrader:
 
     def _funding_update(self, position: dict[str, Any], signal: Any | None) -> None:
         previous = _parse_time(position.get("funding_updated_at"), self.now)
-        hours = max(0.0, min(6.0, (self.now - previous).total_seconds() / 3600.0))
-        if hours <= 0:
+        elapsed_hours = max(0.0, (self.now - previous).total_seconds() / 3600.0)
+        if elapsed_hours <= 0:
             return
-        rate_pct = (
+        current_rate = (
             None
-            if signal is None or signal.funding_hourly_pct is None
+            if signal is None or getattr(signal, "funding_hourly_pct", None) is None
             else float(signal.funding_hourly_pct)
         )
-        if rate_pct is not None:
+        last_rate = position.get("last_funding_hourly_pct")
+        fallback_rate = None if last_rate is None else _f(last_rate)
+
+        # A funding rate observed now must not be projected backwards across a
+        # long runner outage. Lighter settles funding hourly, so at most the
+        # most recent hour can be modelled from one observed/current or last
+        # known rate. Any older unobserved interval is kept explicitly unknown
+        # instead of being silently discarded or fabricated. Normal minute-by-
+        # minute operation is unchanged because elapsed_hours is then << 1.
+        modelled_hours = min(elapsed_hours, 1.0)
+        unknown_hours = max(0.0, elapsed_hours - modelled_hours)
+        rate_pct = current_rate if current_rate is not None else fallback_rate
+        if rate_pct is not None and modelled_hours > 0:
             direction = int(position["direction"])
-            cost = _f(position["notional_usd"]) * rate_pct / 100.0 * hours * direction
+            cost = (
+                _f(position["notional_usd"])
+                * rate_pct
+                / 100.0
+                * modelled_hours
+                * direction
+            )
             position["funding_accrued_usd"] = round(
                 _f(position.get("funding_accrued_usd")) + cost,
                 10,
             )
-            position["last_funding_hourly_pct"] = rate_pct
-        else:
-            self._log(f"FUNDING {position['alias']}: nicht verfügbar, Intervall mit 0 modelliert")
+            if current_rate is not None:
+                position["last_funding_hourly_pct"] = current_rate
+            else:
+                position["funding_estimated_hours"] = round(
+                    _f(position.get("funding_estimated_hours")) + modelled_hours,
+                    6,
+                )
+                self._log(
+                    f"FUNDING {position['alias']}: aktuelle Rate fehlt, "
+                    f"letzte bekannte Rate für {modelled_hours:.2f}h fortgeschrieben"
+                )
+        elif modelled_hours > 0:
+            unknown_hours += modelled_hours
+
+        if unknown_hours > 1e-9:
+            position["funding_unknown_hours"] = round(
+                _f(position.get("funding_unknown_hours")) + unknown_hours,
+                6,
+            )
+            self._log(
+                f"FUNDING {position['alias']}: {unknown_hours:.2f}h ohne "
+                "historisch beobachtbare Rate; Intervall als unbekannt markiert"
+            )
+
+        # Advance the sampling clock even on a gap. Otherwise a future current
+        # rate would be retroactively applied to an interval for which it was
+        # never observed.
         position["funding_updated_at"] = _iso(self.now)
 
     def _mark_price(self, symbol: str) -> float | None:
@@ -500,18 +669,47 @@ class PaperTrader:
         if signal is not None and _f(getattr(signal, "price", 0.0)) > 0:
             return float(signal.price)
         rows = list((self.snapshots.get(symbol) or {}).get("candles") or [])
-        return _f(rows[-1].get("c")) if rows else None
+        value = _f(rows[-1].get("c")) if rows else 0.0
+        return value if value > 0 else None
+
+    def _refresh_position_mark(self, position: dict[str, Any]) -> float | None:
+        symbol = str(position["symbol"])
+        base = _f(position.get("base_size"))
+        direction = int(position.get("direction", 0))
+        snapshot = self.snapshots.get(symbol) or {}
+        fill = _close_fill(snapshot.get("book") or {}, direction, base) if base > 0 else None
+        mark = fill if fill is not None and fill > 0 else self._mark_price(symbol)
+        if mark is not None and mark > 0:
+            position["last_mark_price"] = float(mark)
+            position["last_mark_at"] = _iso(self.now)
+            return float(mark)
+        return None
+
+    def _valuation_mark(self, position: Mapping[str, Any]) -> tuple[float, bool]:
+        symbol = str(position["symbol"])
+        base = _f(position.get("base_size"))
+        direction = int(position.get("direction", 0))
+        snapshot = self.snapshots.get(symbol) or {}
+        fill = _close_fill(snapshot.get("book") or {}, direction, base) if base > 0 else None
+        mark = fill if fill is not None and fill > 0 else self._mark_price(symbol)
+        if mark is not None and mark > 0:
+            if isinstance(position, dict):
+                position["last_mark_price"] = float(mark)
+                position["last_mark_at"] = _iso(self.now)
+            return float(mark), False
+        fallback = _f(position.get("last_mark_price")) or _f(position.get("entry_price"))
+        self._stale_valuation_symbols.add(symbol)
+        return fallback, True
 
     def _unrealized(self, position: Mapping[str, Any]) -> float:
-        symbol = str(position["symbol"])
         base = _f(position["base_size"])
         entry = _f(position["entry_price"])
         direction = int(position["direction"])
-        snapshot = self.snapshots.get(symbol) or {}
-        fill = _close_fill(snapshot.get("book") or {}, direction, base)
-        mark = fill if fill is not None else self._mark_price(symbol)
-        if mark is None or mark <= 0:
-            return 0.0
+        mark, _ = self._valuation_mark(position)
+        if mark <= 0:
+            # A valid persisted position always has an entry price, so this is
+            # defensive only.  Never silently reinterpret an unknown mark as 0.
+            mark = entry
         gross = (mark - entry) * base * direction
         fee = mark * base * _f(position.get("taker_fee_pct")) / 100.0
         return gross - fee - _f(position.get("funding_accrued_usd"))
@@ -661,6 +859,8 @@ class PaperTrader:
             return "zu wenige belastbare Datenfenster"
         if float(getattr(signal, "tape_quality", 0.0)) < float(self.config.get("paper_min_tape_quality", 72)):
             return "Volumenverlauf zu lückenhaft/sprunghaft"
+        if getattr(signal, "funding_hourly_pct", None) is None:
+            return "Funding nicht verfügbar"
         if signal.cost_pct is None:
             return "Ausführungskosten nicht belastbar"
         if signal.execution_score < float(self.config.get("paper_min_execution_score", 55)):
@@ -982,6 +1182,11 @@ class PaperTrader:
             "entry_price": entry,
             "opened_at": _iso(self.now),
             "funding_updated_at": _iso(self.now),
+            "last_funding_hourly_pct": float(signal.funding_hourly_pct),
+            "funding_estimated_hours": 0.0,
+            "funding_unknown_hours": 0.0,
+            "last_mark_price": float(entry),
+            "last_mark_at": _iso(self.now),
             "last_candle_ms": int(getattr(signal, "candle_timestamp_ms", 0) or 0),
             "setup": setup,
             "stop_pct": stop_pct,
@@ -1006,6 +1211,8 @@ class PaperTrader:
             "probe_entry": signal.state in PROBE_STATES | SCOUT_STATES,
             "opposite_try_direction": 0,
             "entry_features": {
+                "funding_model_version": FUNDING_MODEL_VERSION,
+                "optimizer_compatible": True,
                 "setup": setup,
                 "setup_phase": str(_setup(signal).phase),
                 "setup_score": float(_setup(signal).score),
@@ -1138,10 +1345,17 @@ class PaperTrader:
         if exit_price is None:
             exit_price = _close_fill(snapshot.get("book") or {}, direction, base)
         if exit_price is None or exit_price <= 0:
-            mark = self._mark_price(symbol) or _f(position["entry_price"])
+            mark = self._mark_price(symbol)
+            stale = mark is None or mark <= 0
+            if stale:
+                mark = _f(position.get("last_mark_price")) or _f(position["entry_price"])
+                self._stale_valuation_symbols.add(symbol)
             emergency = float(self.config.get("paper_emergency_slippage_pct", 0.05)) / 100.0
             exit_price = mark * (1.0 - emergency if direction > 0 else 1.0 + emergency)
-            reason += ", Notausführung modelliert"
+            reason += (
+                ", Notausführung mit letztem bekannten Preis modelliert"
+                if stale else ", Notausführung modelliert"
+            )
         entry = _f(position["entry_price"])
         gross = (exit_price - entry) * base * direction
         exit_fee = (
@@ -1195,6 +1409,12 @@ class PaperTrader:
         entry_features.setdefault("leverage", int(position.get("leverage", 0)))
         entry_features.setdefault("risk_usd", _f(position.get("risk_usd")))
         entry_features.setdefault("probe_entry", bool(position.get("probe_entry", False)))
+        funding_estimated_hours = _f(position.get("funding_estimated_hours"))
+        funding_unknown_hours = _f(position.get("funding_unknown_hours"))
+        # Unknown funding makes the final net P/L incomplete. Keep the trade in
+        # the ledger, but do not treat it as clean optimizer evidence.
+        if funding_unknown_hours > 1e-9:
+            entry_features["optimizer_compatible"] = False
         close_details = {
             "entry_price": entry,
             "exit_price": exit_price,
@@ -1203,6 +1423,8 @@ class PaperTrader:
             "entry_fee_usd": entry_fee,
             "exit_fee_usd": exit_fee,
             "funding_usd": funding,
+            "funding_estimated_hours": funding_estimated_hours,
+            "funding_unknown_hours": funding_unknown_hours,
             "raw_net_pnl_usd": raw_net,
             "trade_net_pnl_usd": trade_net_pnl,
             "isolated_loss_capped": loss_capped,
@@ -1431,7 +1653,7 @@ class PaperTrader:
             )
         return True
 
-    def _max_hold_minutes(self, position: Mapping[str, Any], signal: Any) -> int:
+    def _max_hold_minutes(self, position: Mapping[str, Any], signal: Any | None) -> int:
         base = {
             "E": int(self.config.get("paper_early_max_hold_minutes", 45)),
             "T": int(self.config.get("paper_trend_max_hold_minutes", 60)),
@@ -1467,9 +1689,46 @@ class PaperTrader:
             return max(2, base - 3)
         return base
 
+    def _max_hold_status(
+        self,
+        position: Mapping[str, Any],
+        signal: Any | None,
+    ) -> tuple[bool, float, int]:
+        opened = _parse_time(position.get("opened_at"), self.now)
+        age_minutes = max(0.0, (self.now - opened).total_seconds() / 60.0)
+        max_age = self._max_hold_minutes(position, signal)
+        return age_minutes >= max_age, age_minutes, max_age
+
+    def _enforce_max_hold(self, position: dict[str, Any], signal: Any | None) -> bool:
+        expired, _, _ = self._max_hold_status(position, signal)
+        if not expired:
+            return False
+        missing = signal is None or getattr(signal, "state", None) == "INVALID_DATA"
+        reason = (
+            "maximale Setup-Haltedauer bei fehlenden Signaldaten"
+            if missing
+            else "maximale Setup-Haltedauer"
+        )
+        self._close(
+            position,
+            _f(position["margin_usd"]),
+            reason,
+            100.0 if missing else 90.0,
+        )
+        self.state.setdefault("cooldowns", {})[str(position["symbol"])] = int(
+            self.now.timestamp()
+        ) + int(self.config.get("paper_close_cooldown_minutes", 5)) * 60
+        return True
+
     def _signal_exit(self, position: dict[str, Any], signal: Any | None) -> bool:
+        if self._enforce_max_hold(position, signal):
+            return True
+        _, age_minutes, max_age = self._max_hold_status(position, signal)
         if signal is None or signal.state == "INVALID_DATA":
-            self._log(f"HOLD {position['alias']}: keine belastbaren neuen Signaldaten")
+            self._log(
+                f"HOLD {position['alias']}: keine belastbaren neuen Signaldaten "
+                f"({age_minutes:.0f}/{max_age} min)"
+            )
             return False
         direction = int(position["direction"])
         support = SUPPORT_STATES.get(signal.state, 0)
@@ -1487,17 +1746,12 @@ class PaperTrader:
             position["opposite_try_direction"] = 0
         else:
             position["degrade_streak"] = int(position.get("degrade_streak", 0)) + 1
-        opened = _parse_time(position.get("opened_at"), self.now)
-        age_minutes = max(0.0, (self.now - opened).total_seconds() / 60.0)
-        max_age = self._max_hold_minutes(position, signal)
         reason = ""
         priority = 88.0
         if hard_opposition:
             reason, priority = "starkes Gegensignal", 108.0
         elif exit_hint:
             reason, priority = "Setup abgelaufen", 98.0
-        elif age_minutes >= max_age:
-            reason, priority = "maximale Setup-Haltedauer", 90.0
         elif int(position.get("degrade_streak", 0)) >= self._degrade_limit(position, signal):
             reason, priority = "Richtung wiederholt nicht bestätigt", 92.0
         if not reason:
@@ -1640,6 +1894,7 @@ class PaperTrader:
         self.now = now.astimezone(timezone.utc)
         self.snapshots = snapshots
         self.signals = {signal.symbol: signal for signal in signals}
+        self._stale_valuation_symbols = set()
         self.state["cooldowns"] = {
             symbol: int(until)
             for symbol, until in (self.state.get("cooldowns") or {}).items()
@@ -1668,6 +1923,7 @@ class PaperTrader:
             if reason is None:
                 continue
             signal = self.signals.get(symbol)
+            self._refresh_position_mark(position)
             self._funding_update(position, signal)
             self._close(
                 position,
@@ -1685,9 +1941,16 @@ class PaperTrader:
             if position is None:
                 continue
             signal = self.signals.get(symbol)
+            self._refresh_position_mark(position)
             self._funding_update(position, signal)
             rows = list((snapshots.get(symbol) or {}).get("candles") or [])
             if rows and self._intrabar_action(position, rows):
+                acted_symbols.add(symbol)
+                continue
+            position = self.state.get("positions", {}).get(symbol)
+            if position is None:
+                continue
+            if self._enforce_max_hold(position, signal):
                 acted_symbols.add(symbol)
                 continue
             if not fresh_decision:
@@ -1802,6 +2065,12 @@ class PaperTrader:
                 f"{top}"
             )
         equity, free, margin = self._equity()
+        if self._stale_valuation_symbols:
+            self._log(
+                "BEWERTUNG VERALTET: "
+                + ", ".join(sorted(self._stale_valuation_symbols))
+                + " nutzt letzten bekannten Mark/Entry"
+            )
         self._log(
             f"KONTO Balance {_money(_f(self.state.get('balance_usd')), compact=False)} | "
             f"Equity {_money(equity, compact=False)} | "
@@ -1820,6 +2089,7 @@ class PaperTrader:
                 "free_margin_usd": round(free, 8),
                 "used_margin_usd": round(margin, 8),
                 "positions": len(self.state.get("positions", {})),
+                "valuation_stale_symbols": sorted(self._stale_valuation_symbols),
             },
             "positions": list(self.state.get("positions", {}).values()),
             "decision_key": decision_key,

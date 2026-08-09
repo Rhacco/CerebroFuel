@@ -1,4 +1,4 @@
-# r4
+# r5
 """Bounded 7/14/30-day regime context for CF v6.1.0.
 
 The regime layer never creates a trade direction. It only adjusts an already
@@ -35,20 +35,27 @@ def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
-def _nearest_close(
+def _close_at_or_before(
     rows: Sequence[Mapping[str, Any]],
     target_ms: int,
     *,
-    tolerance_hours: float = 40.0,
+    max_age_hours: float = 40.0,
 ) -> float | None:
+    """Return the newest completed close known at `target_ms`.
+
+    Daily candle timestamps are normalised to bucket end by LighterClient. A
+    future close is never eligible, which removes the historical look-ahead
+    caused by choosing the nearest daily timestamp around an intraday target.
+    """
+    max_age_ms = int(max_age_hours * 3_600_000)
     candidates: list[tuple[int, float]] = []
-    tolerance_ms = int(tolerance_hours * 3_600_000)
     for row in rows:
         stamp = _timestamp_ms(row)
         close = _f(row.get("c"))
-        if stamp > 0 and close > 0 and abs(stamp - target_ms) <= tolerance_ms:
-            candidates.append((abs(stamp - target_ms), close))
-    return min(candidates, default=(0, 0.0), key=lambda item: item[0])[1] or None
+        age = target_ms - stamp
+        if stamp > 0 and close > 0 and 0 <= age <= max_age_ms:
+            candidates.append((stamp, close))
+    return max(candidates, default=(0, 0.0), key=lambda item: item[0])[1] or None
 
 
 def _horizon_returns(
@@ -58,7 +65,7 @@ def _horizon_returns(
 ) -> dict[int, float | None]:
     result: dict[int, float | None] = {}
     for days in HORIZONS:
-        historical = _nearest_close(rows, now_ms - days * 86_400_000)
+        historical = _close_at_or_before(rows, now_ms - days * 86_400_000)
         result[days] = None if historical is None else _pct(historical, current_price)
     return result
 
@@ -81,11 +88,30 @@ def _consistency(values: Mapping[int, float], deadbands: Mapping[int, float]) ->
     return agreeing / len(HORIZONS)
 
 
+def _minute_tail(rows: Sequence[Mapping[str, Any]], intervals: int) -> list[Mapping[str, Any]]:
+    by_time = {
+        _timestamp_ms(row): row
+        for row in rows
+        if _f(row.get("c")) > 0 and _timestamp_ms(row) > 0
+    }
+    clean = [by_time[key] for key in sorted(by_time)]
+    needed = intervals + 1
+    if len(clean) < needed:
+        return []
+    tail = clean[-needed:]
+    if any(
+        _timestamp_ms(right) - _timestamp_ms(left) != 60_000
+        for left, right in zip(tail, tail[1:])
+    ):
+        return []
+    return tail
+
+
 def _return_over_minutes(rows: Sequence[Mapping[str, Any]], minutes: int) -> float | None:
-    clean = [row for row in rows if _f(row.get("c")) > 0 and _timestamp_ms(row) > 0]
-    if len(clean) < minutes + 1:
+    clean = _minute_tail(rows, minutes)
+    if not clean:
         return None
-    return _pct(_f(clean[-minutes - 1].get("c")), _f(clean[-1].get("c")))
+    return _pct(_f(clean[0].get("c")), _f(clean[-1].get("c")))
 
 
 def _btc_rebound(
@@ -96,9 +122,8 @@ def _btc_rebound(
     minimum_rebound_pct: float,
     minimum_recovery_fraction: float,
 ) -> dict[str, float | int] | None:
-    clean = [row for row in rows if _f(row.get("c")) > 0 and _timestamp_ms(row) > 0]
-    clean = clean[-(lookback_minutes + 1):]
-    if len(clean) < max(12, lookback_minutes // 2):
+    clean = _minute_tail(rows, lookback_minutes)
+    if not clean:
         return None
     closes = [_f(row.get("c")) for row in clean]
     low_index = min(range(len(closes)), key=closes.__getitem__)
@@ -129,15 +154,16 @@ def _close_near_timestamp(
     target_ms: int,
     tolerance_minutes: int = 3,
 ) -> float | None:
+    """Use only a close known at or before the synchronization timestamp."""
     tolerance = tolerance_minutes * 60_000
     candidates = [
-        (abs(_timestamp_ms(row) - target_ms), _f(row.get("c")))
+        (_timestamp_ms(row), _f(row.get("c")))
         for row in rows
         if _timestamp_ms(row) > 0
         and _f(row.get("c")) > 0
-        and abs(_timestamp_ms(row) - target_ms) <= tolerance
+        and 0 <= target_ms - _timestamp_ms(row) <= tolerance
     ]
-    return min(candidates, default=(0, 0.0), key=lambda item: item[0])[1] or None
+    return max(candidates, default=(0, 0.0), key=lambda item: item[0])[1] or None
 
 
 @dataclass(frozen=True)

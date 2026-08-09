@@ -1,8 +1,8 @@
-// r4
+// r5
 // Crypto event feed and GitHub scheduler for v6.1.0.
 
 const APP_VERSION = "6.1.0";
-const PACKAGE_REVISION = "r4";
+const PACKAGE_REVISION = "r5";
 const STORE_KEY = "crypto-events-v610-r2";
 const CACHE_URL = "https://crypto-events.internal/v6.1.0-r2/events.json";
 const ACTIVE_RETENTION_MS = 25 * 60 * 1000;
@@ -116,6 +116,8 @@ export default {
       return jsonResponse(feed, 200, { "Cache-Control": "public, max-age=20" });
     }
     if (url.pathname === "/refresh" && request.method === "POST") {
+      const auth = refreshAuthorization(request, env);
+      if (auth !== 200) return jsonResponse({ ok: false }, auth);
       const feed = await refreshEventFeed(env, new Date());
       await writeStoredFeed(env, feed);
       return jsonResponse({ ok: true, generated_at: feed.generated_at, events: feed.events.length });
@@ -141,11 +143,19 @@ async function runScheduled(env, source) {
     console.log(JSON.stringify({ event: "scheduler-paused", source, feed_events: feed.events.length }));
     return;
   }
-  await triggerGitHubWithRetry(env, source);
+  await triggerGitHubWithRetry(env, source, feed);
 }
 
 function schedulerEnabled(env) {
   return String(env.ENABLED ?? "1").trim() === "1";
+}
+
+function refreshAuthorization(request, env) {
+  const expected = String(env.REFRESH_TOKEN || "").trim();
+  // Manual refresh is disabled unless an explicit secret was configured.
+  if (!expected) return 404;
+  const authorization = String(request.headers.get("Authorization") || "");
+  return authorization === `Bearer ${expected}` ? 200 : 403;
 }
 
 async function refreshEventFeed(env, now) {
@@ -829,6 +839,9 @@ function durableFeedSignature(feed) {
     starts_at: event?.starts_at || null,
     ends_at: event?.ends_at || null,
     active: Boolean(event?.active),
+    exact_time: Boolean(event?.exact_time),
+    priority: Number(event?.priority || 0),
+    source_type: event?.source_type || "",
     source_url: event?.source_url || "",
   })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
   const meta = isObject(feed?.meta) ? feed.meta : {};
@@ -855,13 +868,31 @@ async function writeStoredFeed(env, feed) {
     || signature !== previousSignature
     || generatedAt - previousWrite >= KV_HEARTBEAT_MS;
 
-  if (kvDue) {
-    feed.meta.kv_signature = signature;
-    feed.meta.kv_written_at = feed.generated_at || new Date(generatedAt).toISOString();
+  const kvConfigured = Boolean(env.EVENTS_KV?.put);
+  let kvOk = kvConfigured && !kvDue;
+  if (kvDue && kvConfigured) {
+    const candidate = {
+      ...feed,
+      meta: {
+        ...feed.meta,
+        kv_signature: signature,
+        kv_written_at: feed.generated_at || new Date(generatedAt).toISOString(),
+      },
+    };
+    try {
+      await env.EVENTS_KV.put(STORE_KEY, JSON.stringify(candidate));
+      feed.meta.kv_signature = candidate.meta.kv_signature;
+      feed.meta.kv_written_at = candidate.meta.kv_written_at;
+      kvOk = true;
+    } catch (error) {
+      // Crucial: do not advance kv_signature/kv_written_at on failure.  The
+      // local cache will retain the old metadata so the next run retries KV.
+      console.warn(`KV write failed: ${shortError(error)}`);
+    }
   }
+
   const body = JSON.stringify(feed);
   let cacheOk = false;
-  let kvOk = Boolean(env.EVENTS_KV?.put) && !kvDue;
   try {
     await caches.default.put(
       new Request(CACHE_URL),
@@ -870,14 +901,6 @@ async function writeStoredFeed(env, feed) {
     cacheOk = true;
   } catch (error) {
     console.warn(`Cache write failed: ${shortError(error)}`);
-  }
-  if (kvDue && env.EVENTS_KV?.put) {
-    try {
-      await env.EVENTS_KV.put(STORE_KEY, body);
-      kvOk = true;
-    } catch (error) {
-      console.warn(`KV write failed: ${shortError(error)}`);
-    }
   }
   if (!cacheOk && !kvOk) throw new Error("Event feed could not be persisted");
 }
@@ -903,7 +926,36 @@ async function workflowAlreadyActive(env, workflow) {
   return runs.some((run) => ["queued", "in_progress", "waiting", "pending", "requested"].includes(run.status));
 }
 
-async function triggerGitHubWithRetry(env, source) {
+async function gzipBase64(text) {
+  const input = new Blob([text], { type: "application/json" });
+  const compressed = input.stream().pipeThrough(new CompressionStream("gzip"));
+  const bytes = new Uint8Array(await new Response(compressed).arrayBuffer());
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+}
+
+async function dispatchSnapshot(feed) {
+  const raw = JSON.stringify({
+    version: APP_VERSION,
+    package_revision: PACKAGE_REVISION,
+    generated_at: feed?.generated_at || new Date().toISOString(),
+    events: Array.isArray(feed?.events) ? feed.events : [],
+  });
+  // GitHub workflow_dispatch accepts at most 65,535 characters across inputs.
+  // Normal feeds stay plain JSON (zero compression CPU). Only unusually large
+  // feeds use the Workers-native gzip stream; Python decodes the `gz:` prefix.
+  let payload = raw;
+  if (raw.length > 50_000) payload = `gz:${await gzipBase64(raw)}`;
+  if (payload.length > 60_000) {
+    throw new Error(`Event dispatch payload too large: ${payload.length} chars`);
+  }
+  return payload;
+}
+
+async function triggerGitHubWithRetry(env, source, feed) {
   const required = ["GH_OWNER", "GH_REPO", "GH_PAT"];
   const missing = required.filter((name) => !env[name]);
   if (missing.length) throw new Error(`Variable missing: ${missing.join(", ")}`);
@@ -913,16 +965,20 @@ async function triggerGitHubWithRetry(env, source) {
     console.log(JSON.stringify({ event: "github-dispatch-skipped", reason: "workflow-active", source }));
     return;
   }
+  const eventFeedPayload = await dispatchSnapshot(feed);
   const endpoint = `https://api.github.com/repos/${env.GH_OWNER}/${env.GH_REPO}/actions/workflows/${workflow}/dispatches`;
   let lastError = "";
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     const response = await fetch(endpoint, {
       method: "POST",
       headers: { ...githubHeaders(env), "Content-Type": "application/json" },
-      body: JSON.stringify({ ref, inputs: { send_discord: "true" } }),
+      body: JSON.stringify({
+        ref,
+        inputs: { send_discord: "true", event_feed_payload: eventFeedPayload },
+      }),
     });
     if (response.ok) {
-      console.log(JSON.stringify({ event: "github-dispatch", status: response.status, attempt, source }));
+      console.log(JSON.stringify({ event: "github-dispatch", status: response.status, attempt, source, feed_events: feed.events.length }));
       return;
     }
     lastError = `${response.status}: ${(await response.text()).slice(0, 500)}`;

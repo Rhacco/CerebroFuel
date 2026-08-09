@@ -1,4 +1,4 @@
-# r4
+# r5
 """Verified scheduled and externally confirmed event context for CF v6.1.0.
 
 Automatic facts come only from official public schedules/status pages. Project-
@@ -9,7 +9,9 @@ and neutral risk controls.
 """
 from __future__ import annotations
 
+import base64
 import calendar
+import gzip
 import json
 import os
 import re
@@ -1528,8 +1530,47 @@ def load_critical_events(
                 symbol_aliases,
             )
         )
+    # A Cloudflare-triggered workflow can carry the exact feed snapshot that
+    # was just persisted.  This bypasses Cache API locality and KV propagation
+    # delay: when valid, it is authoritative for the Worker feed of this run.
+    dispatch_raw = (
+        os.getenv("CRYPTO_EVENTS_DISPATCH_PAYLOAD", "").strip()
+        or os.getenv("CRYPTO_EVENTS_DISPATCH_JSON", "").strip()
+    )
+    dispatch_feed_valid = False
+    if dispatch_raw:
+        try:
+            if dispatch_raw.startswith("gz:"):
+                compressed = base64.b64decode(dispatch_raw[3:], validate=True)
+                if len(compressed) > 64_000:
+                    raise ValueError("komprimierter Dispatch-Feed ist zu groß")
+                decoded = gzip.decompress(compressed)
+                if len(decoded) > 500_000:
+                    raise ValueError("entpackter Dispatch-Feed ist zu groß")
+                dispatch_payload = json.loads(decoded.decode("utf-8"))
+            else:
+                if len(dispatch_raw) > 500_000:
+                    raise ValueError("Dispatch-Feed ist zu groß")
+                dispatch_payload = json.loads(dispatch_raw)
+            if not isinstance(dispatch_payload, Mapping):
+                raise ValueError("Dispatch-Feed ist kein JSON-Objekt")
+            feed_events.extend(
+                _verified_feed_events(
+                    dispatch_payload,
+                    allowlist,
+                    symbols,
+                    symbol_aliases,
+                )
+            )
+            dispatch_feed_valid = True
+        except (ValueError, TypeError, UnicodeDecodeError, OSError, json.JSONDecodeError) as exc:
+            diagnostics.append(f"CRYPTO_EVENTS_DISPATCH_PAYLOAD ist ungültig: {exc}")
+
+    # Inline/remote feeds are fallbacks for manual runs.  They are deliberately
+    # skipped when an exact dispatch snapshot exists so a stale remote copy
+    # cannot re-introduce an event that the triggering Worker already removed.
     inline = os.getenv("CRYPTO_EVENTS_JSON", "").strip()
-    if inline:
+    if inline and not dispatch_feed_valid:
         try:
             feed_events.extend(
                 _verified_feed_events(
@@ -1555,7 +1596,7 @@ def load_critical_events(
         1,
         int(section.get("verified_feed_cache_max_stale_minutes", 10)),
     ) * 60
-    if feed_url:
+    if feed_url and not dispatch_feed_valid:
         # The feed endpoint is an explicitly configured transport (usually the
         # project's own workers.dev URL). It must be HTTPS, while every event
         # inside it still requires verified=true and an individually allowlisted
@@ -1589,7 +1630,8 @@ def load_critical_events(
                     remote_feed_events = []
     else:
         remote_feed_events = []
-    feed_events.extend(remote_feed_events)
+    if not dispatch_feed_valid:
+        feed_events.extend(remote_feed_events)
 
     all_events = _dedupe([
         *schedule_events, *derivative_events, *feed_events

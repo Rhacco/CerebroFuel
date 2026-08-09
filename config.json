@@ -1,6 +1,6 @@
 {
   "schema_version": "6.1.0",
-  "package_revision": "r4",
+  "package_revision": "r5",
   "lighter_base_url": "https://mainnet.zklighter.elliot.ai/api/v1",
   "timezone": "Europe/Berlin",
   "candidate_symbols": [
@@ -109,6 +109,7 @@
   "api_retry_count": 3,
   "parallel_requests": 4,
   "request_timeout_seconds": 15,
+  "lighter_request_limit_per_minute": 54,
   "discord_max_codepoints_per_line": 42,
   "paper_trading_enabled": true,
   "paper_starting_capital_usd": 100,

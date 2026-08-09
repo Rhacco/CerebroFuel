@@ -1,4 +1,4 @@
-# r4
+# r5
 """Lighter-native v5.5-style signal engine with compact flow context for CF v6.1.0."""
 from __future__ import annotations
 
@@ -7,7 +7,10 @@ import math
 import re
 import statistics
 import time
+import threading
 import unicodedata
+from collections import deque
+from email.utils import parsedate_to_datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -26,7 +29,7 @@ from signal_transition_guard import apply_signal_transition_guard
 from signal_evaluator import update_signal_evaluation
 
 APP_VERSION = "6.1.0"
-PACKAGE_REVISION = "r4"
+PACKAGE_REVISION = "r5"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 GLOBAL_BTC_EVENT_KINDS = {
@@ -50,8 +53,9 @@ STATE_TIER = {
     "INVALID_DATA": 0,
 }
 
-DAILY_CACHE_SCHEMA = "daily-candles-v610-r2"
-COMPATIBLE_CACHE_REVISIONS = {"r2", "r3", PACKAGE_REVISION}
+DAILY_CACHE_SCHEMA = "daily-candles-v610-r3"
+COMPATIBLE_CACHE_REVISIONS = {PACKAGE_REVISION}
+FUNDING_NORMALIZATION_HOURS = 8.0
 
 
 def _load_daily_candle_cache(
@@ -93,18 +97,18 @@ def _load_daily_candle_cache(
             continue
         age_seconds = max(0.0, (current - updated).total_seconds())
         day_start_ms = int(current.timestamp() // 86_400) * 86_400_000
-        latest_completed_start_ms = day_start_ms - 86_400_000
+        latest_completed_close_ms = day_start_ms
         clean_stamps = sorted(
             _timestamp_ms(row) for row in rows
             if isinstance(row, Mapping) and _timestamp_ms(row) > 0
         )
         latest_row_ms = clean_stamps[-1] if clean_stamps else 0
         no_daily_gaps = all(
-            20 * 3_600_000 <= right - left <= 28 * 3_600_000
+            right - left == 86_400_000
             for left, right in zip(clean_stamps, clean_stamps[1:])
         )
         has_latest_completed_day = (
-            latest_row_ms == latest_completed_start_ms and no_daily_gaps
+            latest_row_ms == latest_completed_close_ms and no_daily_gaps
         )
         # A fallback may be stale in fetch time, but never stale in market-day
         # coverage. Missing yesterday is safer treated as unavailable than as a
@@ -270,6 +274,9 @@ class Signal:
     attention_score: float = 0.0
     btc_context: float | None = None
     cost_pct: float | None = None
+    long_cost_pct: float | None = None
+    short_cost_pct: float | None = None
+    funding_8h_pct: float | None = None
     funding_hourly_pct: float | None = None
     volume_24h: float = 0.0
     open_interest_usd: float = 0.0
@@ -366,11 +373,56 @@ class LighterClient:
         timeout: float = 15.0,
         retries: int = 3,
         closed_candle_delay_seconds: int = 8,
+        request_limit_per_minute: int = 54,
     ) -> None:
         self.base = base_url.rstrip("/")
         self.timeout = timeout
         self.retries = max(1, min(4, retries))
         self.closed_candle_delay_seconds = max(0, min(30, closed_candle_delay_seconds))
+        # Standard Lighter accounts are limited to 60 REST calls per rolling
+        # minute. Keep a small reserve for retries and coordinate every worker
+        # thread through one shared rolling-window gate.
+        self.request_limit_per_minute = max(10, min(60, int(request_limit_per_minute)))
+        self._rate_lock = threading.Lock()
+        self._request_times: deque[float] = deque()
+        self._blocked_until = 0.0
+
+    def _wait_for_request_slot(self) -> None:
+        while True:
+            sleep_for = 0.0
+            with self._rate_lock:
+                now = time.monotonic()
+                while self._request_times and now - self._request_times[0] >= 60.0:
+                    self._request_times.popleft()
+                if now < self._blocked_until:
+                    sleep_for = self._blocked_until - now
+                elif len(self._request_times) >= self.request_limit_per_minute:
+                    sleep_for = max(0.01, 60.0 - (now - self._request_times[0]) + 0.01)
+                else:
+                    self._request_times.append(now)
+                    return
+            time.sleep(min(max(sleep_for, 0.01), 60.0))
+
+    def _apply_rate_limit_cooldown(self, exc: HTTPError) -> None:
+        delay = 60.0
+        raw = ""
+        try:
+            raw = str(exc.headers.get("Retry-After", "")).strip()
+        except Exception:
+            raw = ""
+        if raw:
+            try:
+                delay = max(0.5, min(120.0, float(raw)))
+            except ValueError:
+                try:
+                    retry_at = parsedate_to_datetime(raw)
+                    if retry_at.tzinfo is None:
+                        retry_at = retry_at.replace(tzinfo=timezone.utc)
+                    delay = max(0.5, min(120.0, retry_at.timestamp() - time.time()))
+                except Exception:
+                    delay = 60.0
+        with self._rate_lock:
+            self._blocked_until = max(self._blocked_until, time.monotonic() + delay)
 
     def get(self, path: str, **params: Any) -> Mapping[str, Any]:
         url = self.base + path
@@ -382,6 +434,7 @@ class LighterClient:
         )
         last_error: Exception | None = None
         for attempt in range(self.retries):
+            self._wait_for_request_slot()
             try:
                 with urlopen(request, timeout=self.timeout) as response:
                     payload = json.load(response)
@@ -390,12 +443,17 @@ class LighterClient:
                 return payload
             except HTTPError as exc:
                 last_error = exc
-                if exc.code not in {408, 425, 429, 500, 502, 503, 504}:
+                if exc.code in {405, 429}:
+                    self._apply_rate_limit_cooldown(exc)
+                elif exc.code not in {408, 425, 500, 502, 503, 504}:
                     raise
             except (URLError, TimeoutError, json.JSONDecodeError, RuntimeError) as exc:
                 last_error = exc
             if attempt + 1 < self.retries:
-                time.sleep(0.45 * (2 ** attempt))
+                # A shared 429/405 cooldown is already enforced by the gate.
+                # Other transient failures use a short bounded backoff.
+                if not isinstance(last_error, HTTPError) or last_error.code not in {405, 429}:
+                    time.sleep(0.45 * (2 ** attempt))
         raise RuntimeError(f"Lighter-Aufruf fehlgeschlagen: {path}: {last_error}")
 
     def markets(self) -> list[Mapping[str, Any]]:
@@ -430,9 +488,11 @@ class LighterClient:
 
     def daily_candles(self, market_id: int, count: int = 40) -> list[Mapping[str, Any]]:
         now = int(time.time())
-        # REST candles default to candle-open timestamps. Fetch one extra row and
-        # explicitly exclude today's still-forming UTC daily candle so multi-day
-        # regime/AGE calculations never treat an incomplete day as final.
+        # Lighter documents candle `t` as the bucket start when
+        # set_timestamp_to_end=false.  For regime/extremity every stored daily
+        # close is therefore normalised to its bucket END timestamp.  This makes
+        # it impossible for a close that occurred after a historical target to
+        # be selected as if it had already been known at the bucket start.
         payload = self.get(
             "/candles",
             market_id=market_id,
@@ -444,19 +504,19 @@ class LighterClient:
         )
         day_start_ms = (now // 86_400) * 86_400_000
         rows_by_time: dict[int, Mapping[str, Any]] = {}
-        for row in list(payload.get("c") or []):
-            stamp = _timestamp_ms(row)
-            if 0 < stamp < day_start_ms and _f(row.get("c")) > 0:
-                rows_by_time[stamp] = row
+        for raw in list(payload.get("c") or []):
+            start_ms = _timestamp_ms(raw)
+            if 0 < start_ms < day_start_ms and _f(raw.get("c")) > 0:
+                close_ms = start_ms + 86_400_000
+                row = dict(raw)
+                row["t"] = close_ms
+                rows_by_time[close_ms] = row
         rows = [rows_by_time[key] for key in sorted(rows_by_time)]
-        latest_expected_ms = day_start_ms - 86_400_000
+        latest_expected_ms = day_start_ms
         if rows and _timestamp_ms(rows[-1]) != latest_expected_ms:
             raise RuntimeError("letzte abgeschlossene Tageskerze fehlt")
         stamps = [_timestamp_ms(row) for row in rows]
-        if any(
-            not 20 * 3_600_000 <= right - left <= 28 * 3_600_000
-            for left, right in zip(stamps, stamps[1:])
-        ):
+        if any(right - left != 86_400_000 for left, right in zip(stamps, stamps[1:])):
             raise RuntimeError("Tageskerzen enthalten eine Datenlücke")
         return rows[-count:]
 
@@ -531,40 +591,73 @@ def _levels(book: Mapping[str, Any], side: str) -> list[tuple[float, float]]:
     return result
 
 
-def _buy_base_for_quote(levels: list[tuple[float, float]], quote: float) -> float | None:
-    remaining = quote
+def _entry_fill_for_quote(
+    book: Mapping[str, Any],
+    quote: float,
+    direction: int,
+) -> tuple[float, float] | None:
+    if quote <= 0 or direction not in {-1, 1}:
+        return None
+    side = "asks" if direction > 0 else "bids"
+    remaining_quote = quote
     base = 0.0
-    for price, size in levels:
-        take_quote = min(remaining, price * size)
+    for price, size in _levels(book, side):
+        take_quote = min(remaining_quote, price * size)
         base += take_quote / price
-        remaining -= take_quote
-        if remaining <= 1e-9:
-            return base
-    return None
-
-
-def _sell_base_for_quote(levels: list[tuple[float, float]], base: float) -> float | None:
-    remaining = base
-    received = 0.0
-    for price, size in levels:
-        take_base = min(remaining, size)
-        received += take_base * price
-        remaining -= take_base
-        if remaining <= 1e-12:
-            return received
-    return None
-
-
-def _roundtrip_cost(book: Mapping[str, Any], quote: float) -> float | None:
-    if quote <= 0:
+        remaining_quote -= take_quote
+        if remaining_quote <= 1e-9:
+            break
+    if remaining_quote > 1e-7 or base <= 0:
         return None
-    base = _buy_base_for_quote(_levels(book, "asks"), quote)
-    if base is None:
+    return quote / base, base
+
+
+def _exit_fill_for_base(
+    book: Mapping[str, Any],
+    base: float,
+    direction: int,
+) -> float | None:
+    if base <= 0 or direction not in {-1, 1}:
         return None
-    received = _sell_base_for_quote(_levels(book, "bids"), base)
-    if received is None:
+    side = "bids" if direction > 0 else "asks"
+    remaining_base = base
+    quote = 0.0
+    for price, size in _levels(book, side):
+        take_base = min(remaining_base, size)
+        quote += take_base * price
+        remaining_base -= take_base
+        if remaining_base <= 1e-12:
+            break
+    if remaining_base > 1e-9:
         return None
-    return max(0.0, (quote - received) / quote * 100.0)
+    return quote / base
+
+
+def _roundtrip_cost(
+    book: Mapping[str, Any],
+    quote: float,
+    direction: int,
+) -> float | None:
+    """Direction-aware spread/slippage roundtrip for one quote-sized trade.
+
+    Long enters through asks and exits through bids. Short enters through bids
+    and must be buyable back through asks. Missing depth on either required
+    side is therefore a hard `None`, never an apparently cheap opposite-side
+    roundtrip.
+    """
+    entry = _entry_fill_for_quote(book, quote, direction)
+    if entry is None:
+        return None
+    entry_price, base = entry
+    exit_price = _exit_fill_for_base(book, base, direction)
+    if exit_price is None or entry_price <= 0:
+        return None
+    cost = (
+        (entry_price - exit_price) / entry_price * 100.0
+        if direction > 0
+        else (exit_price - entry_price) / entry_price * 100.0
+    )
+    return max(0.0, cost)
 
 
 def _series(candles: list[Mapping[str, Any]], count: int) -> list[Mapping[str, Any]]:
@@ -579,11 +672,15 @@ def _series(candles: list[Mapping[str, Any]], count: int) -> list[Mapping[str, A
 
 def _robust_noise(candles: list[Mapping[str, Any]]) -> float:
     rows = candles[-190:-10] if len(candles) >= 200 else candles[:-10]
-    closes = [_f(row.get("c")) for row in rows]
+    # Never reinterpret a multi-minute data gap as one one-minute return. The
+    # current signal windows already require contiguity; the volatility
+    # baseline follows the same time semantics.
     returns = [
-        abs(_pct(left, right))
-        for left, right in zip(closes, closes[1:])
-        if left > 0 and right > 0
+        abs(_pct(_f(left.get("c")), _f(right.get("c"))))
+        for left, right in zip(rows, rows[1:])
+        if _f(left.get("c")) > 0
+        and _f(right.get("c")) > 0
+        and _timestamp_ms(right) - _timestamp_ms(left) == 60_000
     ]
     return max(0.015, statistics.median(returns) * 1.4826 if returns else 0.015)
 
@@ -1655,6 +1752,7 @@ class LighterMonitor:
             float(config.get("request_timeout_seconds", 15)),
             int(config.get("api_retry_count", 3)),
             int(config.get("closed_candle_delay_seconds", 8)),
+            int(config.get("lighter_request_limit_per_minute", 54)),
         )
         self.last_signals: list[Signal] = []
         self.last_snapshots: dict[str, dict[str, Any]] = {}
@@ -1921,6 +2019,9 @@ class LighterMonitor:
             raise ValueError("btc_pin_max_gap_minutes ist ungültig")
         if int(self.config.get("candle_count", 360)) < 200:
             raise ValueError("candle_count muss mindestens 200 betragen")
+        request_limit = int(self.config.get("lighter_request_limit_per_minute", 54))
+        if not 10 <= request_limit <= 60:
+            raise ValueError("lighter_request_limit_per_minute muss zwischen 10 und 60 liegen")
         breadth_symbols = [str(value).upper() for value in self.config.get("btc_breadth_symbols", [])]
         if len(breadth_symbols) != len(set(breadth_symbols)):
             raise ValueError("btc_breadth_symbols muss eindeutig sein")
@@ -1958,7 +2059,12 @@ class LighterMonitor:
             if signal.open_interest_usd > 0
             else None
         )
-        signal.funding_hourly_pct = None if funding is None else funding * 100.0
+        signal.funding_8h_pct = None if funding is None else funding * 100.0
+        signal.funding_hourly_pct = (
+            None
+            if signal.funding_8h_pct is None
+            else signal.funding_8h_pct / FUNDING_NORMALIZATION_HOURS
+        )
         signal.live_price = reference_price
         signal.price = (
             _f(candles[-1].get("c"), reference_price)
@@ -1983,7 +2089,9 @@ class LighterMonitor:
             else 0.0
         )
         execution_quote = float(self.config.get("execution_quote_usdc", 50))
-        signal.cost_pct = _roundtrip_cost(book, execution_quote)
+        signal.long_cost_pct = _roundtrip_cost(book, execution_quote, 1)
+        signal.short_cost_pct = _roundtrip_cost(book, execution_quote, -1)
+        signal.cost_pct = None
         signal.windows = {
             minutes: _window(candles, minutes)
             for minutes in ANALYSIS_WINDOWS
@@ -2012,11 +2120,6 @@ class LighterMonitor:
             signal.activity_score * 0.72 + signal.tape_quality * 0.28
         )
         cost_limit = float(self.config.get("max_roundtrip_cost_pct", 0.15))
-        signal.execution_score = (
-            0.0
-            if signal.cost_pct is None
-            else _clamp(100.0 - signal.cost_pct / max(cost_limit, 1e-9) * 100.0)
-        )
 
         noise = _robust_noise(candles)
         signal.noise_pct = noise
@@ -2081,6 +2184,12 @@ class LighterMonitor:
             )
 
         direction = _direction(signal.direction)
+        signal.cost_pct = signal.long_cost_pct if direction > 0 else signal.short_cost_pct
+        signal.execution_score = (
+            0.0
+            if signal.cost_pct is None
+            else _clamp(100.0 - signal.cost_pct / max(cost_limit, 1e-9) * 100.0)
+        )
         invalidation = selected.invalidation_price
         if invalidation is not None and signal.price > 0:
             valid_side = (
@@ -2205,6 +2314,7 @@ class LighterMonitor:
         enough_volume = signal.volume_24h >= minimum_volume
         enough_oi = signal.open_interest_usd >= minimum_oi
         tape_ok = signal.tape_quality >= float(self.config.get("minimum_tape_quality", 68))
+        funding_missing = signal.funding_hourly_pct is None
         funding_block = (
             funding_magnitude > funding_hard
             and selected.kind not in {"REVERSAL"}
@@ -2322,6 +2432,7 @@ class LighterMonitor:
             or not enough_volume
             or not enough_oi
             or not tape_ok
+            or funding_missing
             or funding_block
         )
 
@@ -2334,6 +2445,9 @@ class LighterMonitor:
         elif not tape_ok:
             signal.state = "NO_TRADE"
             signal.reasons.append("Volumenverlauf zu lückenhaft/sprunghaft")
+        elif funding_missing:
+            signal.state = "NO_TRADE"
+            signal.reasons.append("Funding nicht verfügbar")
         elif funding_block:
             signal.state = "NO_TRADE"
             signal.reasons.append("Funding blockiert Richtung")
@@ -2570,7 +2684,7 @@ class LighterMonitor:
                     item.opportunity = _clamp(item.opportunity - penalty * 0.40)
                     if item.state in {"BUY", "SELL", "STRONG_LONG", "STRONG_SHORT"}:
                         item.state = "WATCH_LONG" if direction > 0 else "WATCH_SHORT"
-                    item.reasons.append("W bleibt W?: relative Marktteilnahme zu schwach")
+                    item.reasons.append("W bleibt unsicher: relative Marktteilnahme zu schwach")
 
             if modifier <= warning_threshold:
                 item.reasons.append(f"7/14/30D-Regime widerspricht ({modifier:+.1f})")
@@ -3252,10 +3366,13 @@ class LighterMonitor:
         funding: dict[str, float] = {}
         for row in raw_funding:
             symbol = str(row.get("symbol")).upper()
-            if symbol not in allowed:
+            if symbol not in allowed or str(row.get("exchange")).lower() != "lighter":
                 continue
-            rate = _f(row.get("rate"))
-            if str(row.get("exchange")).lower() == "lighter" or symbol not in funding:
+            try:
+                rate = float(row.get("rate"))
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(rate):
                 funding[symbol] = rate
 
         signals: list[Signal] = []
@@ -3402,7 +3519,7 @@ class LighterMonitor:
             priority_header_symbol=incident_snapshot.header_symbol or event_header_symbol,
         )
         minimum_lines = int(self.config.get("minimum_detail_count", 1)) + 1
-        maximum_lines = len(allowed) + 1
+        maximum_lines = int(self.config.get("maximum_detail_count", 4)) + 1
         if not minimum_lines <= len(report.splitlines()) <= maximum_lines:
             raise RuntimeError("Discord-Ausgabe hat unerwartete Zeilenzahl")
         payload = {

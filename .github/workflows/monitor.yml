@@ -1,4 +1,4 @@
-# r4
+# r5
 name: Crypto Signal Monitor v6.1.0
 on:
   workflow_dispatch:
@@ -8,12 +8,22 @@ on:
         required: true
         default: true
         type: boolean
+      event_feed_json:
+        description: "Exakter Event-Feed-Snapshot des auslösenden Workers"
+        required: false
+        default: ""
+        type: string
+      event_feed_payload:
+        description: "Exakter Event-Feed-Snapshot, optional gzip/base64"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: crypto-signal-monitor-v610-r4
+  group: crypto-signal-monitor-v610
   cancel-in-progress: false
 
 jobs:
@@ -40,9 +50,10 @@ jobs:
             output/signal_evaluation_state.json
             output/parameter_review.json
             output/daily_candle_cache.json
-          key: runtime-state-v610-r4-${{ github.run_id }}
+          key: runtime-state-v610-r5-${{ github.run_id }}
           # actions/cache accepts at most ten keys total, including `key`.
           restore-keys: |
+            runtime-state-v610-r5-
             runtime-state-v610-r4-
             runtime-state-v610-r3-
             runtime-state-v610-r2-
@@ -54,6 +65,8 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           SEND_DISCORD: ${{ inputs.send_discord }}
+          CRYPTO_EVENTS_DISPATCH_PAYLOAD: ${{ inputs.event_feed_payload }}
+          CRYPTO_EVENTS_DISPATCH_JSON: ${{ inputs.event_feed_json }}
           CRYPTO_EVENTS_URL: ${{ secrets.CRYPTO_EVENTS_URL }}
           CRYPTO_EVENTS_JSON: ${{ secrets.CRYPTO_EVENTS_JSON }}
         run: python main.py
@@ -76,4 +89,4 @@ jobs:
             output/signal_evaluation_state.json
             output/parameter_review.json
             output/daily_candle_cache.json
-          key: runtime-state-v610-r4-${{ github.run_id }}
+          key: runtime-state-v610-r5-${{ github.run_id }}

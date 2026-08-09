@@ -1,10 +1,10 @@
-# r4
+# r5
 """Fast diagnostic plus evidence-based paper review for CF v6.1.0.
 
 No finding changes trading parameters automatically.  The rapid audit can flag
 one objectively poor entry after only one to three closed trades, but labels it
-as an early diagnostic rather than statistical proof.  Broader parameter claims
-still require a larger comparison sample.
+as an early diagnostic rather than statistical proof.  Larger bucket comparisons
+remain heuristic comparison evidence unless separately validated out of sample.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Callable, Iterable, Mapping
 
-STATE_VERSION = "paper-optimizer-v610-r2"
+STATE_VERSION = "paper-optimizer-v610-r3"
 
 
 def _f(value: Any, default: float = 0.0) -> float:
@@ -57,18 +57,19 @@ class Finding:
 
 def _completed_trades(paper_state: Mapping[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for entry in paper_state.get("ledger") or []:
-        if not isinstance(entry, Mapping):
-            continue
-        action = entry.get("action")
-        details = entry.get("details")
-        if not isinstance(action, Mapping) or not isinstance(details, Mapping):
-            continue
-        if str(action.get("kind")) != "CLOSE" or not bool(details.get("full_close", False)):
-            continue
+
+    def append_close(
+        action: Mapping[str, Any],
+        details: Mapping[str, Any],
+        timestamp: str,
+    ) -> None:
+        if not bool(details.get("full_close", False)):
+            return
         features = details.get("entry_features")
         if not isinstance(features, Mapping):
-            continue
+            return
+        if features.get("optimizer_compatible") is False:
+            return
         risk = max(1e-9, _f(features.get("risk_usd")))
         pnl = _f(details.get("trade_net_pnl_usd"), _f(action.get("realized_pnl_usd")))
         rows.append(
@@ -79,10 +80,26 @@ def _completed_trades(paper_state: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "win": pnl > 0,
                 "features": dict(features),
                 "reason": str(action.get("reason") or ""),
-                "timestamp": str(entry.get("timestamp") or ""),
+                "timestamp": timestamp,
                 "holding_minutes": _f(details.get("holding_minutes")),
             }
         )
+
+    for entry in paper_state.get("ledger") or []:
+        if not isinstance(entry, Mapping):
+            continue
+        action = entry.get("action")
+        details = entry.get("details")
+        if not isinstance(action, Mapping) or not isinstance(details, Mapping):
+            continue
+        timestamp = str(entry.get("timestamp") or "")
+        kind = str(action.get("kind"))
+        if kind == "CLOSE":
+            append_close(action, details, timestamp)
+        elif kind == "REVERSE":
+            reverse_close = details.get("reverse_close")
+            if isinstance(reverse_close, Mapping):
+                append_close(action, reverse_close, timestamp)
     return sorted(rows, key=lambda row: str(row.get("timestamp") or ""))
 
 
@@ -205,7 +222,7 @@ def _feature_rules(config: Mapping[str, Any]) -> list[tuple[str, str, Callable[[
     ]
 
 
-def _statistical_findings(trades: list[dict[str, Any]], config: Mapping[str, Any]) -> list[Finding]:
+def _comparative_findings(trades: list[dict[str, Any]], config: Mapping[str, Any]) -> list[Finding]:
     minimum_total = max(8, int(config.get("paper_optimizer_min_total_trades", 8)))
     minimum_bucket = max(3, int(config.get("paper_optimizer_min_bucket_trades", 3)))
     minimum_gap_r = max(0.15, float(config.get("paper_optimizer_min_r_gap", 0.35)))
@@ -227,17 +244,18 @@ def _statistical_findings(trades: list[dict[str, Any]], config: Mapping[str, Any
             continue
         evidence = (
             f"{label}: n={n}/{symbol_count} Coins, Treffer {win:.0%}, ØR {avg_r:+.2f}; "
-            f"Vergleich n={other_n}, Treffer {other_win:.0%}, ØR {other_avg_r:+.2f}"
+            f"Vergleich n={other_n}, Treffer {other_win:.0%}, ØR {other_avg_r:+.2f}; "
+            "heuristischer Vergleich, keine Signifikanz-/OOS-Bestätigung"
         )
         findings.append(
             Finding(
-                key="STAT_" + key,
+                key="COMP_" + key,
                 label=label,
                 samples=n,
                 average_r=round(avg_r, 4),
                 evidence=evidence,
-                level="statistical",
-                statistically_confirmed=True,
+                level="comparative",
+                statistically_confirmed=False,
             )
         )
     return findings
@@ -251,7 +269,7 @@ def review_paper_parameters(
 ) -> dict[str, Any]:
     paper_state = _load_json(paper_state_path)
     trades = _completed_trades(paper_state)
-    findings = _rapid_findings(trades, config) + _statistical_findings(trades, config)
+    findings = _rapid_findings(trades, config) + _comparative_findings(trades, config)
 
     review_state = _load_json(review_state_path)
     if review_state.get("version") != STATE_VERSION:
@@ -261,7 +279,7 @@ def review_paper_parameters(
     reported_keys = {str(value) for value in (review_state.get("reported_keys") or []) if value}
     current_active = {finding.key for finding in findings}
     new_findings = [finding for finding in findings if finding.key not in reported_keys]
-    reported_keys.update(finding.key for finding in new_findings)
+    pending_report_keys = [finding.key for finding in new_findings]
 
     _save_json(
         review_state_path,
@@ -279,11 +297,27 @@ def review_paper_parameters(
         "new_findings": [asdict(item) for item in new_findings],
         "alert": bool(new_findings),
         "alert_level": (
-            "statistical" if any(item.statistically_confirmed for item in new_findings)
+            "comparative" if any(item.level == "comparative" for item in new_findings)
             else "rapid" if new_findings else "none"
         ),
+        "pending_report_keys": pending_report_keys,
         "logs": [
             "[PARAM] Optimierungshinweis (keine automatische Änderung): " + item.evidence
             for item in new_findings
         ],
     }
+
+
+def acknowledge_paper_review(review_state_path: Path, keys: Iterable[str]) -> None:
+    """Acknowledge only findings that were actually delivered to Discord."""
+    clean = {str(value) for value in keys if str(value)}
+    if not clean:
+        return
+    state = _load_json(review_state_path)
+    if state.get("version") != STATE_VERSION:
+        state = {"version": STATE_VERSION, "active_keys": [], "reported_keys": []}
+    reported = {str(value) for value in (state.get("reported_keys") or []) if value}
+    reported.update(clean)
+    state["version"] = STATE_VERSION
+    state["reported_keys"] = sorted(reported)
+    _save_json(review_state_path, state)

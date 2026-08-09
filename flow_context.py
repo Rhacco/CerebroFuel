@@ -1,4 +1,4 @@
-# r4
+# r5
 """Multi-horizon runability/jumpiness context for CF v6.1.0.
 
 Visible output:
@@ -66,7 +66,7 @@ def _minute_contiguous(rows: Sequence[Mapping[str, Any]]) -> bool:
     stamps = [_timestamp_ms(row) for row in clean]
     if any(stamp <= 0 for stamp in stamps):
         return False
-    return all(45_000 <= right - left <= 75_000 for left, right in zip(stamps, stamps[1:]))
+    return all(right - left == 60_000 for left, right in zip(stamps, stamps[1:]))
 
 
 def _daily_contiguous(rows: Sequence[Mapping[str, Any]]) -> bool:
@@ -76,7 +76,7 @@ def _daily_contiguous(rows: Sequence[Mapping[str, Any]]) -> bool:
     stamps = [_timestamp_ms(row) for row in clean]
     if any(stamp <= 0 for stamp in stamps):
         return False
-    return all(20 * 3_600_000 <= right - left <= 28 * 3_600_000 for left, right in zip(stamps, stamps[1:]))
+    return all(right - left == 86_400_000 for left, right in zip(stamps, stamps[1:]))
 
 
 def _daily_range_pct(row: Mapping[str, Any]) -> float:

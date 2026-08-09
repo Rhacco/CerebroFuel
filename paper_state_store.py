@@ -1,4 +1,4 @@
-# r4
+# r5
 """Strict restore/checkpoint store for the independent v6.1.0 paper state."""
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ API = "https://api.github.com"
 BRANCH = "paper-state-v610-r2"
 REMOTE_FILE = "paper_state_v610_r2.json"
 APP_VERSION = "6.1.0"
-PACKAGE_REVISION = "r4"
+PACKAGE_REVISION = "r5"
 STATE_SCHEMA = 6
-COMPATIBLE_PACKAGE_REVISIONS = {"r2", "r3", PACKAGE_REVISION}
+COMPATIBLE_PACKAGE_REVISIONS = {"r2", "r3", "r4", PACKAGE_REVISION}
 
 
 class GitHubStateStore:

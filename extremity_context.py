@@ -1,4 +1,4 @@
-# r4
+# r5
 """Multi-horizon extension and crowding score for CF v6.1.0.
 
 Positive values mean unusually extended upward; negative values mean unusually
@@ -95,18 +95,20 @@ def _daily_rows(rows: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     return sorted(clean, key=_timestamp_ms)
 
 
-def _nearest_close(
-    rows: Sequence[Mapping[str, Any]], target_ms: int, tolerance_hours: float = 40.0
+def _close_at_or_before(
+    rows: Sequence[Mapping[str, Any]],
+    target_ms: int,
+    max_age_hours: float = 40.0,
 ) -> float | None:
-    tolerance = int(tolerance_hours * 3_600_000)
+    max_age = int(max_age_hours * 3_600_000)
     candidates = [
-        (abs(_timestamp_ms(row) - target_ms), _f(row.get("c")))
+        (_timestamp_ms(row), _f(row.get("c")))
         for row in rows
         if _timestamp_ms(row) > 0
         and _f(row.get("c")) > 0
-        and abs(_timestamp_ms(row) - target_ms) <= tolerance
+        and 0 <= target_ms - _timestamp_ms(row) <= max_age
     ]
-    return min(candidates, default=(0, 0.0), key=lambda item: item[0])[1] or None
+    return max(candidates, default=(0, 0.0), key=lambda item: item[0])[1] or None
 
 
 def _swing_component(
@@ -124,7 +126,7 @@ def _swing_component(
     returns: dict[int, float] = {}
     scores: dict[int, float] = {}
     for days in (1, 3, 7):
-        start = _nearest_close(
+        start = _close_at_or_before(
             daily,
             current_timestamp_ms - days * 86_400_000,
         )
