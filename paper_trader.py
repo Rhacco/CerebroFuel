@@ -1,5 +1,5 @@
-# r2
-"""Deterministic, multi-candidate paper-trading engine for CF v6.0.0."""
+# r3
+"""Deterministic, multi-candidate paper-trading engine for CF v6.1.0."""
 from __future__ import annotations
 
 import json
@@ -10,9 +10,10 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 
-STATE_SCHEMA = 4
-APP_VERSION = "6.0.0"
-PACKAGE_REVISION = "r2"
+STATE_SCHEMA = 6
+APP_VERSION = "6.1.0"
+PACKAGE_REVISION = "r3"
+COMPATIBLE_PACKAGE_REVISIONS = {"r2", PACKAGE_REVISION}
 ENTRY_STATES = {
     "BUY": 1, "SELL": -1,
     "STRONG_LONG": 1, "STRONG_SHORT": -1,
@@ -93,6 +94,19 @@ def _timing_score(signal: Any) -> float:
     activity = _f(getattr(signal, "live_activity_score", 0.0))
     two_sided = _f(getattr(signal, "two_sided_score", 0.0))
     return max(0.0, min(100.0, speed * 0.42 + activity * 0.43 + two_sided * 0.15))
+
+
+def _flow_values(signal: Any, direction: int = 0) -> tuple[bool, float, float, int, bool, bool]:
+    """Return flow availability, ER, AGE, direction and alignment flags."""
+    available = bool(getattr(signal, "flow_available", False))
+    if not available:
+        return False, 0.0, 0.0, 0, False, False
+    score = max(-99.0, min(99.0, _f(getattr(signal, "flow_score", 0.0))))
+    age = max(0.0, min(99.0, _f(getattr(signal, "flow_age_score", 0.0))))
+    flow_direction = int(_f(getattr(signal, "flow_direction", 0.0)))
+    aligned = direction in {-1, 1} and flow_direction == direction
+    opposed = direction in {-1, 1} and flow_direction == -direction
+    return True, score, age, flow_direction, aligned, opposed
 
 
 def _money(value: float, signed: bool = False, compact: bool = True) -> str:
@@ -309,6 +323,46 @@ class PaperTrader:
         target_two_roi = float(self.config.get("paper_profit_target_two_roi_pct", 8.0))
         if not 2.0 <= target_one_roi < target_two_roi <= 10.0:
             raise ValueError("Paper-Gewinnziele müssen zwischen 2% und 10% liegen")
+        run_threshold = float(self.config.get("paper_flow_run_threshold", 45.0))
+        jump_threshold = float(self.config.get("paper_flow_jump_threshold", -45.0))
+        if not 20.0 <= run_threshold <= 90.0 or not -90.0 <= jump_threshold <= -20.0:
+            raise ValueError("Paper-ER-Schwellen sind ungültig")
+        multipliers = (
+            float(self.config.get("paper_flow_jump_margin_multiplier", 0.85)),
+            float(self.config.get("paper_flow_run_opposed_margin_multiplier", 0.78)),
+            float(self.config.get("paper_flow_jump_hold_multiplier", 0.65)),
+            float(self.config.get("paper_flow_run_opposed_hold_multiplier", 0.60)),
+        )
+        if any(not 0.35 <= value <= 1.0 for value in multipliers):
+            raise ValueError("Paper-ER-Abschlagsfaktoren sind ungültig")
+        run_margin_max = float(self.config.get("paper_flow_run_aligned_margin_multiplier_max", 1.12))
+        run_hold_max = float(self.config.get("paper_flow_run_hold_multiplier_max", 2.25))
+        if not 1.0 <= run_margin_max <= 1.30 or not 1.0 <= run_hold_max <= 4.0:
+            raise ValueError("Paper-ER-Run-Faktoren sind ungültig")
+        flow_age_threshold = float(self.config.get("paper_flow_long_age_threshold", 50.0))
+        if not 0.0 <= flow_age_threshold <= 99.0:
+            raise ValueError("paper_flow_long_age_threshold ist ungültig")
+        for key in ("paper_flow_jump_leverage_cap", "paper_flow_run_opposed_leverage_cap"):
+            cap = int(self.config.get(key, 20))
+            if not minimum <= cap <= maximum:
+                raise ValueError("Paper-ER-Hebelcap ist ungültig")
+        target_multipliers = (
+            float(self.config.get("paper_flow_jump_target_one_multiplier", 0.80)),
+            float(self.config.get("paper_flow_jump_target_two_multiplier", 0.70)),
+            float(self.config.get("paper_flow_run_opposed_target_two_multiplier", 0.75)),
+        )
+        if any(not 0.40 <= value <= 1.0 for value in target_multipliers):
+            raise ValueError("Paper-ER-Zielfaktor ist ungültig")
+        flow_target_max = float(self.config.get("paper_flow_run_target_two_max_roi_pct", 10.0))
+        if not target_two_roi <= flow_target_max <= 15.0:
+            raise ValueError("Paper-ER-Ziel-2-Limit ist ungültig")
+        for key in (
+            "paper_flow_try_reduce_durable_pct",
+            "paper_flow_try_reduce_jumpy_pct",
+            "paper_flow_try_reduce_against_pct",
+        ):
+            if not 10.0 <= float(self.config.get(key, 50.0)) <= 100.0:
+                raise ValueError("Paper-ER-TRY-Reduktion ist ungültig")
         same_direction = int(self.config.get("paper_max_same_direction_positions", 2))
         if not 1 <= same_direction <= positions:
             raise ValueError("paper_max_same_direction_positions ist ungültig")
@@ -358,12 +412,13 @@ class PaperTrader:
             not isinstance(payload, dict)
             or int(payload.get("schema", -1)) != STATE_SCHEMA
             or payload.get("app_version") != APP_VERSION
-            or payload.get("package_revision") != PACKAGE_REVISION
+            or payload.get("package_revision") not in COMPATIBLE_PACKAGE_REVISIONS
             or not isinstance(payload.get("positions"), dict)
             or _f(payload.get("balance_usd"), -1.0) < 0
             or invalid_position
         ):
             raise RuntimeError("Paper-State ist inkompatibel oder beschädigt")
+        payload["package_revision"] = PACKAGE_REVISION
         return payload
 
     def _save_state(self) -> None:
@@ -540,6 +595,17 @@ class PaperTrader:
             quality_cap = min(quality_cap, 20)
         if signal.funding_hourly_pct is None:
             quality_cap = min(quality_cap, int(self.config.get("paper_missing_funding_leverage_cap", 30)))
+        flow_available, flow_score, flow_age, _, flow_aligned, flow_opposed = _flow_values(signal, direction)
+        if flow_available:
+            jump_threshold = float(self.config.get("paper_flow_jump_threshold", -45.0))
+            run_threshold = float(self.config.get("paper_flow_run_threshold", 45.0))
+            if flow_score <= jump_threshold:
+                quality_cap = min(quality_cap, int(self.config.get("paper_flow_jump_leverage_cap", 20)))
+            elif flow_score >= run_threshold and flow_opposed:
+                opposed_cap = int(self.config.get("paper_flow_run_opposed_leverage_cap", 20))
+                if flow_age >= float(self.config.get("paper_flow_long_age_threshold", 50.0)):
+                    opposed_cap = min(opposed_cap, 15)
+                quality_cap = min(quality_cap, opposed_cap)
         maintenance = max(0.0, _f(getattr(signal, "maintenance_margin_pct", 0.0)) / 100.0)
         safety = stop_pct / 100.0 + float(self.config.get("paper_liquidation_buffer_pct", 0.25)) / 100.0 + maintenance
         liquidation_cap = int(math.floor(1.0 / safety)) if safety > 0 else maximum
@@ -672,6 +738,18 @@ class PaperTrader:
             pct *= 1.12
         elif quality < 62:
             pct *= 0.82
+        direction = ENTRY_STATES.get(signal.state, 0)
+        flow_available, flow_score, flow_age, _, flow_aligned, flow_opposed = _flow_values(signal, direction)
+        if flow_available:
+            jump_threshold = float(self.config.get("paper_flow_jump_threshold", -45.0))
+            run_threshold = float(self.config.get("paper_flow_run_threshold", 45.0))
+            if flow_score <= jump_threshold:
+                pct *= float(self.config.get("paper_flow_jump_margin_multiplier", 0.85))
+            elif flow_score >= run_threshold and flow_aligned:
+                maximum = float(self.config.get("paper_flow_run_aligned_margin_multiplier_max", 1.12))
+                pct *= 1.0 + (maximum - 1.0) * (flow_age / 99.0)
+            elif flow_score >= run_threshold and flow_opposed:
+                pct *= float(self.config.get("paper_flow_run_opposed_margin_multiplier", 0.78))
         rank_factor = {1: 1.0, 2: 0.90, 3: 0.80, 4: 0.70}.get(rank, 0.60)
         equity, free, _ = self._equity()
         amount = equity * pct * rank_factor / 100.0
@@ -746,21 +824,31 @@ class PaperTrader:
         stop_pct: float,
         leverage: int,
         roundtrip_cost_pct: float = 0.0,
+        signal: Any | None = None,
     ) -> tuple[float, float, float]:
         sign = 1 if direction > 0 else -1
         stop = entry * (1.0 - sign * stop_pct / 100.0)
         lev = max(1, int(leverage))
         cost = max(0.0, float(roundtrip_cost_pct))
-        # Profit targets are expressed as leveraged paper ROI after the
-        # measured round-trip cost. This aims to realize gains quickly in the
-        # requested low-single to high-single digit range.
-        target_one_move = cost + (
-            float(self.config.get("paper_profit_target_one_roi_pct", 3.0)) / lev
-        )
-        target_two_move = max(
-            cost + float(self.config.get("paper_profit_target_two_roi_pct", 8.0)) / lev,
-            target_one_move * 1.25,
-        )
+        roi_one = float(self.config.get("paper_profit_target_one_roi_pct", 3.0))
+        roi_two = float(self.config.get("paper_profit_target_two_roi_pct", 8.0))
+        if signal is not None:
+            available, flow_score, flow_age, _, aligned, opposed = _flow_values(signal, direction)
+            if available:
+                jump_threshold = float(self.config.get("paper_flow_jump_threshold", -45.0))
+                run_threshold = float(self.config.get("paper_flow_run_threshold", 45.0))
+                if flow_score <= jump_threshold:
+                    roi_one = max(2.0, roi_one * float(self.config.get("paper_flow_jump_target_one_multiplier", 0.80)))
+                    roi_two = max(roi_one + 1.0, roi_two * float(self.config.get("paper_flow_jump_target_two_multiplier", 0.70)))
+                elif flow_score >= run_threshold and aligned:
+                    age_fraction = flow_age / 99.0
+                    maximum = float(self.config.get("paper_flow_run_target_two_max_roi_pct", 10.0))
+                    roi_two = min(maximum, roi_two + (maximum - roi_two) * age_fraction)
+                elif flow_score >= run_threshold and opposed:
+                    roi_one = max(2.0, roi_one * 0.90)
+                    roi_two = max(roi_one + 1.0, roi_two * float(self.config.get("paper_flow_run_opposed_target_two_multiplier", 0.75)))
+        target_one_move = cost + roi_one / lev
+        target_two_move = max(cost + roi_two / lev, target_one_move * 1.25)
         target_one = entry * (1.0 + sign * target_one_move / 100.0)
         target_two = entry * (1.0 + sign * target_two_move / 100.0)
         return stop, target_one, target_two
@@ -875,6 +963,7 @@ class PaperTrader:
             stop_pct,
             leverage,
             actual_roundtrip_cost,
+            signal,
         )
         entry_fee = notional * taker_fee_pct / 100.0
         self.state["balance_usd"] = round(
@@ -915,6 +1004,7 @@ class PaperTrader:
             "entry_state": signal.state,
             "signal_tier": _signal_tier(signal.state),
             "probe_entry": signal.state in PROBE_STATES | SCOUT_STATES,
+            "opposite_try_direction": 0,
             "entry_features": {
                 "setup": setup,
                 "setup_phase": str(_setup(signal).phase),
@@ -958,6 +1048,10 @@ class PaperTrader:
                 "extremity_return_1d": getattr(signal, "extremity_return_1d", None),
                 "extremity_return_3d": getattr(signal, "extremity_return_3d", None),
                 "extremity_return_7d": getattr(signal, "extremity_return_7d", None),
+                "flow_available": bool(getattr(signal, "flow_available", False)),
+                "flow_score": float(getattr(signal, "flow_score", 0.0)),
+                "flow_age_score": float(getattr(signal, "flow_age_score", 0.0)),
+                "flow_direction": int(_f(getattr(signal, "flow_direction", 0.0))),
                 "technical_stop_price": getattr(signal, "technical_stop_price", None),
                 "technical_stop_pct": getattr(signal, "technical_stop_pct", None),
                 "reversal_structural_reclaim": bool(getattr(_setup(signal), "structural_reclaim", False)),
@@ -1241,18 +1335,48 @@ class PaperTrader:
         if not new_direction or new_direction == int(position["direction"]):
             return False
         if signal.state in PROBE_STATES:
-            # TRY against an existing position is a correction first, not an
-            # automatic full flip. Reduce immediately and let NOW own reversal.
+            # TRY corrects risk once per opposition cycle. Repeating the same
+            # TRY every minute must not silently halve the remainder again and
+            # again; NOW owns the full close/reversal decision.
+            if int(position.get("opposite_try_direction", 0)) == new_direction:
+                # Repeated TRY must not keep cutting the position, but it also
+                # must not bypass the absolute hold limit indefinitely.
+                opened = _parse_time(position.get("opened_at"), self.now)
+                age_minutes = max(0.0, (self.now - opened).total_seconds() / 60.0)
+                if age_minutes >= self._max_hold_minutes(position, signal):
+                    old_margin = _f(position["margin_usd"])
+                    self._close(
+                        position,
+                        old_margin,
+                        "entgegengesetztes TRY über maximale Haltedauer",
+                        106.0,
+                    )
+                    self.state.setdefault("cooldowns", {})[signal.symbol] = int(
+                        self.now.timestamp()
+                    ) + int(self.config.get("paper_close_cooldown_minutes", 5)) * 60
+                    return True
+                self._log(f"HOLD {signal.alias}: entgegengesetztes TRY bereits berücksichtigt")
+                return True
             pct = max(10.0, min(100.0, float(self.config.get("paper_opposite_try_reduce_pct", 50))))
+            available, flow_score, flow_age, flow_direction, aligned_old, _ = _flow_values(signal, int(position["direction"]))
+            if available:
+                run_threshold = float(self.config.get("paper_flow_run_threshold", 45.0))
+                jump_threshold = float(self.config.get("paper_flow_jump_threshold", -45.0))
+                old_enough = flow_age >= float(self.config.get("paper_flow_long_age_threshold", 50.0))
+                # AGE distinguishes a genuinely durable run from a merely clean
+                # new impulse. Only an old clean path earns the smaller TRY cut.
+                if flow_score >= run_threshold and aligned_old and old_enough:
+                    pct = float(self.config.get("paper_flow_try_reduce_durable_pct", 35.0))
+                elif flow_score >= run_threshold and flow_direction == new_direction and old_enough:
+                    pct = float(self.config.get("paper_flow_try_reduce_against_pct", 65.0))
+                elif flow_score <= jump_threshold:
+                    pct = float(self.config.get("paper_flow_try_reduce_jumpy_pct", 60.0))
             old_margin = _f(position["margin_usd"])
             close_margin = max(1.0, old_margin * pct / 100.0)
             close_margin = min(old_margin, close_margin)
-            self._close(
-                position,
-                close_margin,
-                "entgegengesetztes TRY; Risiko reduziert",
-                104.0,
-            )
+            self._close(position, close_margin, "entgegengesetztes TRY; Risiko reduziert", 104.0)
+            if signal.symbol in self.state.get("positions", {}):
+                position["opposite_try_direction"] = new_direction
             return True
         reverse_block = self._entry_block(signal, additional=False)
         strict = (
@@ -1307,6 +1431,42 @@ class PaperTrader:
             )
         return True
 
+    def _max_hold_minutes(self, position: Mapping[str, Any], signal: Any) -> int:
+        base = {
+            "E": int(self.config.get("paper_early_max_hold_minutes", 45)),
+            "T": int(self.config.get("paper_trend_max_hold_minutes", 60)),
+            "W": int(self.config.get("paper_reversal_max_hold_minutes", 40)),
+        }.get(str(position.get("setup")), 45)
+        available, flow_score, flow_age, _, aligned, opposed = _flow_values(signal, int(position.get("direction", 0)))
+        if not available:
+            return base
+        jump_threshold = float(self.config.get("paper_flow_jump_threshold", -45.0))
+        run_threshold = float(self.config.get("paper_flow_run_threshold", 45.0))
+        multiplier = 1.0
+        if flow_score <= jump_threshold:
+            multiplier = float(self.config.get("paper_flow_jump_hold_multiplier", 0.65))
+        elif flow_score >= run_threshold and aligned:
+            maximum = float(self.config.get("paper_flow_run_hold_multiplier_max", 2.25))
+            multiplier = 1.0 + (maximum - 1.0) * (flow_age / 99.0)
+        elif flow_score >= run_threshold and opposed:
+            multiplier = float(self.config.get("paper_flow_run_opposed_hold_multiplier", 0.60))
+        return max(10, min(240, int(round(base * multiplier))))
+
+    def _degrade_limit(self, position: Mapping[str, Any], signal: Any) -> int:
+        base = max(2, int(self.config.get("paper_exit_degrade_runs", 7)))
+        available, flow_score, flow_age, _, aligned, opposed = _flow_values(signal, int(position.get("direction", 0)))
+        if not available:
+            return base
+        jump_threshold = float(self.config.get("paper_flow_jump_threshold", -45.0))
+        run_threshold = float(self.config.get("paper_flow_run_threshold", 45.0))
+        if flow_score <= jump_threshold:
+            return max(3, base - 2)
+        if flow_score >= run_threshold and aligned:
+            return min(15, base + int(round(3.0 * flow_age / 99.0)))
+        if flow_score >= run_threshold and opposed:
+            return max(2, base - 3)
+        return base
+
     def _signal_exit(self, position: dict[str, Any], signal: Any | None) -> bool:
         if signal is None or signal.state == "INVALID_DATA":
             self._log(f"HOLD {position['alias']}: keine belastbaren neuen Signaldaten")
@@ -1324,15 +1484,12 @@ class PaperTrader:
         }.get(position.get("setup"))
         if support == direction:
             position["degrade_streak"] = 0
+            position["opposite_try_direction"] = 0
         else:
             position["degrade_streak"] = int(position.get("degrade_streak", 0)) + 1
         opened = _parse_time(position.get("opened_at"), self.now)
         age_minutes = max(0.0, (self.now - opened).total_seconds() / 60.0)
-        max_age = {
-            "E": int(self.config.get("paper_early_max_hold_minutes", 18)),
-            "T": int(self.config.get("paper_trend_max_hold_minutes", 25)),
-            "W": int(self.config.get("paper_reversal_max_hold_minutes", 12)),
-        }.get(str(position.get("setup")), 15)
+        max_age = self._max_hold_minutes(position, signal)
         reason = ""
         priority = 88.0
         if hard_opposition:
@@ -1341,10 +1498,8 @@ class PaperTrader:
             reason, priority = "Setup abgelaufen", 98.0
         elif age_minutes >= max_age:
             reason, priority = "maximale Setup-Haltedauer", 90.0
-        elif int(position.get("degrade_streak", 0)) >= int(
-            self.config.get("paper_exit_degrade_runs", 2)
-        ):
-            reason, priority = "Richtung zweimal nicht bestätigt", 92.0
+        elif int(position.get("degrade_streak", 0)) >= self._degrade_limit(position, signal):
+            reason, priority = "Richtung wiederholt nicht bestätigt", 92.0
         if not reason:
             unrealized = self._unrealized(position)
             self._log(
@@ -1387,7 +1542,20 @@ class PaperTrader:
         current = _f(position["margin_usd"])
         desired = max(target, current + (1.0 if upgrade else 0.0))
         equity, _, _ = self._equity()
-        add_cap = max(1.0, equity * float(self.config.get("paper_add_margin_pct", 5.0)) / 100.0)
+        base_add_cap = max(
+            1.0,
+            equity * float(self.config.get("paper_add_margin_pct", 5.0)) / 100.0,
+        )
+        # A genuine NEAR -> TRY or TRY -> NOW promotion is a tier upgrade, not
+        # an ordinary same-tier scale-in. Move directly toward that tier's
+        # target margin; the portfolio, per-position, exact-orderbook and risk
+        # checks below still cap/reject the increase. Same-tier adds remain
+        # deliberately limited by paper_add_margin_pct.
+        add_cap = (
+            max(base_add_cap, desired - current)
+            if upgrade
+            else base_add_cap
+        )
         add = max(0.0, math.floor(min(add_cap, desired - current) + 1e-9))
         if add < 1.0:
             return
@@ -1435,6 +1603,7 @@ class PaperTrader:
             stop_pct,
             leverage,
             actual_roundtrip_cost,
+            signal,
         )
         if int(position["direction"]) > 0:
             position["stop_price"] = max(_f(position["stop_price"]), candidate_stop)
@@ -1495,7 +1664,7 @@ class PaperTrader:
         for symbol, position in list((self.state.get("positions") or {}).items()):
             reason: str | None = None
             if symbol not in allowed_symbols:
-                reason = "Symbol nicht im v6.0.0-Kandidatenpool"
+                reason = "Symbol nicht im v6.1.0-Kandidatenpool"
             if reason is None:
                 continue
             signal = self.signals.get(symbol)

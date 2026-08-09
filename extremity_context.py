@@ -1,5 +1,5 @@
-# r2
-"""Multi-horizon extension and crowding score for CF v6.0.0.
+# r3
+"""Multi-horizon extension and crowding score for CF v6.1.0.
 
 Positive values mean unusually extended upward; negative values mean unusually
 extended downward.  The score combines intraday displacement with 1/3/7-day

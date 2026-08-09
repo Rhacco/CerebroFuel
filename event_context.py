@@ -1,5 +1,5 @@
-# r2
-"""Verified scheduled and externally confirmed event context for CF v6.0.0.
+# r3
+"""Verified scheduled and externally confirmed event context for CF v6.1.0.
 
 Automatic facts come only from official public schedules/status pages. Project-
 specific events such as token unlocks are accepted only from a local or remote
@@ -25,8 +25,8 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-CACHE_VERSION = "event-cache-v600-r2"
-USER_AGENT = "crypto-signal-monitor/6.0.0"
+CACHE_VERSION = "event-cache-v610-r2"
+USER_AGENT = "crypto-signal-monitor/6.1.0"
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4,
     "may": 5, "june": 6, "july": 7, "august": 8,

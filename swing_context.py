@@ -1,5 +1,5 @@
-# r2
-"""Live speed, activity, two-sided movement and BTC pinning context for CF v6.0.0.
+# r3
+"""Live speed, activity, two-sided movement and BTC pinning context for CF v6.1.0.
 
 The v5.5 signal state remains authoritative. This layer only adds timing context:
 - SPD measures how quickly price is moving now.
@@ -104,6 +104,8 @@ class PinResult:
     current_proximity_score: float = 0.0
     band_pct: float = 0.0
     observations: int = 0
+    coverage_pct: float = 0.0
+    largest_gap_minutes: float = 0.0
     exits: int = 0
     reason: str = ""
 
@@ -171,10 +173,17 @@ def calculate_swing_metrics(
         if pulse_ratio > 0
         else 0.0
     )
-    live_activity_score = _clamp(
-        turnover_score * 0.50
-        + pulse_score * 0.35
-        + _clamp(float(tape_quality)) * 0.15
+    # Activity is explicitly a market-turnover measure relative to OI.
+    # Without a valid OI denominator we keep speed/two-sided context usable,
+    # but must not manufacture a seemingly valid activity score from pulse/tape.
+    live_activity_score = (
+        _clamp(
+            turnover_score * 0.50
+            + pulse_score * 0.35
+            + _clamp(float(tape_quality)) * 0.15
+        )
+        if open_interest_usd > 0
+        else 0.0
     )
 
     meaningful_threshold = max(
@@ -205,7 +214,11 @@ def calculate_swing_metrics(
         two_sided_score=round(two_sided_score, 4),
         meaningful_up_moves=up,
         meaningful_down_moves=down,
-        reason="live speed/activity plus two-sided movement context",
+        reason=(
+            "live speed/activity plus two-sided movement context"
+            if open_interest_usd > 0
+            else "live speed/two-sided context; activity unavailable without OI"
+        ),
     )
 
 def calculate_pin(
@@ -215,19 +228,63 @@ def calculate_pin(
     noise_pct: float,
     config: Mapping[str, Any],
 ) -> PinResult:
+    """Measure whether BTC is currently attracted to a nearby round USD level.
+
+    PIN is deliberately tolerant of a small number of missing 1m bars. Coverage
+    and the largest actual timestamp gap are checked explicitly so a single
+    missing candle does not turn a healthy feed into an unavailable PIN marker,
+    while fragmented history still cannot manufacture a score.
+    """
     if not bool(config.get("btc_pin_enabled", True)):
         return PinResult(reason="disabled")
-    lookback = max(30, min(180, int(config.get("btc_pin_lookback_minutes", 60))))
-    rows = candles[-lookback:]
-    if len(rows) < max(30, lookback // 2) or not _contiguous(rows) or current_price <= 0:
-        return PinResult(reason="insufficient BTC pin history")
-    closes = [_f(row.get("c")) for row in rows]
-    if min(closes, default=0.0) <= 0:
-        return PinResult(reason="invalid BTC pin prices")
+    current_price = _f(current_price)
+    if current_price <= 0:
+        return PinResult(reason="invalid current BTC price")
 
+    lookback = max(30, min(180, int(config.get("btc_pin_lookback_minutes", 60))))
+    min_coverage = max(0.75, min(1.0, float(config.get("btc_pin_min_coverage", 0.90))))
+    max_gap_minutes = max(1.0, min(5.0, float(config.get("btc_pin_max_gap_minutes", 3.0))))
+
+    # Deduplicate/sort valid closes and keep an actual wall-clock lookback. Using
+    # the last N rows would silently stretch a 60m PIN window when candles are
+    # missing, which is exactly the situation this metric must diagnose cleanly.
+    by_stamp: dict[int, float] = {}
+    for row in candles:
+        stamp = _timestamp_ms(row)
+        close = _f(row.get("c"))
+        if stamp > 0 and close > 0:
+            by_stamp[stamp] = close
+    if not by_stamp:
+        return PinResult(reason="missing BTC pin history")
+
+    latest_stamp = max(by_stamp)
+    first_stamp = latest_stamp - (lookback - 1) * 60_000
+    points = [(stamp, by_stamp[stamp]) for stamp in sorted(by_stamp) if stamp >= first_stamp]
+    observations = len(points)
+    coverage = observations / float(lookback)
+    gaps = [
+        (right[0] - left[0]) / 60_000.0
+        for left, right in zip(points, points[1:])
+        if right[0] > left[0]
+    ]
+    largest_gap = max(gaps, default=1.0 if observations else 0.0)
+    diagnostics = {
+        "observations": observations,
+        "coverage_pct": round(coverage * 100.0, 4),
+        "largest_gap_minutes": round(largest_gap, 4),
+    }
+    minimum_observations = max(24, int(math.ceil(lookback * min_coverage)))
+    if observations < minimum_observations or coverage < min_coverage:
+        return PinResult(**diagnostics, reason="insufficient BTC pin coverage")
+    if any(gap < 0.75 for gap in gaps):
+        return PinResult(**diagnostics, reason="irregular BTC pin timestamps")
+    if largest_gap > max_gap_minutes + 1e-9:
+        return PinResult(**diagnostics, reason="BTC pin history too fragmented")
+
+    closes = [close for _, close in points]
     step = max(100.0, float(config.get("btc_pin_level_step_usd", 1000.0)))
     nearest = round(current_price / step) * step
-    candidates = [nearest - step, nearest, nearest + step]
+    candidates = sorted({nearest - step, nearest, nearest + step})
     band_pct_cfg = max(0.03, float(config.get("btc_pin_band_pct", 0.15)))
     noise_band_pct = max(0.0, float(noise_pct)) * float(config.get("btc_pin_noise_multiple", 3.0))
     band_pct = max(band_pct_cfg, noise_band_pct)
@@ -240,31 +297,68 @@ def calculate_pin(
             continue
         band = level * band_pct / 100.0
         current_distance = abs(current_price - level)
-        # PIN is a present-tense value: historical dwell around a level must not
-        # win after BTC has already moved materially away from that level.
+        # Historical attraction only matters while BTC is still close enough to
+        # the same level now. A past pin must not survive a genuine move away.
         if current_distance > band * current_band_multiple:
             continue
+
         inside = [abs(close - level) <= band for close in closes]
-        dwell = sum(inside) / len(inside)
+        # Missing observations count conservatively against dwell instead of
+        # inflating it. This still leaves a one-candle API hole almost neutral.
+        dwell = sum(inside) / float(lookback)
         distances = [abs(close - level) for close in closes]
         median_distance = statistics.median(distances)
-        historical_proximity = _clamp((1.0 - median_distance / max(2.0 * band, 1e-9)) * 100.0)
-        current_proximity = _clamp((1.0 - current_distance / max(band * current_band_multiple, 1e-9)) * 100.0)
-        proximity = _clamp(historical_proximity * 0.60 + current_proximity * 0.40)
+        historical_proximity = _clamp(
+            (1.0 - median_distance / max(2.0 * band, 1e-9)) * 100.0
+        )
+        current_proximity = _clamp(
+            (1.0 - current_distance / max(band * current_band_multiple, 1e-9)) * 100.0
+        )
+        proximity = _clamp(
+            historical_proximity * 0.60 + current_proximity * 0.40
+        )
 
         exits = 0
         returns = 0
-        for index in range(1, len(inside)):
+        horizon_ms = return_minutes * 60_000
+        for index in range(1, len(points)):
+            previous_stamp = points[index - 1][0]
+            stamp = points[index][0]
+            # Do not infer an exit across a missing candle.
+            if stamp - previous_stamp > 75_000:
+                continue
             if not inside[index] and inside[index - 1]:
+                # An exit too close to the end has not yet had its full return
+                # opportunity, so it is not counted as a failed return.
+                if latest_stamp - stamp < horizon_ms:
+                    continue
                 exits += 1
-                if any(inside[index + 1:index + 1 + return_minutes]):
+                deadline = stamp + horizon_ms
+                if any(
+                    inside[later]
+                    for later in range(index + 1, len(points))
+                    if points[later][0] <= deadline
+                ):
                     returns += 1
         if exits:
             return_score = returns / exits * 100.0
+        elif dwell >= 0.70:
+            return_score = 100.0
+        elif dwell >= 0.50:
+            return_score = 70.0
+        elif dwell >= 0.30:
+            return_score = 40.0
+        elif dwell >= 0.15:
+            return_score = 15.0
         else:
-            return_score = 100.0 if dwell >= 0.70 else (60.0 if dwell >= 0.50 else 40.0)
-        dwell_score = dwell * 100.0
-        score = _clamp(dwell_score * 0.45 + return_score * 0.25 + proximity * 0.30)
+            return_score = 0.0
+
+        dwell_score = _clamp(dwell * 100.0)
+        raw_score = _clamp(dwell_score * 0.45 + return_score * 0.25 + proximity * 0.30)
+        # Coverage is already represented in dwell. A mild square-root quality
+        # factor prevents sparse-but-allowed history from looking stronger than
+        # a complete window without overreacting to one isolated missing bar.
+        score = _clamp(raw_score * math.sqrt(coverage))
         result = PinResult(
             available=True,
             level=round(level, 8),
@@ -274,10 +368,28 @@ def calculate_pin(
             proximity_score=round(proximity, 4),
             current_proximity_score=round(current_proximity, 4),
             band_pct=round(band_pct, 6),
-            observations=len(closes),
+            observations=observations,
+            coverage_pct=round(coverage * 100.0, 4),
+            largest_gap_minutes=round(largest_gap, 4),
             exits=exits,
             reason="current-nearby level + dwell + return-to-level + proximity",
         )
         if best is None or result.score > best.score:
             best = result
-    return best or PinResult(reason="no nearby round BTC level")
+
+    if best is not None:
+        return best
+
+    # No nearby round level is a valid market finding, not a data error. This is
+    # the only normal case that should legitimately display P00.
+    return PinResult(
+        available=True,
+        level=round(nearest, 8) if nearest > 0 else 0.0,
+        score=0.0,
+        band_pct=round(band_pct, 6),
+        observations=observations,
+        coverage_pct=round(coverage * 100.0, 4),
+        largest_gap_minutes=round(largest_gap, 4),
+        reason="current BTC price not near a round level",
+    )
+

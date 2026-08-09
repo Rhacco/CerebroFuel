@@ -1,5 +1,5 @@
-# r2
-"""Lighter-native v5.5-style signal engine with live speed/activity context for CF v6.0.0."""
+# r3
+"""Lighter-native v5.5-style signal engine with compact flow context for CF v6.1.0."""
 from __future__ import annotations
 
 import json
@@ -19,13 +19,14 @@ from urllib.request import Request, urlopen
 from regime_context import calculate_regimes
 from extremity_context import calculate_extremity, extremity_color
 from swing_context import calculate_pin, calculate_swing_metrics
+from flow_context import calculate_flow_metrics
 from incident_context import IncidentSnapshot, detect_spontaneous_incidents
 from signal_streak_state import apply_signal_streaks
 from signal_transition_guard import apply_signal_transition_guard
 from signal_evaluator import update_signal_evaluation
 
-APP_VERSION = "6.0.0"
-PACKAGE_REVISION = "r2"
+APP_VERSION = "6.1.0"
+PACKAGE_REVISION = "r3"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 GLOBAL_BTC_EVENT_KINDS = {
@@ -49,7 +50,8 @@ STATE_TIER = {
     "INVALID_DATA": 0,
 }
 
-DAILY_CACHE_SCHEMA = "daily-candles-v600-r2"
+DAILY_CACHE_SCHEMA = "daily-candles-v610-r2"
+COMPATIBLE_CACHE_REVISIONS = {"r2", PACKAGE_REVISION}
 
 
 def _load_daily_candle_cache(
@@ -70,7 +72,7 @@ def _load_daily_candle_cache(
     if (
         payload.get("schema") != DAILY_CACHE_SCHEMA
         or payload.get("app_version") != APP_VERSION
-        or payload.get("package_revision") != PACKAGE_REVISION
+        or payload.get("package_revision") not in COMPATIBLE_CACHE_REVISIONS
     ):
         return {}, {}, {}
     fresh: dict[str, list[Mapping[str, Any]]] = {}
@@ -90,10 +92,27 @@ def _load_daily_candle_cache(
         if not isinstance(rows, list) or len(rows) < 30:
             continue
         age_seconds = max(0.0, (current - updated).total_seconds())
-        if age_seconds <= max_stale_hours * 3600:
+        day_start_ms = int(current.timestamp() // 86_400) * 86_400_000
+        latest_completed_start_ms = day_start_ms - 86_400_000
+        clean_stamps = sorted(
+            _timestamp_ms(row) for row in rows
+            if isinstance(row, Mapping) and _timestamp_ms(row) > 0
+        )
+        latest_row_ms = clean_stamps[-1] if clean_stamps else 0
+        no_daily_gaps = all(
+            20 * 3_600_000 <= right - left <= 28 * 3_600_000
+            for left, right in zip(clean_stamps, clean_stamps[1:])
+        )
+        has_latest_completed_day = (
+            latest_row_ms == latest_completed_start_ms and no_daily_gaps
+        )
+        # A fallback may be stale in fetch time, but never stale in market-day
+        # coverage. Missing yesterday is safer treated as unavailable than as a
+        # seemingly current multi-day AGE/regime input.
+        if age_seconds <= max_stale_hours * 3600 and has_latest_completed_day:
             fallback[symbol] = rows
             timestamps[symbol] = updated.isoformat()
-        if age_seconds <= refresh_minutes * 60:
+        if age_seconds <= refresh_minutes * 60 and has_latest_completed_day:
             fresh[symbol] = rows
     return fresh, fallback, timestamps
 
@@ -286,6 +305,13 @@ class Signal:
     swing_volume_pulse_ratio: float = 0.0
     live_activity_score: float = 0.0
     two_sided_score: float = 0.0
+    flow_available: bool = False
+    flow_score: float = 0.0
+    flow_raw_efficiency_ratio: float = 0.0
+    flow_age_available: bool = False
+    flow_age_score: float = 0.0
+    flow_regime: str = "UNKNOWN"
+    flow_direction: int = 0
     btc_pin_available: bool = False
     btc_pin_level: float = 0.0
     btc_pin_score: float = 0.0
@@ -404,21 +430,35 @@ class LighterClient:
 
     def daily_candles(self, market_id: int, count: int = 40) -> list[Mapping[str, Any]]:
         now = int(time.time())
+        # REST candles default to candle-open timestamps. Fetch one extra row and
+        # explicitly exclude today's still-forming UTC daily candle so multi-day
+        # regime/AGE calculations never treat an incomplete day as final.
         payload = self.get(
             "/candles",
             market_id=market_id,
             resolution="1d",
-            start_timestamp=now - (count + 5) * 86_400,
+            start_timestamp=now - (count + 7) * 86_400,
             end_timestamp=now,
-            count_back=min(500, max(35, count)),
-            set_timestamp_to_end="true",
+            count_back=min(500, max(36, count + 2)),
+            set_timestamp_to_end="false",
         )
+        day_start_ms = (now // 86_400) * 86_400_000
         rows_by_time: dict[int, Mapping[str, Any]] = {}
         for row in list(payload.get("c") or []):
             stamp = _timestamp_ms(row)
-            if stamp > 0 and _f(row.get("c")) > 0:
+            if 0 < stamp < day_start_ms and _f(row.get("c")) > 0:
                 rows_by_time[stamp] = row
-        return [rows_by_time[key] for key in sorted(rows_by_time)][-count:]
+        rows = [rows_by_time[key] for key in sorted(rows_by_time)]
+        latest_expected_ms = day_start_ms - 86_400_000
+        if rows and _timestamp_ms(rows[-1]) != latest_expected_ms:
+            raise RuntimeError("letzte abgeschlossene Tageskerze fehlt")
+        stamps = [_timestamp_ms(row) for row in rows]
+        if any(
+            not 20 * 3_600_000 <= right - left <= 28 * 3_600_000
+            for left, right in zip(stamps, stamps[1:])
+        ):
+            raise RuntimeError("Tageskerzen enthalten eine Datenlücke")
+        return rows[-count:]
 
     def book(self, market_id: int, limit: int = 50) -> Mapping[str, Any]:
         return self.get("/orderBookOrders", market_id=market_id, limit=limit)
@@ -1335,26 +1375,26 @@ def _signed_extremity_token(signal: Signal) -> str:
     return f"{signal.alias}{sign}{value:02d}"
 
 
-def _speed_token(signal: Signal) -> str:
-    value = max(0, min(99, int(round(float(signal.swing_speed_bps)))))
-    return f"S{value:02d}"
+def _flow_token(signal: Signal) -> str:
+    if not signal.flow_available:
+        return "ER?00"
+    value = max(-99, min(99, int(round(float(signal.flow_score)))))
+    # Keep a constant five-character token. Exact neutral follows the requested
+    # ER-00 convention; positive values mean runable, negative values jumpy.
+    sign = "+" if value > 0 else "-"
+    return f"ER{sign}{abs(value):02d}"
 
 
-def _activity_token(signal: Signal) -> str:
-    value = max(0, min(99, int(round(float(signal.live_activity_score)))))
-    return f"A{value:02d}"
-
-
-def _regime_token(signal: Signal) -> str:
-    if not signal.regime_available:
-        return "R?00"
-    value = max(-99, min(99, int(round(float(signal.regime_score)))))
-    return f"R{value:+03d}"
+def _flow_age_token(signal: Signal) -> str:
+    if not signal.flow_age_available:
+        return "AGE??"
+    value = max(0, min(99, int(round(float(signal.flow_age_score)))))
+    return f"AGE{value:02d}"
 
 
 def _pin_token(signal: Signal) -> str:
     if not signal.btc_pin_available:
-        return "P00"
+        return "P??"
     value = max(0, min(99, int(round(float(signal.btc_pin_score)))))
     return f"P{value:02d}"
 
@@ -1829,8 +1869,58 @@ class LighterMonitor:
             raise ValueError("swing_activity_lookback_minutes ist ungültig")
         if not 10 <= int(self.config.get("swing_two_sided_lookback_minutes", 20)) <= 40:
             raise ValueError("swing_two_sided_lookback_minutes ist ungültig")
-        if not 30 <= int(self.config.get("btc_pin_lookback_minutes", 60)) <= 180:
+        if bool(self.config.get("flow_enabled", True)):
+            flow_scale = float(self.config.get("flow_score_scale", 2.4))
+            flow_run = float(self.config.get("flow_run_threshold", 20.0))
+            flow_jump = float(self.config.get("flow_jump_threshold", -20.0))
+            flow_age_run = float(self.config.get("flow_age_run_match_threshold", 12.0))
+            flow_age_jump = float(self.config.get("flow_age_jump_match_threshold", -12.0))
+            flow_age_jump_strength = float(self.config.get("flow_age_jump_strength_min", 0.18))
+            flow_age_jump_efficiency = float(self.config.get("flow_age_jump_efficiency_max", 0.45))
+            flow_age_mixed = float(self.config.get("flow_age_mixed_band", 28.0))
+            flow_age_consistency = float(self.config.get("flow_age_daily_consistency_min", 0.62))
+            if not 0.5 <= flow_scale <= 5.0:
+                raise ValueError("flow_score_scale ist ungültig")
+            if not 0 < flow_run <= 80 or not -80 <= flow_jump < 0:
+                raise ValueError("Flow-Regime-Schwellen sind ungültig")
+            if not 0 <= flow_age_run <= flow_run or not flow_jump <= flow_age_jump <= 0:
+                raise ValueError("Flow-AGE-Schwellen sind ungültig")
+            if not 0.05 <= flow_age_jump_strength <= 0.60:
+                raise ValueError("flow_age_jump_strength_min ist ungültig")
+            if not 0.10 <= flow_age_jump_efficiency <= 0.70:
+                raise ValueError("flow_age_jump_efficiency_max ist ungültig")
+            if not 5 <= flow_age_mixed <= 50:
+                raise ValueError("flow_age_mixed_band ist ungültig")
+            if not 0.50 <= flow_age_consistency <= 0.90:
+                raise ValueError("flow_age_daily_consistency_min ist ungültig")
+            if int(self.config.get("candle_count", 360)) < 301:
+                raise ValueError("Flow benötigt mindestens 301 1m-Kerzen")
+            if int((self.config.get("regime") or {}).get("daily_candle_count", 40)) < 31:
+                raise ValueError("Flow-AGE benötigt mindestens 31 Tageskerzen")
+        pin_lookback = int(self.config.get("btc_pin_lookback_minutes", 60))
+        pin_step = float(self.config.get("btc_pin_level_step_usd", 1000.0))
+        pin_band = float(self.config.get("btc_pin_band_pct", 0.15))
+        pin_noise_multiple = float(self.config.get("btc_pin_noise_multiple", 3.0))
+        pin_current_multiple = float(self.config.get("btc_pin_current_band_multiple", 2.0))
+        pin_return_minutes = int(self.config.get("btc_pin_return_minutes", 5))
+        pin_min_coverage = float(self.config.get("btc_pin_min_coverage", 0.90))
+        pin_max_gap = float(self.config.get("btc_pin_max_gap_minutes", 3.0))
+        if not 30 <= pin_lookback <= 180:
             raise ValueError("btc_pin_lookback_minutes ist ungültig")
+        if not 100.0 <= pin_step <= 10_000.0:
+            raise ValueError("btc_pin_level_step_usd ist ungültig")
+        if not 0.03 <= pin_band <= 1.0:
+            raise ValueError("btc_pin_band_pct ist ungültig")
+        if not 0.0 <= pin_noise_multiple <= 10.0:
+            raise ValueError("btc_pin_noise_multiple ist ungültig")
+        if not 1.0 <= pin_current_multiple <= 4.0:
+            raise ValueError("btc_pin_current_band_multiple ist ungültig")
+        if not 1 <= pin_return_minutes <= 15:
+            raise ValueError("btc_pin_return_minutes ist ungültig")
+        if not 0.75 <= pin_min_coverage <= 1.0:
+            raise ValueError("btc_pin_min_coverage ist ungültig")
+        if not 1.0 <= pin_max_gap <= 5.0:
+            raise ValueError("btc_pin_max_gap_minutes ist ungültig")
         if int(self.config.get("candle_count", 360)) < 200:
             raise ValueError("candle_count muss mindestens 200 betragen")
         breadth_symbols = [str(value).upper() for value in self.config.get("btc_breadth_symbols", [])]
@@ -2659,6 +2749,30 @@ class LighterMonitor:
             payload[item.symbol] = row
         return payload
 
+    def _apply_flow_context(
+        self,
+        signals: list[Signal],
+        snapshots: Mapping[str, Mapping[str, Any]],
+        daily_candles: Mapping[str, list[Mapping[str, Any]]],
+    ) -> dict[str, Any]:
+        """Describe current path structure without changing v5.5-derived states."""
+        payload: dict[str, Any] = {}
+        for item in signals:
+            result = calculate_flow_metrics(
+                minute_candles=list((snapshots.get(item.symbol) or {}).get("candles") or []),
+                daily_candles=list(daily_candles.get(item.symbol) or []),
+                config=self.config,
+            )
+            item.flow_available = result.available
+            item.flow_score = result.score
+            item.flow_raw_efficiency_ratio = result.raw_efficiency_ratio
+            item.flow_age_available = result.age_available
+            item.flow_age_score = result.age_score
+            item.flow_regime = result.regime
+            item.flow_direction = result.direction
+            payload[item.symbol] = result.to_dict()
+        return payload
+
     def _apply_event_context(
         self,
         signals: list[Signal],
@@ -3074,14 +3188,14 @@ class LighterMonitor:
 
         def detail_line(item: Signal) -> str:
             if item.state == "INVALID_DATA":
-                return f"⚫? 05⚫20⚫60⚫ {item.alias}?00 S00 A00 R?00"
+                return f"⚫? 05⚫20⚫60⚫ ER?00 AGE?? {item.alias}?00"
             windows = "".join(
                 f"{minutes:02d}{_window_color(item.windows.get(minutes, Window(minutes)))}"
                 for minutes in DISPLAY_WINDOWS
             )
             core = (
-                f"{_detail_head(item)} {windows} {_signed_extremity_token(item)} "
-                f"{_speed_token(item)} {_activity_token(item)} {_regime_token(item)}"
+                f"{_detail_head(item)} {windows} {_flow_token(item)} "
+                f"{_flow_age_token(item)} {_signed_extremity_token(item)}"
             )
             event = "" if item.symbol == anchor_symbol else str(item.event_display_code or "")
             warnings = [code for code in _warning_codes(item, self.config) if not event or code not in event]
@@ -3219,6 +3333,7 @@ class LighterMonitor:
         regime_payload = self._apply_regime_context(signals, snapshots, daily_candles, now)
         extremity_payload = self._apply_extremity_context(signals, snapshots, daily_candles)
         swing_payload = self._apply_swing_context(signals, snapshots)
+        flow_payload = self._apply_flow_context(signals, snapshots, daily_candles)
         incident_snapshot = detect_spontaneous_incidents(
             self.config,
             signals=signals,
@@ -3301,6 +3416,7 @@ class LighterMonitor:
             "regime": regime_payload,
             "extremity": extremity_payload,
             "swing": swing_payload,
+            "flow": flow_payload,
             "signal_transition": transition_payload,
             "signal_evaluation": evaluation_payload,
             "incidents": incident_snapshot.to_dict(),

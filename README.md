@@ -1,24 +1,18 @@
-<!-- r2 -->
-# Crypto Signal Monitor v6.0.0
+<!-- r3 -->
+# Crypto Signal Monitor v6.1.0
 
 ## Anzeige
-Oben: drei aktuell aktivste Altcoins, nach Reversal-Seite von Short → Long sortiert; Warnungen/Events direkt am Coin. BTC bleibt rechts, wechselt wie bisher zwischen Kurs und aktuellen Makro-/ETF-Hinweisen und trägt ganz am Zeilenende `Pxx`.
+Oben: drei aktuell aktivste Altcoins, Short → Long. Direkt am Coin bleiben nur hochrelevante Sonderlagen (Unlock, Security/Network/Schock, Supply/ETF). Rechts BTC kompakt als `Pxx` + Farbe + vierstelliger Kursrest bzw. Makro-/ETF-Hinweis.
 
-Unten: BTC fest zuerst, danach nur die stärksten v5.5-artigen NEAR/TRY/NOW-Kandidaten von Short → Long. Fester Kern:
-`Druck · 05/20/60 · COIN±EXT · Sxx · Axx · R±xx`
-Variable News/Warnungen stehen ausschließlich rechts.
+Unten: BTC fest zuerst, danach die stärksten Aktionskandidaten Short → Long. Einheitlicher Kern:
+`Druck · 05/20/60 · ER±xx · AGEyy · COIN±EXT`
+Erst danach dürfen Coin-News/Warnungen abweichen.
 
-- `COIN+47/-47`: obere/untere Extremity
-- `Sxx`: Median der aktuellen 1m-Bewegung in bp/min
-- `Axx`: Live-Aktivität 0–99 aus Quote-Volumen/OI und Volumenpuls
-- `R±xx`: 7/14/30-Tage-Regime; bei Alts BTC-relativ, bei BTC absolut
-- `Pxx`: BTC-Pinning 0–99 am nächsten runden Preislevel
+- `ER-99 … ER-00 … ER+99`: aktuelle Pfadstruktur aus 30m/2h/5h; nur tatsächlich relevante Range zählt. Stark negativ = schnelle beidseitige Sprünge, um 00 = gemischt/ruhiger, stark positiv = effizient laufende Bewegung. Das Vorzeichen ist **keine** Long/Short-Richtung.
+- `AGE00 … AGE99`: Beständigkeit derselben Struktur über 2h → 5h → 2d → 3d → 7d → 14d → 30d. Lange Stufen zählen nur, wenn auch rollende Teilfenster zur aktuellen Lage passen.
+- `COIN+47/-47`: Extremity wie bisher; `Pxx`: BTC-Pinning. `P??` = Pin-Daten nicht belastbar; `P00` = gültig kein aktueller Pin.
 
-## Signalstufen
-Die obere Zeile ist ein neutrales Früh-Radar und löst keine Paper-Aktion aus. Intern bleibt die bewährte v5.5-Staffelung: `NEAR` kleiner Scout, `TRY` zügig erhöhen bzw. Gegenseite reduzieren, `NOW` volle Bestätigung/Anpassung. Speed/Activity bestätigen und priorisieren, ersetzen aber nicht die v5.5-Setuplogik.
+Speed/Activity, Two-Sided, 7/14/30D-Regime, Orderbuch- und Qualitätswerte bleiben intern für Auswahl/Risiko aktiv.
 
 ## Paper
-Start `100$`. Märkte ab `5x` sind zulässig; `10x+` bleibt bevorzugt. NEAR startet klein, TRY/NOW skalieren stufenweise. Entgegengesetztes TRY reduziert zunächst Risiko; NOW darf schließen/umdrehen. Portfolio-, Stop-, Event- und Orderbuchfilter bleiben aktiv.
-
-## Warnungen
-Coin-News, Unlocks, Security/Network/Schocks sowie Makro- und ETF-Anzeigen bleiben unverändert aus dem v5.5-Zweig erhalten. Qualitätswarnungen (`K!/L!/V!/F!/…`) werden nur rechts ergänzt und verändern den festen Zeilenkern nicht.
+NEAR eröffnet nur einen kleinen Scout, TRY baut in gleicher Richtung zügig aus und reduziert ein Gegensignal einmalig, NOW übernimmt volle Bestätigung bzw. Schließen/Reverse. ER/AGE bestimmen **nicht** die Handelsrichtung: sprunghafte Phasen werden kleiner/kürzer mit schnelleren Zielen geführt; ein alter, sauber laufender und richtungsgleicher Pfad darf länger laufen. Ein sauber laufender Pfad gegen die Position reduziert Größe/Hebel/Haltedauer.

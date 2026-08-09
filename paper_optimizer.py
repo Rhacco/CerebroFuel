@@ -1,5 +1,5 @@
-# r2
-"""Fast diagnostic plus evidence-based paper review for CF v6.0.0.
+# r3
+"""Fast diagnostic plus evidence-based paper review for CF v6.1.0.
 
 No finding changes trading parameters automatically.  The rapid audit can flag
 one objectively poor entry after only one to three closed trades, but labels it
@@ -15,7 +15,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Callable, Iterable, Mapping
 
-STATE_VERSION = "paper-optimizer-v600-r2"
+STATE_VERSION = "paper-optimizer-v610-r2"
 
 
 def _f(value: Any, default: float = 0.0) -> float:
@@ -186,7 +186,7 @@ def _rapid_findings(trades: list[dict[str, Any]], config: Mapping[str, Any]) -> 
     return findings
 
 
-def _feature_rules() -> list[tuple[str, str, Callable[[Mapping[str, Any]], bool]]]:
+def _feature_rules(config: Mapping[str, Any]) -> list[tuple[str, str, Callable[[Mapping[str, Any]], bool]]]:
     return [
         ("LOW_DATA", "niedrige Datenqualität", lambda f: _f(f.get("data_quality"), 100) < 75),
         ("LOW_READINESS", "Readiness unter 66", lambda f: _f(f.get("readiness"), 100) < 66),
@@ -197,6 +197,8 @@ def _feature_rules() -> list[tuple[str, str, Callable[[Mapping[str, Any]], bool]
         ("HIGH_COST", "hohe Roundtrip-Kosten", lambda f: _f(f.get("cost_pct")) > 0.065),
         ("REGIME_AGAINST", "7/14/30D-Regime gegen Einstieg", lambda f: bool(f.get("regime_available", False)) and _f(f.get("regime_modifier")) <= -4),
         ("EXTREME_CHASE", "Einstieg in Richtung einer Überdehnung", lambda f: bool(f.get("extremity_available", False)) and _f(f.get("extremity_score")) * int(_f(f.get("direction"))) >= 45),
+        ("FLOW_JUMPY", "stark sprunghafte ER-Struktur", lambda f: bool(f.get("flow_available", False)) and _f(f.get("flow_score")) <= float(config.get("paper_flow_jump_threshold", -45.0))),
+        ("FLOW_RUN_AGAINST", "langlebige ER-Struktur gegen Einstieg", lambda f: bool(f.get("flow_available", False)) and _f(f.get("flow_score")) >= float(config.get("paper_flow_run_threshold", 45.0)) and _f(f.get("flow_age_score")) >= float(config.get("paper_flow_long_age_threshold", 50.0)) and int(_f(f.get("flow_direction"))) == -int(_f(f.get("direction")))),
         ("SETUP_T", "T-Setup", lambda f: str(f.get("setup")) == "T"),
         ("SETUP_E", "E-Setup", lambda f: str(f.get("setup")) == "E"),
         ("SETUP_W", "W-Setup", lambda f: str(f.get("setup")) == "W"),
@@ -211,7 +213,7 @@ def _statistical_findings(trades: list[dict[str, Any]], config: Mapping[str, Any
     if len(trades) < minimum_total:
         return []
     findings: list[Finding] = []
-    for key, label, predicate in _feature_rules():
+    for key, label, predicate in _feature_rules(config):
         bucket = [row for row in trades if predicate(row["features"])]
         other = [row for row in trades if not predicate(row["features"])]
         n, win, avg_r = _stats(bucket)
