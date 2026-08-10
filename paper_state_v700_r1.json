@@ -2,13 +2,11 @@
   "app_version": "7.0.0",
   "balance_usd": 99.999763035,
   "checkpoint_requested": false,
-  "cooldowns": {
-    "UNI": 1786349906
-  },
+  "cooldowns": {},
   "funding_model_version": "lighter-hourly-settlement-v2",
-  "last_checkpoint_at": "2026-08-10T08:17:30.211174+00:00",
-  "last_decision_key": "1786349820000",
-  "last_run_at": "2026-08-10T08:17:26.500776+00:00",
+  "last_checkpoint_at": "2026-08-10T08:22:31.357581+00:00",
+  "last_decision_key": "1786350120000",
+  "last_run_at": "2026-08-10T08:22:27.857948+00:00",
   "ledger": [
     {
       "action": {
@@ -2706,151 +2704,294 @@
         "trade_net_pnl_usd": -0.0586517521282932
       },
       "timestamp": "2026-08-10T08:17:26.500776+00:00"
+    },
+    {
+      "action": {
+        "alias": "UNI",
+        "direction": -1,
+        "full_close": false,
+        "is_add": false,
+        "kind": "OPEN",
+        "leverage": 10,
+        "margin_usd": 2.0,
+        "priority": 76.14539577524943,
+        "realized_pnl_usd": 0.0,
+        "reason": "W 57.0/66.4, Stop 0.198%",
+        "symbol": "UNI"
+      },
+      "balance_usd": 99.99976304,
+      "details": {
+        "base_size": 4.933155739726703,
+        "confidence": 66.41989996434353,
+        "entry_fee_usd": 0.0,
+        "entry_price": 4.0542,
+        "entry_roundtrip_cost_pct": 0.03946524591780928,
+        "entry_state": "WATCH_SHORT",
+        "notional_usd": 20.0,
+        "rank": 1,
+        "readiness": 57.0,
+        "setup": "W",
+        "stop_price": 4.06221729009312,
+        "target_one_price": 4.0404374,
+        "target_two_price": 4.0201664
+      },
+      "timestamp": "2026-08-10T08:22:27.857948+00:00"
     }
   ],
   "observations": {
     "ADA": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "APT": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "AVAX": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "BTC": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "ENA": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "ETH": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "FARTCOIN": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "HYPE": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "JUP": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "INVALID_DATA"
+      "state": "NO_TRADE"
     },
     "KAITO": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "LDO": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
-      "state": "INVALID_DATA"
+      "state": "NO_TRADE"
     },
     "NEAR": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "ONDO": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "PENGU": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "PUMP": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "SOL": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "SUI": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "TAO": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "UNI": {
-      "candle_ms": 1786349820000,
-      "entry_direction": 0,
-      "entry_streak": 0,
-      "state": "NO_TRADE"
+      "candle_ms": 1786350120000,
+      "entry_direction": -1,
+      "entry_streak": 2,
+      "state": "WATCH_SHORT"
     },
     "WLD": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "XPL": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "XRP": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "ZEC": {
-      "candle_ms": 1786349820000,
+      "candle_ms": 1786350120000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     }
   },
   "package_revision": "r1",
-  "positions": {},
-  "run_count": 119,
+  "positions": {
+    "UNI": {
+      "alias": "UNI",
+      "base_size": 4.9331557397267,
+      "degrade_streak": 0,
+      "direction": -1,
+      "entry_confidence": 66.41989996434353,
+      "entry_features": {
+        "btc_context": 60.0,
+        "chase_warning": false,
+        "confidence": 66.41989996434353,
+        "cost_pct": 0.03946524591780928,
+        "data_quality": 100.0,
+        "direction": -1,
+        "early_approach_confirmed": false,
+        "early_boundary_distance_pct": 0.0,
+        "early_clean_boundary_test": false,
+        "early_preview_only": false,
+        "event_kind": "CPI",
+        "event_risk": 20.0,
+        "event_score_available": true,
+        "event_source_coverage": 0.0,
+        "execution_score": 60.534754082190716,
+        "extremity_available": true,
+        "extremity_confidence": 79.6357,
+        "extremity_intraday": -16.22,
+        "extremity_return_1d": 1.203,
+        "extremity_return_3d": 1.0114,
+        "extremity_return_7d": -2.8489,
+        "extremity_score": -6.4621,
+        "extremity_swing": 7.122,
+        "funding_hourly_pct": 0.0012,
+        "funding_missing": false,
+        "funding_model_version": "lighter-hourly-settlement-v2",
+        "leverage": 10,
+        "liquidity_score": 66.21248858000406,
+        "margin_usd": 2.0,
+        "optimizer_compatible": true,
+        "probe_entry": true,
+        "rank": 1,
+        "readiness": 57.0,
+        "rebound_participation": null,
+        "regime_available": true,
+        "regime_consistency": 0.6667,
+        "regime_modifier": 1.1837,
+        "regime_score": -7.7942,
+        "relative_14d": 4.3224,
+        "relative_30d": 13.2239,
+        "relative_7d": -5.4904,
+        "relative_drift_60m": -0.4709,
+        "return_14d": 4.1055,
+        "return_30d": 14.9096,
+        "return_7d": -2.8489,
+        "reversal_new_extreme": false,
+        "reversal_relative_confirmed": true,
+        "reversal_relative_opposition": false,
+        "reversal_structural_reclaim": true,
+        "risk_committed_usd": 0.04744358982348846,
+        "risk_usd": 0.04744358982348846,
+        "setup": "W",
+        "setup_age_minutes": 1,
+        "setup_consumed_fraction": 0.28570031735347085,
+        "setup_phase": "forming",
+        "setup_score": 64.57292753374827,
+        "springer_available": true,
+        "springer_class": "C",
+        "springer_reliability": 74.1117,
+        "springer_score": 59.2801,
+        "stop_pct": 0.19775270319963303,
+        "symbol": "UNI",
+        "tape_quality": 68.20796548099304,
+        "technical_stop_pct": 0.15418337617774114,
+        "technical_stop_price": 4.0609516733538795,
+        "volume_confirmation": 35.69791390435782
+      },
+      "entry_fee_remaining_usd": 0.0,
+      "entry_price": 4.0542,
+      "entry_rank": 1,
+      "entry_readiness": 57.0,
+      "entry_roundtrip_cost_pct": 0.03946524591780928,
+      "entry_state": "WATCH_SHORT",
+      "funding_accrued_usd": 0.0,
+      "funding_observed_settlements": 0,
+      "funding_unknown_settlements": 0,
+      "funding_updated_at": "2026-08-10T08:22:27.857948+00:00",
+      "last_candle_ms": 1786350120000,
+      "last_funding_hourly_pct": 0.0012,
+      "last_funding_settlement_ms": 1786348800000,
+      "last_mark_at": "2026-08-10T08:22:27.857948+00:00",
+      "last_mark_price": 4.0558,
+      "last_scale_at": null,
+      "leverage": 10,
+      "margin_usd": 2.0,
+      "notional_usd": 20.0,
+      "opened_at": "2026-08-10T08:22:27.857948+00:00",
+      "opposite_try_direction": 0,
+      "probe_entry": true,
+      "realized_pnl_usd": 0.0,
+      "risk_committed_usd": 0.04744358982348846,
+      "risk_usd": 0.04744358982348846,
+      "scale_count": 0,
+      "setup": "W",
+      "signal_tier": 1,
+      "stop_pct": 0.19775270319963303,
+      "stop_price": 4.06221729009312,
+      "symbol": "UNI",
+      "taker_fee_pct": 0.0,
+      "target_one_price": 4.0404374,
+      "target_one_taken": false,
+      "target_two_price": 4.0201664
+    }
+  },
+  "run_count": 124,
   "schema": 7,
   "starting_balance_usd": 100.0
 }
