@@ -1,4 +1,4 @@
-# r2
+# r4
 name: Crypto Signal Monitor v7.0.0
 on:
   workflow_dispatch:
@@ -8,19 +8,14 @@ on:
         required: true
         default: true
         type: boolean
-      event_feed_json:
-        description: "Exakter Event-Feed-Snapshot des auslösenden Workers"
-        required: false
-        default: ""
-        type: string
       event_feed_payload:
-        description: "Exakter Event-Feed-Snapshot, optional gzip/base64"
+        description: "Verifizierter Event-Snapshot des Workers"
         required: false
         default: ""
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: crypto-signal-monitor-v7.0.0
@@ -32,12 +27,30 @@ jobs:
     timeout-minutes: 8
     steps:
       - name: Repository laden
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
       - name: Python einrichten
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Laufzeit-State-Cache laden
+      - name: Laufzeit-State laden
+        id: runtime-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            output/event_cache.json
+            output/event_display_state.json
+            output/incident_state.json
+            output/signal_transition_state.json
+            output/signal_streak_state.json
+            output/daily_candle_cache.json
+            output/springer_history.json
+            output/display_selection_state.json
+          key: runtime-state-v700-r4-${{ github.run_id }}
+          restore-keys: |
+            runtime-state-v700-r4-
+            runtime-state-v700-r3-
+      - name: Alten Laufzeit-State laden
+        if: steps.runtime-cache.outputs.cache-matched-key == ''
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -54,36 +67,24 @@ jobs:
           restore-keys: |
             runtime-state-v700-r2-
             runtime-state-v700-r1-
-      - name: Paper-State wiederherstellen
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python paper_state_store.py restore output/paper_state.json
       - name: Lighter-Analyse ausführen
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           SEND_DISCORD: ${{ inputs.send_discord }}
           CRYPTO_EVENTS_DISPATCH_PAYLOAD: ${{ inputs.event_feed_payload }}
-          CRYPTO_EVENTS_DISPATCH_JSON: ${{ inputs.event_feed_json }}
           CRYPTO_EVENTS_URL: ${{ secrets.CRYPTO_EVENTS_URL }}
-          CRYPTO_EVENTS_JSON: ${{ secrets.CRYPTO_EVENTS_JSON }}
         run: python main.py
-      - name: Paper-State sichern
-        if: always() && hashFiles('output/paper_state.json') != ''
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python paper_state_store.py checkpoint output/paper_state.json --interval-hours 6
-      - name: Laufzeit-State-Cache speichern
+      - name: Laufzeit-State speichern
         if: always()
         uses: actions/cache/save@v4
         with:
           path: |
-            output/paper_state.json
             output/event_cache.json
             output/event_display_state.json
             output/incident_state.json
             output/signal_transition_state.json
             output/signal_streak_state.json
-            output/signal_evaluation_state.json
-            output/parameter_review.json
             output/daily_candle_cache.json
-          key: runtime-state-v700-r2-${{ github.run_id }}
+            output/springer_history.json
+            output/display_selection_state.json
+          key: runtime-state-v700-r4-${{ github.run_id }}

@@ -1,4 +1,4 @@
-# r2
+# r4
 """Persistent action-state streaks for CF v7.0.0 detail tokens."""
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def _load(path: Path) -> dict[str, Any]:
         return {"version": STATE_VERSION, "entries": {}}
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return {"version": STATE_VERSION, "entries": {}}
     if raw.get("version") != STATE_VERSION or not isinstance(raw.get("entries"), dict):
         return {"version": STATE_VERSION, "entries": {}}

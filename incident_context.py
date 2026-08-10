@@ -1,10 +1,10 @@
-# r2
+# r4
 """Acute incident protection for CF v7.0.0.
 
 A MARKET_SHOCK is price evidence only: a statistically unusual, strongly
 one-sided 15-minute displacement.  It never claims an exploit/news cause.
 While the move remains one-sided, SHK! is forced into the top radar and the
-symbol is blocked from lower trade lines and fresh paper entries.  The block
+symbol is blocked from lower trade lines until the move clears.  The block
 ends when a meaningful counter-move starts or the move demonstrably calms.
 """
 from __future__ import annotations

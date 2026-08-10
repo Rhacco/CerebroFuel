@@ -1,4 +1,4 @@
-# r2
+# r4
 """Multi-horizon extension and crowding score for CF v7.0.0.
 
 Positive values mean unusually extended upward; negative values mean unusually
@@ -264,18 +264,5 @@ def extremity_color(score: float, available: bool = True) -> str:
         return "🔵"
     return "🟢"
 
-
-def extremity_code(
-    score: float,
-    available: bool = True,
-    direction: float = 0.0,
-) -> str:
-    """Always expose signed crowding as OB/OS; neutral values stay numeric."""
-    value = min(99, int(round(abs(score)))) if available else 0
-    if score > 0.0:
-        return f"OB{value:02d}"
-    if score < 0.0:
-        return f"OS{value:02d}"
-    return f"OB{value:02d}" if direction >= 0.0 else f"OS{value:02d}"
 
 

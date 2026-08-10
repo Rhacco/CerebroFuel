@@ -1,11 +1,11 @@
-# r2
+# r4
 """Verified scheduled and externally confirmed event context for CF v7.0.0.
 
-Automatic facts come only from official public schedules/status pages. Project-
-specific events such as token unlocks are accepted only from a local or remote
-JSON feed that explicitly marks the item verified and supplies an allowed HTTPS
-source URL. Events never create a Long/Short direction; they only add visibility
-and neutral risk controls.
+Macro facts come from authoritative public schedules. Coin events arrive only
+through the worker snapshot or an explicitly configured HTTPS fallback feed and
+are accepted only when marked verified with an allowlisted HTTPS evidence URL.
+Events never create a Long/Short direction; they only add visibility and neutral
+risk controls.
 """
 from __future__ import annotations
 
@@ -138,6 +138,7 @@ class CriticalEvent:
     source_name: str
     source_url: str
     active: bool = False
+    impact_score: int | None = None
 
 
 @dataclass(frozen=True)
@@ -258,6 +259,16 @@ def _event_from_dict(
     source_name = str(raw.get("source_name") or urlparse(source_url).netloc or "Quelle").strip()
     if not symbol or kind not in KIND_CODES or not title or not source_url:
         return None
+    try:
+        priority = int(raw.get("priority", DEFAULT_PRIORITIES.get(kind, 70)))
+    except (TypeError, ValueError):
+        priority = int(DEFAULT_PRIORITIES.get(kind, 70))
+    impact_score: int | None = None
+    if raw.get("impact_score") is not None:
+        try:
+            impact_score = max(0, min(99, int(raw.get("impact_score"))))
+        except (TypeError, ValueError):
+            impact_score = None
     return CriticalEvent(
         symbol=symbol,
         kind=kind,
@@ -265,10 +276,11 @@ def _event_from_dict(
         starts_at=_iso(_parse_iso(raw.get("starts_at"))),
         ends_at=_iso(_parse_iso(raw.get("ends_at"))),
         exact_time=bool(raw.get("exact_time", True)),
-        priority=max(1, min(100, int(raw.get("priority", DEFAULT_PRIORITIES.get(kind, 70))))),
+        priority=max(1, min(100, priority)),
         source_name=source_name,
         source_url=source_url,
         active=bool(raw.get("active", False)),
+        impact_score=impact_score,
     )
 
 
@@ -696,8 +708,14 @@ def _parse_adp_schedule(text: str) -> list[CriticalEvent]:
     return result
 
 
-def _parse_fred_adp_schedule(text: str) -> list[CriticalEvent]:
-    """Parse the St. Louis Fed's official ADP release calendar fallback."""
+def _parse_fred_release_schedule(
+    text: str,
+    *,
+    release_title: str,
+    kind: str,
+    source_url: str,
+) -> list[CriticalEvent]:
+    """Parse one named FRED release calendar; FRED times are US Central."""
     flat = _html_text(text)
     central = ZoneInfo("America/Chicago")
     month_pattern = "|".join(name.title() for name in MONTHS)
@@ -705,7 +723,7 @@ def _parse_fred_adp_schedule(text: str) -> list[CriticalEvent]:
         rf"(?:Monday|Tuesday|Wednesday|Thursday|Friday)\s+"
         rf"({month_pattern})\s+(\d{{1,2}}),\s+(20\d{{2}})"
         rf"(?:\s+Updated)?\s+(\d{{1,2}}):(\d{{2}})\s*(am|pm)\s+"
-        rf"ADP National Employment Report",
+        + re.escape(release_title),
         flags=re.IGNORECASE,
     )
     result: list[CriticalEvent] = []
@@ -720,16 +738,34 @@ def _parse_fred_adp_schedule(text: str) -> list[CriticalEvent]:
             continue
         result.append(CriticalEvent(
             symbol="BTC",
-            kind="ADP",
-            title="ADP National Employment Report",
+            kind=kind,
+            title=release_title,
             starts_at=_iso(local),
             ends_at=None,
             exact_time=True,
-            priority=DEFAULT_PRIORITIES["ADP"],
+            priority=DEFAULT_PRIORITIES[kind],
             source_name="Federal Reserve Bank of St. Louis FRED",
-            source_url="https://fred.stlouisfed.org/releases/calendar?rid=194&view=year",
+            source_url=source_url,
         ))
     return result
+
+
+def _parse_fred_adp_schedule(text: str) -> list[CriticalEvent]:
+    return _parse_fred_release_schedule(
+        text,
+        release_title="ADP National Employment Report",
+        kind="ADP",
+        source_url="https://fred.stlouisfed.org/releases/calendar?rid=194&view=year",
+    )
+
+
+def _parse_fred_claims_schedule(text: str) -> list[CriticalEvent]:
+    return _parse_fred_release_schedule(
+        text,
+        release_title="Unemployment Insurance Weekly Claims Report",
+        kind="CLAIMS",
+        source_url="https://fred.stlouisfed.org/releases/calendar?rid=180&view=year",
+    )
 
 
 def _parse_michigan_schedule(text: str) -> list[CriticalEvent]:
@@ -810,63 +846,25 @@ def _parse_consumer_confidence_schedule(
     )]
 
 
-def _observed_fixed_holiday(year: int, month: int, day: int) -> datetime.date:
-    value = datetime(year, month, day).date()
-    if value.weekday() == 5:
-        return value - timedelta(days=1)
-    if value.weekday() == 6:
-        return value + timedelta(days=1)
-    return value
+def _deribit_expiry_impact_score(
+    *,
+    notional: float,
+    share_pct: float,
+    minimum_notional: float,
+    minimum_share_pct: float,
+) -> int:
+    """Map measured Deribit OI/share to bounded direction-free event impact.
 
+    The event is already filtered by both configured minima. The score only
+    distinguishes qualifying expiries by their measured size relative to those
+    same thresholds; it never guesses direction or token-specific consequences.
+    """
+    if notional <= 0 or share_pct <= 0 or minimum_notional <= 0 or minimum_share_pct <= 0:
+        return 35
+    size_excess = max(0.0, min(1.0, (notional / minimum_notional - 1.0) / 3.0))
+    share_excess = max(0.0, min(1.0, (share_pct / minimum_share_pct - 1.0) / 2.0))
+    return max(35, min(95, int(round(35.0 + 25.0 * size_excess + 35.0 * share_excess))))
 
-def _claims_release_holidays(year: int) -> set[datetime.date]:
-    thanksgiving = datetime(year, 11, 1).date()
-    thanksgiving += timedelta(days=(3 - thanksgiving.weekday()) % 7 + 21)
-    return {
-        _observed_fixed_holiday(year, 1, 1),
-        _observed_fixed_holiday(year, 6, 19),
-        _observed_fixed_holiday(year, 7, 4),
-        thanksgiving,
-        _observed_fixed_holiday(year, 12, 25),
-    }
-
-
-def _scheduled_claims(now: datetime, count: int = 10) -> list[CriticalEvent]:
-    """Create the official weekly 08:30 ET initial-claims schedule."""
-    eastern = ZoneInfo("America/New_York")
-    local_now = now.astimezone(eastern)
-    cursor = local_now.date()
-    result: list[CriticalEvent] = []
-    checked: set[datetime.date] = set()
-    while len(result) < count and len(checked) < count * 3:
-        days_to_thursday = (3 - cursor.weekday()) % 7
-        nominal = cursor + timedelta(days=days_to_thursday)
-        if nominal in checked:
-            nominal += timedelta(days=7)
-        checked.add(nominal)
-        release_day = nominal
-        if nominal in _claims_release_holidays(nominal.year):
-            release_day = nominal - timedelta(days=1)
-            while release_day.weekday() >= 5:
-                release_day -= timedelta(days=1)
-        local = datetime(
-            release_day.year, release_day.month, release_day.day,
-            8, 30, tzinfo=eastern,
-        )
-        if local >= local_now - timedelta(minutes=15):
-            result.append(CriticalEvent(
-                symbol="BTC",
-                kind="CLAIMS",
-                title="U.S. Initial Unemployment Claims",
-                starts_at=_iso(local),
-                ends_at=None,
-                exact_time=True,
-                priority=DEFAULT_PRIORITIES["CLAIMS"],
-                source_name="U.S. Department of Labor",
-                source_url="https://www.dol.gov/newsroom/releases/eta",
-            ))
-        cursor = nominal + timedelta(days=1)
-    return result
 
 def _parse_deribit_expiries(
     text: str,
@@ -930,6 +928,12 @@ def _parse_deribit_expiries(
             priority=min(92, 78 + int(min(14.0, share / 2.0))),
             source_name="Deribit public API",
             source_url=f"https://www.deribit.com/api/v2/public/get_book_summary_by_currency?currency={currency}&kind=option",
+            impact_score=_deribit_expiry_impact_score(
+                notional=notional,
+                share_pct=share,
+                minimum_notional=minimum,
+                minimum_share_pct=minimum_share,
+            ),
         ))
     return result
 
@@ -949,6 +953,7 @@ def _verified_feed_events(
     allowlist: Iterable[str],
     symbols: set[str],
     symbol_aliases: Mapping[str, str],
+    source_domains_by_symbol: Mapping[str, Any] | None = None,
 ) -> list[CriticalEvent]:
     rows = raw.get("events") if isinstance(raw, Mapping) else raw
     if not isinstance(rows, list):
@@ -962,6 +967,15 @@ def _verified_feed_events(
             continue
         if not _host_allowed(event.source_url, allowlist):
             continue
+        if isinstance(source_domains_by_symbol, Mapping):
+            symbol_domains = source_domains_by_symbol.get(event.symbol)
+            if not isinstance(symbol_domains, (list, tuple, set)) or not symbol_domains:
+                continue
+            if not _host_allowed(
+                event.source_url,
+                [str(value).lower().strip() for value in symbol_domains if str(value).strip()],
+            ):
+                continue
         if not event.active and _parse_iso(event.starts_at) is None:
             continue
         result.append(event)
@@ -987,6 +1001,18 @@ def _display_horizon_days(kind: str, config: Mapping[str, Any]) -> int:
     if kind in {"UPGRADE", "MAINTENANCE", "GOVERNANCE", "SUPPLY", "ETF", "ETF_FLOW", "EXPIRY", "NEWS", "SECURITY"}:
         return max(1, int(config.get("coin_event_display_days", 7)))
     return max(1, int(config.get("macro_display_days", 7)))
+
+
+def _verified_impact_risk(event: CriticalEvent, *, default: int = 0) -> int:
+    """Bounded impact from verified feed data; never infer an event size."""
+    if event.impact_score is not None:
+        return max(0, min(99, int(event.impact_score)))
+    # For classified official headlines, priority reflects only the verified
+    # event category. Convert it conservatively to visibility risk while active;
+    # this does not manufacture a quantitative token/event size.
+    if event.kind in {"NEWS", "GOVERNANCE", "UPGRADE", "MAINTENANCE", "ETF"}:
+        return max(default, min(55, int(round(10 + max(0, event.priority - 70) * 1.6))))
+    return default
 
 
 def _event_timing(event: CriticalEvent, now: datetime, config: Mapping[str, Any]) -> tuple[bool, bool, int | None, int, float | None]:
@@ -1036,25 +1062,46 @@ def _event_timing(event: CriticalEvent, now: datetime, config: Mapping[str, Any]
         return active, active, 10 if active else None, 100 if active else 0, hours
 
     # Fresh verified headlines are visibility signals, not automatic trade bans.
+    # E now reflects verified category severity and, where the feed supplies it,
+    # an explicit quantified impact (for example a measured BTC ETF net flow).
     if event.kind == "NEWS":
-        return active, False, None, 10 if active else 0, hours
+        return active, False, None, _verified_impact_risk(event, default=10) if active else 0, hours
     if event.kind == "ETF_FLOW":
-        return active, False, None, 10 if active else 0, hours
+        impact = max(10, int(event.impact_score or 0))
+        return active, False, None, min(99, impact) if active else 0, hours
+
+    # Deribit expiry OI and share are directly measured, so E can distinguish
+    # qualifying expiries by size while still scaling the warning by proximity.
+    # Direction is never inferred from the option notional.
+    if event.kind == "EXPIRY":
+        impact = _verified_impact_risk(event, default=35)
+        if active:
+            return active, True, 10, min(99, max(95, impact)), hours
+        if hours is None or hours > 6:
+            return active, False, None, max(20, min(60, int(round(impact * 0.55)))), hours
+        if hours > 1:
+            return active, False, 20, max(45, min(75, int(round(impact * 0.72)))), hours
+        if hours > 0.25:
+            return active, False, 15, max(72, min(90, int(round(impact * 0.88)))), hours
+        if hours >= -(post_minutes / 60.0):
+            return active, True, 10, min(99, max(90, impact)), hours
+        return active, False, None, 0, hours
 
     # Governance, upgrades, maintenance and ETF decisions can matter, but an
     # already-published headline must not freeze trading. Scheduled exact-time
     # events receive only bounded leverage/risk controls near the appointment.
     if event.kind in {"GOVERNANCE", "UPGRADE", "MAINTENANCE", "ETF"}:
+        impact = _verified_impact_risk(event, default=20)
         if active and (hours is None or hours <= 0):
-            return active, False, None, 20, hours
+            return active, False, None, impact, hours
         if hours is None or hours > 6:
             return active, False, None, 20, hours
         if hours > 1:
-            return active, False, 20, 45, hours
+            return active, False, 20, max(45, min(60, impact)), hours
         if hours > 0.25:
-            return active, False, 15, 72, hours
+            return active, False, 15, max(72, min(78, impact)), hours
         if hours >= -(post_minutes / 60.0):
-            return active, False, 12, 82, hours
+            return active, False, 12, max(82, min(90, impact)), hours
         return active, False, None, 0, hours
 
     block_new = False
@@ -1345,7 +1392,6 @@ def load_critical_events(
     *,
     now: datetime,
     cache_path: Path,
-    local_feed_path: Path | None = None,
 ) -> EventSnapshot:
     section = config.get("events") if isinstance(config, Mapping) else None
     section = section if isinstance(section, Mapping) else {}
@@ -1411,6 +1457,7 @@ def load_critical_events(
         "ism": str(section.get("ism_schedule_url", "https://www.ismworld.org/supply-management-news-and-reports/reports/rob-report-calendar/")),
         "adp": str(section.get("adp_schedule_url", "https://adpemploymentreport.com/")),
         "fred-adp": str(section.get("fred_adp_schedule_url", "https://fred.stlouisfed.org/releases/calendar?rid=194&view=year")),
+        "fred-claims": str(section.get("fred_claims_schedule_url", "https://fred.stlouisfed.org/releases/calendar?rid=180&view=year")),
         "michigan": str(section.get("michigan_schedule_url", "https://www.sca.isr.umich.edu/")),
         "confidence": str(section.get("consumer_confidence_url", "https://www.conference-board.org/topics/consumer-confidence/")),
         "fomc": str(section.get("fomc_calendar_url", "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm")),
@@ -1451,6 +1498,8 @@ def load_critical_events(
                 parsed = _parse_adp_schedule(value)
             elif name == "fred-adp":
                 parsed = _parse_fred_adp_schedule(value)
+            elif name == "fred-claims":
+                parsed = _parse_fred_claims_schedule(value)
             elif name == "michigan":
                 parsed = _parse_michigan_schedule(value)
             elif name == "confidence":
@@ -1478,10 +1527,9 @@ def load_critical_events(
             schedule_by_source.pop(source_id, None)
             source_fetched_at.pop(source_id, None)
             diagnostics.append(f"{source_id}-Termin-Cache zu alt; Quelle ausgeblendet")
-    schedule_events = _dedupe([
-        *(event for rows in schedule_by_source.values() for event in rows),
-        *_scheduled_claims(now),
-    ])
+    schedule_events = _dedupe(
+        event for rows in schedule_by_source.values() for event in rows
+    )
     cached["schedule_source_events"] = {
         source_id: [asdict(event) for event in rows]
         for source_id, rows in schedule_by_source.items()
@@ -1535,23 +1583,15 @@ def load_critical_events(
         str(value).lower().strip()
         for value in section.get("verified_source_domains", []) if str(value).strip()
     }
+    source_domains_by_symbol = section.get("verified_source_domains_by_symbol")
+    source_domains_by_symbol = (
+        source_domains_by_symbol if isinstance(source_domains_by_symbol, Mapping) else {}
+    )
     feed_events: list[CriticalEvent] = []
-    if local_feed_path is not None:
-        feed_events.extend(
-            _verified_feed_events(
-                _load_json(local_feed_path),
-                allowlist,
-                symbols,
-                symbol_aliases,
-            )
-        )
     # A Cloudflare-triggered workflow can carry the exact feed snapshot that
     # was just persisted.  This bypasses Cache API locality and KV propagation
     # delay: when valid, it is authoritative for the Worker feed of this run.
-    dispatch_raw = (
-        os.getenv("CRYPTO_EVENTS_DISPATCH_PAYLOAD", "").strip()
-        or os.getenv("CRYPTO_EVENTS_DISPATCH_JSON", "").strip()
-    )
+    dispatch_raw = os.getenv("CRYPTO_EVENTS_DISPATCH_PAYLOAD", "").strip()
     dispatch_feed_valid = False
     if dispatch_raw:
         try:
@@ -1575,6 +1615,7 @@ def load_critical_events(
                     allowlist,
                     symbols,
                     symbol_aliases,
+                    source_domains_by_symbol,
                 )
             )
             source_health = _feed_source_health(dispatch_payload)
@@ -1582,32 +1623,18 @@ def load_critical_events(
         except (ValueError, TypeError, UnicodeDecodeError, OSError, json.JSONDecodeError) as exc:
             diagnostics.append(f"CRYPTO_EVENTS_DISPATCH_PAYLOAD ist ungültig: {exc}")
 
-    # Inline/remote feeds are fallbacks for manual runs.  They are deliberately
-    # skipped when an exact dispatch snapshot exists so a stale remote copy
-    # cannot re-introduce an event that the triggering Worker already removed.
-    inline = os.getenv("CRYPTO_EVENTS_JSON", "").strip()
-    if inline and not dispatch_feed_valid:
-        try:
-            feed_events.extend(
-                _verified_feed_events(
-                    json.loads(inline),
-                    allowlist,
-                    symbols,
-                    symbol_aliases,
-                )
-            )
-        except (ValueError, TypeError, json.JSONDecodeError):
-            diagnostics.append("CRYPTO_EVENTS_JSON ist ungültig")
-
+    # A separately configured HTTPS feed is only a fallback when the worker did
+    # not dispatch a snapshot. If neither transport is configured, coin-news
+    # enrichment is simply absent; macro/market analysis continues normally.
     # The remote verified feed also carries acute security incidents, so it is
     # checked every minute by default. A failed incident feed is retained only
     # briefly; stale "active" alerts must never live for the general 48-hour
     # calendar cache window.
-    feed_url = os.getenv("CRYPTO_EVENTS_URL", "").strip() or str(section.get("verified_feed_url", "")).strip()
+    feed_url = os.getenv("CRYPTO_EVENTS_URL", "").strip()
     remote_feed_events = cached_events("remote_feed_events")
     remote_feed_fetched_at = int(cached.get("remote_feed_fetched_at") or 0)
     remote_feed_checked_at = int(cached.get("remote_feed_checked_at") or 0)
-    if not dispatch_feed_valid and isinstance(cached.get("remote_feed_source_health"), Mapping):
+    if feed_url and not dispatch_feed_valid and isinstance(cached.get("remote_feed_source_health"), Mapping):
         source_health = dict(cached.get("remote_feed_source_health") or {})
     feed_refresh = max(1, int(section.get("verified_feed_refresh_minutes", 1))) * 60
     feed_max_stale = max(
@@ -1639,6 +1666,7 @@ def load_critical_events(
                     allowlist,
                     symbols,
                     symbol_aliases,
+                    source_domains_by_symbol,
                 )
                 source_health = _feed_source_health(raw)
                 cached["remote_feed_fetched_at"] = now_s
@@ -1650,6 +1678,8 @@ def load_critical_events(
                     remote_feed_events = []
     else:
         remote_feed_events = []
+        if not dispatch_feed_valid:
+            source_health = {}
     if not dispatch_feed_valid:
         feed_events.extend(remote_feed_events)
 

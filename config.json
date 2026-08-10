@@ -1,6 +1,6 @@
 {
   "schema_version": "7.0.0",
-  "package_revision": "r2",
+  "package_revision": "r4",
   "lighter_base_url": "https://mainnet.zklighter.elliot.ai/api/v1",
   "timezone": "Europe/Berlin",
   "candidate_symbols": [
@@ -26,7 +26,8 @@
     "NEAR",
     "AVAX",
     "UNI",
-    "APT"
+    "APT",
+    "CASHCAT"
   ],
   "aliases": {
     "BTC": "BTC",
@@ -51,7 +52,8 @@
     "NEAR": "NER",
     "AVAX": "AVX",
     "UNI": "UNI",
-    "APT": "APT"
+    "APT": "APT",
+    "CASHCAT": "CAS"
   },
   "event_symbol_aliases": {
     "BITCOIN": "BTC",
@@ -85,7 +87,9 @@
     "NEAR PROTOCOL": "NEAR",
     "AVALANCHE": "AVAX",
     "UNISWAP": "UNI",
-    "APTOS": "APT"
+    "APTOS": "APT",
+    "CASHCAT": "CASHCAT",
+    "CASH CAT": "CASHCAT"
   },
   "summary_coin_count": 4,
   "summary_anchor_symbol": "BTC",
@@ -132,7 +136,8 @@
     "NEAR",
     "AVAX",
     "UNI",
-    "APT"
+    "APT",
+    "CASHCAT"
   ],
   "btc_trend_immediate_breadth_score": 62,
   "btc_reversal_immediate_breadth_score": 49,
@@ -149,42 +154,9 @@
   "request_timeout_seconds": 15,
   "lighter_request_limit_per_minute": 54,
   "discord_max_codepoints_per_line": 42,
-  "paper_trading_enabled": true,
-  "paper_starting_capital_usd": 100,
-  "paper_max_positions": 5,
-  "paper_min_leverage": 5,
-  "paper_max_leverage": 50,
-  "paper_entry_min_readiness": 51,
-  "paper_entry_min_confidence": 49,
-  "paper_additional_min_readiness": 48,
-  "paper_additional_min_confidence": 45,
-  "paper_additional_min_btc_context": 12,
-  "paper_additional_max_readiness_gap": 30,
-  "paper_reverse_min_readiness": 56,
-  "paper_reverse_min_confidence": 53,
-  "paper_min_execution_score": 32,
-  "paper_min_liquidity_score": 40,
-  "paper_min_volume_score": 27,
-  "paper_min_btc_context": 8,
-  "paper_max_margin_per_position_pct": 18,
-  "paper_max_total_margin_pct": 55,
-  "paper_max_total_risk_pct": 18.0,
-  "paper_max_same_direction_positions": 4,
-  "paper_max_directional_notional_pct": 2000,
-  "paper_liquidation_buffer_pct": 0.25,
-  "paper_stop_slippage_pct": 0.03,
-  "paper_emergency_slippage_pct": 0.05,
-  "paper_break_even_buffer_pct": 0.02,
-  "paper_exit_degrade_runs": 7,
-  "paper_trend_max_hold_minutes": 60,
-  "paper_reversal_max_hold_minutes": 40,
-  "paper_close_cooldown_minutes": 1,
-  "paper_stop_cooldown_minutes": 3,
-  "paper_ledger_limit": 500,
   "discord_username": "CF v7.0.0",
   "discord_avatar_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Cryptocurrency_Logo.svg/330px-Cryptocurrency_Logo.svg.png",
   "minimum_tape_quality": 65,
-  "paper_min_tape_quality": 49,
   "early_minimum_setup_score": 71,
   "early_minimum_volume_score": 45,
   "early_minimum_expected_edge_pct": 0.08,
@@ -195,9 +167,6 @@
   "early_min_volume_consistency": 3,
   "btc_early_immediate_breadth_score": 55,
   "detail_attention_threshold": 68,
-  "paper_probe_min_readiness": 47,
-  "paper_probe_min_confidence": 45,
-  "paper_early_max_hold_minutes": 45,
   "trend_immediate_enabled": true,
   "trend_readiness_penalty": 3,
   "trend_confidence_penalty": 2,
@@ -220,12 +189,12 @@
     "bls_ics_url": "https://www.bls.gov/schedule/news_release/bls.ics",
     "bea_schedule_url": "https://www.bea.gov/news/schedule",
     "fomc_calendar_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
-    "verified_feed_url": "",
     "verified_source_domains": [
       "adpemploymentreport.com",
       "aptos.dev",
       "aptosfoundation.org",
       "aptoslabs.com",
+      "aptosnetwork.com",
       "avax.network",
       "bea.gov",
       "bitcoin.org",
@@ -234,6 +203,8 @@
       "blog.uniswap.org",
       "bls.gov",
       "cardano.org",
+      "cashcat.cc",
+      "cashcattoken.xyz",
       "census.gov",
       "conference-board.org",
       "deribit.com",
@@ -250,6 +221,7 @@
       "github.com",
       "hyperfoundation.org",
       "hyperliquid.xyz",
+      "iog.io",
       "iohk.io",
       "ismworld.org",
       "jup.ag",
@@ -258,12 +230,18 @@
       "near.org",
       "nearfoundation.org",
       "ondo.finance",
+      "plasma.org",
       "plasma.to",
       "pudgypenguins.com",
       "pump.fun",
       "ripple.com",
       "sca.isr.umich.edu",
       "solana.com",
+      "status.avax.network",
+      "status.jup.ag",
+      "status.near.org",
+      "status.solana.com",
+      "status.sui.io",
       "statuspage.io",
       "sui.io",
       "tokenomist.ai",
@@ -284,7 +262,126 @@
     "adp_schedule_url": "https://adpemploymentreport.com/",
     "michigan_schedule_url": "https://www.sca.isr.umich.edu/",
     "consumer_confidence_url": "https://www.conference-board.org/topics/consumer-confidence/",
-    "fred_adp_schedule_url": "https://fred.stlouisfed.org/releases/calendar?rid=194&view=year"
+    "fred_adp_schedule_url": "https://fred.stlouisfed.org/releases/calendar?rid=194&view=year",
+    "fred_claims_schedule_url": "https://fred.stlouisfed.org/releases/calendar?rid=180&view=year",
+    "verified_source_domains_by_symbol": {
+      "BTC": [
+        "bitcoin.org",
+        "bitcoincore.org",
+        "github.com",
+        "farside.co.uk"
+      ],
+      "KAITO": [
+        "kaito.ai",
+        "tokenomist.ai"
+      ],
+      "PENGU": [
+        "pudgypenguins.com"
+      ],
+      "FARTCOIN": [
+        "fart.dev"
+      ],
+      "LDO": [
+        "lido.fi"
+      ],
+      "ZEC": [
+        "z.cash",
+        "electriccoin.co",
+        "github.com"
+      ],
+      "WLD": [
+        "world.org",
+        "tokenomist.ai"
+      ],
+      "PUMP": [
+        "pump.fun"
+      ],
+      "SUI": [
+        "sui.io",
+        "github.com",
+        "tokenomist.ai",
+        "status.sui.io"
+      ],
+      "ENA": [
+        "ethena.fi",
+        "ethenafoundation.com",
+        "tokenomist.ai"
+      ],
+      "ETH": [
+        "ethereum.org",
+        "ethereum.foundation",
+        "github.com"
+      ],
+      "SOL": [
+        "solana.com",
+        "github.com",
+        "status.solana.com"
+      ],
+      "HYPE": [
+        "hyperfoundation.org",
+        "hyperliquid.xyz",
+        "tokenomist.ai",
+        "hyperliquid.statuspage.io"
+      ],
+      "XRP": [
+        "xrpl.org",
+        "ripple.com",
+        "github.com"
+      ],
+      "XPL": [
+        "plasma.org",
+        "plasma.to",
+        "tokenomist.ai"
+      ],
+      "ONDO": [
+        "ondo.finance",
+        "tokenomist.ai"
+      ],
+      "ADA": [
+        "cardano.org",
+        "essentialcardano.io",
+        "iog.io",
+        "iohk.io",
+        "github.com"
+      ],
+      "TAO": [
+        "bittensor.com",
+        "github.com"
+      ],
+      "JUP": [
+        "jup.ag",
+        "status.jup.ag"
+      ],
+      "NEAR": [
+        "near.org",
+        "nearfoundation.org",
+        "github.com",
+        "status.near.org"
+      ],
+      "AVAX": [
+        "avax.network",
+        "github.com",
+        "tokenomist.ai",
+        "status.avax.network"
+      ],
+      "UNI": [
+        "uniswap.org",
+        "blog.uniswap.org",
+        "github.com"
+      ],
+      "APT": [
+        "aptosnetwork.com",
+        "aptosfoundation.org",
+        "aptoslabs.com",
+        "aptos.dev",
+        "github.com",
+        "tokenomist.ai"
+      ],
+      "CASHCAT": [
+        "cashcat.cc",
+        "cashcattoken.xyz"
+      ]
+    }
   },
   "incident_detection": {
     "enabled": true,
@@ -309,13 +406,6 @@
     "shock_calm_5m_fraction": 0.1,
     "shock_missing_data_grace_minutes": 5
   },
-  "paper_probe_max_leverage": 40,
-  "paper_optimizer_min_total_trades": 8,
-  "paper_optimizer_min_bucket_trades": 3,
-  "paper_optimizer_min_r_gap": 0.25,
-  "paper_optimizer_max_bucket_win_rate": 0.5,
-  "paper_min_data_quality": 52,
-  "paper_allow_strong_phase_probe": true,
   "regime": {
     "enabled": true,
     "horizons_days": [
@@ -343,10 +433,6 @@
   "reversal_structural_reclaim_fraction": 0.24,
   "reversal_new_extreme_tolerance_noise": 0.18,
   "reversal_min_post_event_closes": 1,
-  "paper_optimizer_rapid_enabled": true,
-  "paper_optimizer_rapid_max_trades": 3,
-  "paper_optimizer_rapid_loss_r": -0.65,
-  "paper_optimizer_rapid_stop_minutes": 4,
   "extremity_chase_warning": 48,
   "extremity_chase_block": 68,
   "extremity_chase_penalty": 10,
@@ -356,32 +442,14 @@
   "early_chase_block": 46,
   "early_chase_penalty": 12,
   "reversal_now_min_extremity": 16,
-  "paper_early_max_age_minutes": 2,
-  "paper_early_max_consumed_fraction": 0.66,
-  "paper_max_technical_stop_pct": 2.2,
   "early_approach_noise_multiple": 2.0,
   "early_probe_noise_multiple": 0.6,
   "early_probe_max_consumed_fraction": 0.35,
-  "paper_allow_forming_phase_probe": true,
-  "paper_near_min_readiness": 45,
-  "paper_near_min_confidence": 43,
-  "paper_near_min_streak": 1,
-  "paper_flip_try_min_streak": 2,
-  "paper_near_max_leverage": 20,
-  "paper_near_margin_pct": 3.5,
-  "paper_probe_margin_pct": 8.0,
-  "paper_immediate_margin_pct": 14.0,
-  "paper_add_margin_pct": 4.0,
-  "paper_max_scale_count": 3,
-  "paper_chase_hard_block": 88.0,
   "discord_max_display_columns_per_line": 46,
   "discord_max_event_codepoints_per_line": 38,
   "discord_max_event_display_columns_per_line": 40,
-  "discord_max_header_codepoints_per_line": 42,
-  "discord_max_header_display_columns_per_line": 44,
-  "paper_add_min_interval_minutes": 3,
-  "paper_profit_target_one_roi_pct": 3.0,
-  "paper_profit_target_two_roi_pct": 8.0,
+  "discord_max_header_codepoints_per_line": 39,
+  "discord_max_header_display_columns_per_line": 41,
   "daily_candle_cache_refresh_minutes": 30,
   "daily_candle_cache_max_stale_hours": 6,
   "radar_speed_weight": 0.28,
@@ -389,7 +457,6 @@
   "radar_extremity_weight": 0.38,
   "radar_min_tape_quality": 35,
   "radar_min_platform_leverage": 5,
-  "detail_timing_confirmation_min_score": 30,
   "swing_speed_lookback_minutes": 12,
   "swing_speed_absolute_floor_pct": 0.025,
   "swing_speed_strong_pct": 0.16,
@@ -406,61 +473,23 @@
   "btc_pin_return_minutes": 5,
   "btc_pin_min_coverage": 0.9,
   "btc_pin_max_gap_minutes": 3,
-  "paper_upgrade_min_interval_minutes": 1,
-  "paper_opposite_try_reduce_pct": 50,
-  "paper_near_min_timing_score": 28,
-  "paper_try_min_timing_score": 30,
-  "springer_classes": {
-    "A": [
-      "KAITO",
-      "PENGU",
-      "FARTCOIN",
-      "LDO",
-      "ZEC",
-      "WLD",
-      "PUMP",
-      "SUI",
-      "ENA"
-    ],
-    "B": [
-      "ETH",
-      "SOL",
-      "HYPE",
-      "XRP"
-    ],
-    "C": [
-      "XPL",
-      "ONDO",
-      "ADA",
-      "TAO",
-      "JUP",
-      "NEAR",
-      "AVAX",
-      "UNI",
-      "APT"
-    ]
-  },
   "springer_enabled": true,
   "springer_minute_lookback_minutes": 300,
   "springer_min_contiguous_minutes": 180,
   "springer_daily_lookback_days": 30,
-  "paper_springer_high_score": 78,
-  "paper_springer_extreme_score": 92,
-  "paper_springer_high_margin_multiplier": 1.08,
-  "paper_springer_extreme_margin_multiplier": 0.88,
-  "paper_springer_extreme_leverage_cap": 25,
-  "paper_springer_high_hold_multiplier": 0.82,
-  "paper_springer_low_score": 28,
-  "paper_springer_low_margin_multiplier": 0.86,
   "event_source_min_coverage": 0.75,
   "event_score_unknown_code": "E??",
   "header_observation_min_event_risk": 25,
   "header_observation_min_event_priority": 65,
-  "paper_optimizer_realert_new_trades": 2,
-  "paper_optimizer_realert_cooldown_hours": 12,
-  "signal_evaluation_episode_gap_minutes": 2,
-  "signal_evaluation_recent_limit": 300,
   "daily_candle_refresh_batch_size": 4,
-  "paper_springer_extreme_hold_multiplier": 0.65,
-  "paper_funding_settlement_grace_minutes": 10
+  "springer_history_days": 30,
+  "springer_history_min_days": 2,
+  "springer_history_min_samples": 24,
+  "springer_history_window_minutes": 15,
+  "springer_history_alignment_minutes": 15,
+  "detail_hold_bonus": 6.0,
+  "detail_hold_minutes": 15,
+  "detail_hold_readiness_margin": 4.0,
+  "radar_hold_bonus": 7.0,
+  "radar_replacement_margin": 7.0
 }

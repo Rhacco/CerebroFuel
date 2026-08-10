@@ -1,12 +1,20 @@
-// r2
+// r4
 // Crypto event feed and GitHub scheduler for v7.0.0.
 
 const APP_VERSION = "7.0.0";
-const PACKAGE_REVISION = "r2";
-const STORE_KEY = "crypto-events-v700-r2";
-const CACHE_URL = "https://crypto-events.internal/v7.0.0-r2/events.json";
-const LEGACY_STORE_KEY = "crypto-events-v700-r1";
-const LEGACY_CACHE_URL = "https://crypto-events.internal/v7.0.0-r1/events.json";
+const PACKAGE_REVISION = "r4";
+const STORE_KEY = "crypto-events-v700-r4";
+const CACHE_URL = "https://crypto-events.internal/v7.0.0-r4/events.json";
+const LEGACY_STORE_KEYS = Object.freeze([
+  "crypto-events-v700-r3",
+  "crypto-events-v700-r2",
+  "crypto-events-v700-r1",
+]);
+const LEGACY_CACHE_URLS = Object.freeze([
+  "https://crypto-events.internal/v7.0.0-r3/events.json",
+  "https://crypto-events.internal/v7.0.0-r2/events.json",
+  "https://crypto-events.internal/v7.0.0-r1/events.json",
+]);
 const ACTIVE_RETENTION_MS = 25 * 60 * 1000;
 const STATUS_GRACE_MS = 10 * 60 * 1000;
 const KV_HEARTBEAT_MS = 10 * 60 * 1000;
@@ -33,15 +41,16 @@ const PROJECTS = Object.freeze({
   SOL: { domains: ["solana.com"], github: ["anza-xyz/agave"] },
   HYPE: { domains: ["hyperfoundation.org", "hyperliquid.xyz"], unlockSlug: "hyperliquid" },
   XRP: { domains: ["xrpl.org", "ripple.com"], github: ["XRPLF/rippled"] },
-  XPL: { domains: ["plasma.to"], unlockSlug: "plasma" },
+  XPL: { domains: ["plasma.org", "plasma.to"], unlockSlug: "plasma" },
   ONDO: { domains: ["ondo.finance"], unlockSlug: "ondo-finance" },
-  ADA: { domains: ["cardano.org", "essentialcardano.io", "iohk.io"], github: ["IntersectMBO/cardano-node"] },
+  ADA: { domains: ["cardano.org", "essentialcardano.io", "iog.io", "iohk.io"], github: ["IntersectMBO/cardano-node"] },
   TAO: { domains: ["bittensor.com"], github: ["opentensor/bittensor"] },
   JUP: { domains: ["jup.ag"] },
   NEAR: { domains: ["near.org", "nearfoundation.org"], github: ["near/nearcore"] },
   AVAX: { domains: ["avax.network"], github: ["ava-labs/avalanchego"], unlockSlug: "avalanche-2" },
   UNI: { domains: ["uniswap.org", "blog.uniswap.org"], github: ["Uniswap/v4-core"] },
-  APT: { domains: ["aptosfoundation.org", "aptoslabs.com", "aptos.dev"], github: ["aptos-labs/aptos-core"], unlockSlug: "aptos" },
+  APT: { domains: ["aptosnetwork.com", "aptosfoundation.org", "aptoslabs.com", "aptos.dev"], github: ["aptos-labs/aptos-core"], unlockSlug: "aptos" },
+  CASHCAT: { domains: ["cashcat.cc", "cashcattoken.xyz"] },
 });
 
 const STATUSPAGE_SOURCES = Object.freeze([
@@ -111,7 +120,14 @@ export default {
 async function runScheduled(env, source) {
   const now = new Date();
   const feed = await refreshEventFeed(env, now);
-  await writeStoredFeed(env, feed); // Feed must exist before GitHub starts.
+  // Persistence is useful for the public/fallback JSON endpoint, but it is not a
+  // prerequisite for the monitor: the exact fresh snapshot is dispatched to
+  // GitHub directly. A Cache/KV outage must therefore never block analysis.
+  try {
+    await writeStoredFeed(env, feed);
+  } catch (error) {
+    console.warn(`Event feed persistence skipped: ${shortError(error)}`);
+  }
   if (!schedulerEnabled(env)) {
     console.log(JSON.stringify({ event: "scheduler-paused", source, feed_events: feed.events.length }));
     return;
@@ -136,12 +152,14 @@ async function refreshEventFeed(env, now) {
   const previousMeta = isObject(previous.meta) ? previous.meta : {};
   const previousSameRevision = String(previous.package_revision || "") === PACKAGE_REVISION;
   const sourceLastOk = isObject(previousMeta.source_last_ok) ? { ...previousMeta.source_last_ok } : {};
+  const sourceLastAttempt = isObject(previousMeta.source_last_attempt) ? { ...previousMeta.source_last_attempt } : {};
   const diagnostics = [];
   const fresh = [];
   const nowIso = now.toISOString();
   const nowMs = now.getTime();
 
   const markOk = (id) => { sourceLastOk[id] = nowIso; };
+  const markAttempt = (id) => { sourceLastAttempt[id] = nowIso; };
   const lastOk = (id) => parseMillis(sourceLastOk[id]);
   const due = (id, interval) => !lastOk(id) || nowMs - lastOk(id) >= interval;
 
@@ -156,6 +174,7 @@ async function refreshEventFeed(env, now) {
     .filter((source) => due(source.id, STATUS_REFRESH_MS))
     .sort((a, b) => (lastOk(a.id) || 0) - (lastOk(b.id) || 0))
     .slice(0, STATUS_BATCH_SIZE);
+  for (const source of statusDue) markAttempt(source.id);
   const statusResults = await Promise.allSettled(statusDue.map((source) => {
     const row = source.row;
     if (source.type === "statuspage") {
@@ -185,6 +204,7 @@ async function refreshEventFeed(env, now) {
   const gdeltDue = buildGdeltQueries().filter((batch) =>
     batch.symbols.some((symbol) => due(`news:${symbol}`, NEWS_REFRESH_MS)),
   );
+  for (const batch of gdeltDue) for (const symbol of batch.symbols) markAttempt(`news:${symbol}`);
   const gdeltResults = await Promise.allSettled(gdeltDue.map((batch) => fetchGdeltBatch(batch, now)));
   let newsOk = 0;
   let newsTotal = gdeltResults.length;
@@ -201,6 +221,7 @@ async function refreshEventFeed(env, now) {
   const feedDue = OFFICIAL_FEEDS
     .map((row) => ({ row, id: `feed:${row[0]}:${row[1]}` }))
     .filter((source) => due(source.id, NEWS_REFRESH_MS));
+  for (const source of feedDue) markAttempt(source.id);
   const feedResults = await Promise.allSettled(
     feedDue.map((source) => fetchOfficialFeed(source.row[0], source.row[1], source.row[2], now)),
   );
@@ -221,6 +242,7 @@ async function refreshEventFeed(env, now) {
   let etfOk = 0;
   const etfAttempted = due("etf:BTC", ETF_REFRESH_MS);
   if (etfAttempted) {
+    markAttempt("etf:BTC");
     try {
       const row = await fetchBitcoinEtfFlow(now);
       etfOk = 1;
@@ -236,7 +258,7 @@ async function refreshEventFeed(env, now) {
             symbol: "BTC", kind: "ETF_FLOW", title: `US spot Bitcoin ETF net flow ${signed}`,
             startsAt: nowIso, endsAt: expiresAt, expiresAt, exactTime: true, priority: 91,
             sourceName: "Farside Investors Bitcoin ETF Flow", sourceUrl: ETF_SOURCE_URL,
-            active: true, sourceType: "etf_flow",
+            active: true, sourceType: "etf_flow", impactScore: etfFlowImpactScore(row.totalM),
           }));
         }
         etfLastDate = row.date;
@@ -254,6 +276,7 @@ async function refreshEventFeed(env, now) {
     .filter((source) => due(source.id, RELEASE_REFRESH_MS))
     .sort((a, b) => (lastOk(a.id) || 0) - (lastOk(b.id) || 0))
     .slice(0, 4);
+  for (const source of repoDue) markAttempt(source.id);
   const releaseResults = await Promise.allSettled(
     repoDue.map((source) => fetchGithubReleases(source.symbol, source.repo, now)),
   );
@@ -275,6 +298,7 @@ async function refreshEventFeed(env, now) {
     .filter((source) => due(source.id, UNLOCK_REFRESH_MS))
     .sort((a, b) => (lastOk(a.id) || 0) - (lastOk(b.id) || 0))
     .slice(0, UNLOCK_BATCH_SIZE);
+  for (const source of unlockDue) markAttempt(source.id);
   const unlockResults = await Promise.allSettled(
     unlockDue.map((source) => fetchTokenomistUnlock(source.symbol, source.slug, now)),
   );
@@ -290,7 +314,7 @@ async function refreshEventFeed(env, now) {
   }
 
   const merged = mergeEvents(previous, fresh, now);
-  const sourceHealth = buildSourceHealth(sourceLastOk, now);
+  const sourceHealth = buildSourceHealth(sourceLastOk, sourceLastAttempt, now);
   return {
     version: APP_VERSION,
     package_revision: PACKAGE_REVISION,
@@ -303,6 +327,7 @@ async function refreshEventFeed(env, now) {
       kv_written_at: previousSameRevision ? (previousMeta.kv_written_at || null) : null,
       kv_signature: previousSameRevision ? (previousMeta.kv_signature || null) : null,
       source_last_ok: sourceLastOk,
+      source_last_attempt: sourceLastAttempt,
       source_health: {
         ...sourceHealth,
         status_ok: statusOk, status_total: statusResults.length,
@@ -329,17 +354,26 @@ function emptyFeed(now) {
       kv_written_at: null,
       kv_signature: null,
       source_last_ok: {},
-      source_health: { by_symbol: {}, overall_coverage: 0 },
+      source_last_attempt: {},
+      source_health: { by_symbol: {}, overall_coverage: 1 },
       seen_events: {},
     },
   };
 }
 
-function expectedSourceIds(symbol) {
-  const project = PROJECTS[symbol] || {};
+function coreSourceIds(symbol) {
+  // Only baseline official-domain news and direct status channels determine
+  // whether E00 is trustworthy. Batched releases/unlocks/ETF are supplemental:
+  // their refresh cadence must never make the whole coin look source-degraded.
   const ids = [`news:${symbol}`];
   for (const row of STATUSPAGE_SOURCES) if (row[0] === symbol) ids.push(`status:${symbol}:${row[1]}`);
   for (const row of HTML_STATUS_SOURCES) if (row[0] === symbol) ids.push(`status:${symbol}:${row[1]}`);
+  return ids;
+}
+
+function supplementalSourceIds(symbol) {
+  const project = PROJECTS[symbol] || {};
+  const ids = [];
   for (const row of OFFICIAL_FEEDS) if (row[0] === symbol) ids.push(`feed:${symbol}:${row[1]}`);
   for (const repo of project.github || []) ids.push(`release:${symbol}:${repo}`);
   if (project.unlockSlug) ids.push(`unlock:${symbol}:${project.unlockSlug}`);
@@ -354,34 +388,50 @@ function sourceFreshnessMs(id) {
   return 12 * 60 * 1000;
 }
 
-function buildSourceHealth(sourceLastOk, now) {
+function sourceCoverage(ids, sourceLastOk, sourceLastAttempt, nowMs, ignoreUnattempted = false) {
+  const missing = [];
+  let ok = 0;
+  let total = 0;
+  for (const id of ids) {
+    const attempted = parseMillis(sourceLastAttempt[id]);
+    if (ignoreUnattempted && !attempted) continue;
+    total += 1;
+    const stamp = parseMillis(sourceLastOk[id]);
+    if (stamp && nowMs - stamp <= sourceFreshnessMs(id)) ok += 1;
+    else missing.push(id.split(":", 2).join(":"));
+  }
+  return {
+    ok,
+    total,
+    coverage: total ? ok / total : 1,
+    missing: [...new Set(missing)].slice(0, 8),
+  };
+}
+
+function buildSourceHealth(sourceLastOk, sourceLastAttempt, now) {
   const nowMs = now.getTime();
   const bySymbol = {};
   let allOk = 0;
   let allTotal = 0;
   for (const symbol of Object.keys(PROJECTS)) {
-    const expected = expectedSourceIds(symbol);
-    const missing = [];
-    let ok = 0;
-    for (const id of expected) {
-      const stamp = parseMillis(sourceLastOk[id]);
-      if (stamp && nowMs - stamp <= sourceFreshnessMs(id)) ok += 1;
-      else missing.push(id.split(":", 2).join(":"));
-    }
-    const total = expected.length;
-    allOk += ok;
-    allTotal += total;
+    const core = sourceCoverage(coreSourceIds(symbol), sourceLastOk, sourceLastAttempt, nowMs, true);
+    const supplemental = sourceCoverage(supplementalSourceIds(symbol), sourceLastOk, sourceLastAttempt, nowMs, true);
+    allOk += core.ok;
+    allTotal += core.total;
     bySymbol[symbol] = {
-      coverage: total ? ok / total : 0,
-      ok,
-      total,
-      degraded: ok < total,
-      missing: [...new Set(missing)].slice(0, 8),
+      coverage: core.coverage,
+      ok: core.ok,
+      total: core.total,
+      degraded: core.ok < core.total,
+      missing: core.missing,
+      supplemental_coverage: supplemental.coverage,
+      supplemental_ok: supplemental.ok,
+      supplemental_total: supplemental.total,
     };
   }
   return {
     by_symbol: bySymbol,
-    overall_coverage: allTotal ? allOk / allTotal : 0,
+    overall_coverage: allTotal ? allOk / allTotal : 1,
     tracked_sources: allTotal,
   };
 }
@@ -522,8 +572,8 @@ async function fetchGdeltBatch(batch, now) {
     "hack", "exploit", "security", "vulnerability", "outage", "degraded", "halt",
     "upgrade", "hardfork", "mainnet", "maintenance", "governance", "proposal", "vote",
     "unlock", "vesting", "buyback", "burn", "mint", "tokenomics", "supply", "ETF",
-    "airdrop", "listing", "delisting", "acquisition", "treasury", "partnership",
-    "integration", "lawsuit", "legal settlement", "regulatory", "regulatory license", "staking",
+    "airdrop", "listing", "delisting", "acquisition", "treasury",
+    "lawsuit", "legal settlement", "regulatory", "regulatory license", "staking",
     "validator", "migration", "token sale", "emission", "bridge", "oracle",
     "emergency", "incident", "pause", "token distribution",
   ];
@@ -615,16 +665,18 @@ function classifyHeadline(title) {
   if (security) return { kind: "SECURITY", priority: 100 };
   if (network) return { kind: "NETWORK", priority: 100 };
   if (vulnerability) return { kind: "NEWS", priority: 88 };
-  // A headline timestamp is not the execution time of a token release. Exact
-  // unlock risk comes from the date-verified unlock calendar below.
-  if (/(unlock|vesting|cliff release|buyback|token burn|burn program|mint|emission|tokenomics|supply change|airdrop)/i.test(text)) return { kind: "NEWS", priority: 82 };
   if (/(etf|sec filing|regulatory approval|regulatory decision)/i.test(text)) return { kind: "ETF", priority: 92 };
   if (/(lawsuit|legal settlement|regulatory|regulator|regulatory license|court ruling|legal action)/i.test(text)) return { kind: "NEWS", priority: 88 };
-  if (/(maintenance|scheduled downtime)/i.test(text)) return { kind: "MAINTENANCE", priority: 84 };
-  if (/(governance|proposal|referendum|community vote|onchain vote)/i.test(text)) return { kind: "GOVERNANCE", priority: 86 };
-  if (/(upgrade|hard fork|hardfork|mainnet launch|protocol release|security patch|new version)/i.test(text)) return { kind: "UPGRADE", priority: 88 };
-  if (/(staking|validator)/i.test(text) && /(launch|change|update|reward|slashing|commission|requirement|migration|enable|disable|deprecat)/i.test(text)) return { kind: "NEWS", priority: 80 };
-  if (/(listing|delisting|acquisition|treasury|partnership|integration|token launch|token sale|migration)/i.test(text)) return { kind: "NEWS", priority: 78 };
+  if (/(maintenance|scheduled downtime)/i.test(text) && /(downtime|halt|pause|unavailable|degraded|network|chain|trading|withdraw|deposit)/i.test(text)) return { kind: "MAINTENANCE", priority: 84 };
+  const governance = /(governance|proposal|referendum|community vote|onchain vote)/i.test(text);
+  const governanceImpact = /(fee|emission|supply|treasury|token|staking|validator|incentive|reward|burn|mint|upgrade|migration|slashing)/i.test(text);
+  if (governance && governanceImpact) return { kind: "GOVERNANCE", priority: 86 };
+  if (/(hard fork|hardfork|mainnet launch|protocol upgrade|security patch|major migration|network upgrade|chain upgrade|protocol migration|deprecat)/i.test(text)) return { kind: "UPGRADE", priority: 88 };
+  // A headline timestamp is not the execution time of a token release. Exact
+  // unlock risk comes from the date-verified unlock calendar below.
+  if (/(unlock|vesting|cliff release|buyback|token burn|burn program|mint|emission|tokenomics|supply change|airdrop|token distribution)/i.test(text)) return { kind: "NEWS", priority: 82 };
+  if (/(staking|validator)/i.test(text) && /(launch|change|reward|slashing|commission|requirement|migration|enable|disable|deprecat)/i.test(text)) return { kind: "NEWS", priority: 80 };
+  if (/(listing|delisting|acquisition|treasury allocation|treasury purchase|token launch|token sale|migration)/i.test(text)) return { kind: "NEWS", priority: 78 };
   return null;
 }
 
@@ -661,6 +713,14 @@ async function fetchGithubReleases(symbol, repo, now) {
     }));
   }
   return result;
+}
+
+function etfFlowImpactScore(totalM) {
+  const amount = Math.abs(Number(totalM));
+  if (!Number.isFinite(amount)) return null;
+  // Magnitude only, never direction. Saturation keeps exceptional one-day flows
+  // bounded while making a genuinely large measured flow visibly different.
+  return Math.max(10, Math.min(90, Math.round(15 + 75 * (1 - Math.exp(-amount / 600)))));
 }
 
 async function fetchBitcoinEtfFlow(now) {
@@ -788,7 +848,7 @@ function parseTokenomistUnlock(symbol, text, sourceUrl, now = new Date()) {
   });
 }
 
-function eventRow({ symbol, kind, title, startsAt = null, endsAt = null, expiresAt = null, exactTime = true, priority = 70, sourceName, sourceUrl, active = false, sourceType }) {
+function eventRow({ symbol, kind, title, startsAt = null, endsAt = null, expiresAt = null, exactTime = true, priority = 70, sourceName, sourceUrl, active = false, sourceType, impactScore = null }) {
   return {
     symbol,
     kind,
@@ -801,6 +861,7 @@ function eventRow({ symbol, kind, title, startsAt = null, endsAt = null, expires
     source_name: sourceName,
     source_url: sourceUrl,
     active: Boolean(active),
+    impact_score: Number.isFinite(Number(impactScore)) ? Math.max(0, Math.min(99, Math.round(Number(impactScore)))) : null,
     verified: true,
     source_type: sourceType,
   };
@@ -851,7 +912,7 @@ async function fetchJson(url) {
 }
 
 async function readStoredFeed(env) {
-  for (const cacheUrl of [CACHE_URL, LEGACY_CACHE_URL]) {
+  for (const cacheUrl of [CACHE_URL, ...LEGACY_CACHE_URLS]) {
     try {
       const response = await caches.default.match(new Request(cacheUrl));
       if (response) {
@@ -863,7 +924,7 @@ async function readStoredFeed(env) {
     }
   }
   if (!env.EVENTS_KV?.get) return null;
-  for (const storeKey of [STORE_KEY, LEGACY_STORE_KEY]) {
+  for (const storeKey of [STORE_KEY, ...LEGACY_STORE_KEYS]) {
     try {
       const value = await env.EVENTS_KV.get(storeKey, { type: "json" });
       if (isObject(value) && Array.isArray(value.events)) return value;
@@ -885,6 +946,7 @@ function durableFeedSignature(feed) {
     active: Boolean(event?.active),
     exact_time: Boolean(event?.exact_time),
     priority: Number(event?.priority || 0),
+    impact_score: Number.isFinite(Number(event?.impact_score)) ? Number(event.impact_score) : null,
     source_type: event?.source_type || "",
     source_url: event?.source_url || "",
   })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
@@ -953,7 +1015,7 @@ function githubHeaders(env) {
   return {
     Accept: "application/vnd.github+json",
     Authorization: `Bearer ${env.GH_PAT}`,
-    "X-GitHub-Api-Version": "2022-11-28",
+    "X-GitHub-Api-Version": "2026-03-10",
     "User-Agent": `cloudflare-crypto-scheduler-v${APP_VERSION}`,
   };
 }
@@ -981,23 +1043,88 @@ async function gzipBase64(text) {
   return btoa(binary);
 }
 
-async function dispatchSnapshot(feed) {
-  const raw = JSON.stringify({
+function dispatchEventImportance(event) {
+  const kind = String(event?.kind || "").toUpperCase();
+  const critical = ["SECURITY", "NETWORK"].includes(kind) ? 1 : 0;
+  const active = event?.active ? 1 : 0;
+  const priority = Math.max(0, Math.min(100, Number(event?.priority || 0)));
+  const starts = parseMillis(event?.starts_at) || 0;
+  return [critical, active, priority, starts];
+}
+
+function compactDispatchEvent(event) {
+  // The monitor needs only these verified fields. Persistence-only metadata such
+  // as expires_at/source_type stays in the Worker feed and does not consume the
+  // GitHub workflow_dispatch input budget.
+  return {
+    symbol: String(event?.symbol || ""),
+    kind: String(event?.kind || ""),
+    title: cleanText(event?.title || event?.kind || "").slice(0, 240),
+    starts_at: event?.starts_at || null,
+    ends_at: event?.ends_at || null,
+    exact_time: Boolean(event?.exact_time),
+    priority: Math.max(1, Math.min(100, Number(event?.priority || 70))),
+    source_url: String(event?.source_url || "").slice(0, 2048),
+    active: Boolean(event?.active),
+    impact_score: Number.isFinite(Number(event?.impact_score))
+      ? Math.max(0, Math.min(99, Math.round(Number(event.impact_score)))) : null,
+    verified: true,
+  };
+}
+
+function rawDispatchSnapshot(feed, events, totalEvents) {
+  return JSON.stringify({
     version: APP_VERSION,
     package_revision: PACKAGE_REVISION,
     generated_at: feed?.generated_at || new Date().toISOString(),
-    events: Array.isArray(feed?.events) ? feed.events : [],
-    meta: { source_health: isObject(feed?.meta?.source_health) ? feed.meta.source_health : {} },
+    events,
+    meta: {
+      source_health: isObject(feed?.meta?.source_health) ? feed.meta.source_health : {},
+      dispatch_truncated: events.length < totalEvents,
+      dispatch_event_count: events.length,
+      dispatch_total_events: totalEvents,
+    },
   });
+}
+
+async function encodeDispatchSnapshot(feed, events, totalEvents) {
+  const raw = rawDispatchSnapshot(feed, events, totalEvents);
   // GitHub workflow_dispatch accepts at most 65,535 characters across inputs.
   // Normal feeds stay plain JSON (zero compression CPU). Only unusually large
   // feeds use the Workers-native gzip stream; Python decodes the `gz:` prefix.
-  let payload = raw;
-  if (raw.length > 50_000) payload = `gz:${await gzipBase64(raw)}`;
-  if (payload.length > 60_000) {
-    throw new Error(`Event dispatch payload too large: ${payload.length} chars`);
+  return raw.length > 50_000 ? `gz:${await gzipBase64(raw)}` : raw;
+}
+
+async function dispatchSnapshot(feed) {
+  const sourceEvents = Array.isArray(feed?.events) ? feed.events : [];
+  const events = sourceEvents.map(compactDispatchEvent).sort((a, b) => {
+    const aa = dispatchEventImportance(a);
+    const bb = dispatchEventImportance(b);
+    for (let index = 0; index < aa.length; index += 1) {
+      if (aa[index] !== bb[index]) return bb[index] - aa[index];
+    }
+    return String(a.symbol).localeCompare(String(b.symbol));
+  });
+  let payload = await encodeDispatchSnapshot(feed, events, events.length);
+  if (payload.length <= 60_000) return payload;
+
+  // An abnormally dense 25-minute news burst must never prevent the monitor
+  // itself from running. Retain the highest-impact verified events first. The
+  // fallback intentionally uses a <=50k plain JSON snapshot: raw JSON length is
+  // strictly monotonic as rows are appended, unlike compressed size, so this
+  // path has a deterministic hard bound without repeated compression work.
+  let low = 0;
+  let high = events.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    const raw = rawDispatchSnapshot(feed, events.slice(0, mid), events.length);
+    if (raw.length <= 50_000) low = mid;
+    else high = mid - 1;
   }
-  return payload;
+  const best = rawDispatchSnapshot(feed, events.slice(0, low), events.length);
+  if (best.length > 50_000) throw new Error(`Event dispatch metadata too large: ${best.length} chars`);
+  console.warn(`Event dispatch reduced from ${events.length} to ${low} events to stay within GitHub input limits`);
+  return best;
 }
 
 async function triggerGitHubWithRetry(env, source, feed) {

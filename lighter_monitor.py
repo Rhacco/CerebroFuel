@@ -1,5 +1,5 @@
-# r2
-"""Lighter-native signal engine with J/E context for CF v7.0.0."""
+# r4
+"""Lighter-native signal engine with persistent J/E context for CF v7.0.0."""
 from __future__ import annotations
 
 import json
@@ -13,7 +13,7 @@ from collections import deque
 from email.utils import parsedate_to_datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 from urllib.error import HTTPError, URLError
@@ -22,14 +22,16 @@ from urllib.request import Request, urlopen
 from regime_context import calculate_regimes
 from extremity_context import calculate_extremity, extremity_color
 from swing_context import calculate_pin, calculate_swing_metrics
-from springer_context import calculate_springer_strength
+from springer_context import (
+    calculate_springer_strength, springer_backfill_requests, update_springer_history,
+)
 from incident_context import IncidentSnapshot, detect_spontaneous_incidents
 from signal_streak_state import apply_signal_streaks
 from signal_transition_guard import apply_signal_transition_guard
-from signal_evaluator import update_signal_evaluation
+from display_selection_state import load_display_selection_state, save_display_selection_state
 
 APP_VERSION = "7.0.0"
-PACKAGE_REVISION = "r2"
+PACKAGE_REVISION = "r4"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 GLOBAL_BTC_EVENT_KINDS = {
@@ -54,7 +56,7 @@ STATE_TIER = {
 }
 
 DAILY_CACHE_SCHEMA = "daily-candles-v700-r1"
-COMPATIBLE_CACHE_REVISIONS = {"r1", PACKAGE_REVISION}
+COMPATIBLE_CACHE_REVISIONS = {"r1", "r2", "r3", PACKAGE_REVISION}
 FUNDING_NORMALIZATION_HOURS = 8.0
 
 
@@ -71,7 +73,7 @@ def _load_daily_candle_cache(
         return {}, {}, {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return {}, {}, {}
     if (
         payload.get("schema") != DAILY_CACHE_SCHEMA
@@ -312,7 +314,6 @@ class Signal:
     swing_volume_pulse_ratio: float = 0.0
     live_activity_score: float = 0.0
     two_sided_score: float = 0.0
-    springer_class: str = ""
     springer_available: bool = False
     springer_score: float = 0.0
     springer_reliability: float = 0.0
@@ -488,6 +489,40 @@ class LighterClient:
         rows = [rows_by_time[key] for key in sorted(rows_by_time)]
         if rows and _timestamp_ms(rows[-1]) < closed_end_ms - 120_000:
             raise RuntimeError("Kerzendaten sind veraltet")
+        return rows[-count:]
+
+    def springer_history_candles(
+        self,
+        market_id: int,
+        count: int = 480,
+        end_timestamp: int | None = None,
+    ) -> list[Mapping[str, Any]]:
+        """Rate-budgeted native 15m chunk used only to seed persistent J history."""
+        now = int(time.time())
+        resolution_seconds = 15 * 60
+        latest_closed = ((now - self.closed_candle_delay_seconds) // resolution_seconds) * resolution_seconds
+        requested_end = latest_closed if end_timestamp is None else min(latest_closed, int(end_timestamp))
+        closed_end = (requested_end // resolution_seconds) * resolution_seconds
+        if closed_end <= 0:
+            return []
+        payload = self.get(
+            "/candles",
+            market_id=market_id,
+            resolution="15m",
+            start_timestamp=max(0, closed_end - (count + 8) * resolution_seconds),
+            end_timestamp=closed_end,
+            count_back=min(500, max(96, count)),
+            set_timestamp_to_end="true",
+        )
+        rows_by_time: dict[int, Mapping[str, Any]] = {}
+        closed_end_ms = closed_end * 1000
+        for row in list(payload.get("c") or []):
+            stamp = _timestamp_ms(row)
+            if 0 < stamp <= closed_end_ms and _f(row.get("o")) > 0 and _f(row.get("c")) > 0:
+                rows_by_time[stamp] = row
+        rows = [rows_by_time[key] for key in sorted(rows_by_time)]
+        if end_timestamp is None and rows and _timestamp_ms(rows[-1]) < closed_end_ms - 30 * 60_000:
+            raise RuntimeError("15m-Historie für J ist veraltet")
         return rows[-count:]
 
     def daily_candles(self, market_id: int, count: int = 40) -> list[Mapping[str, Any]]:
@@ -1565,12 +1600,6 @@ def _setup_code(signal: Signal) -> str:
     }.get(signal.selected_setup, "")
 
 
-def _setup_age_code(signal: Signal) -> str:
-    setup = _selected_setup(signal)
-    if signal.selected_setup not in {"EARLY", "TREND", "REVERSAL"} or setup.age_minutes is None:
-        return ""
-    return f"a{max(0, min(9, int(setup.age_minutes)))}"
-
 
 def _selected_setup(signal: Signal) -> Setup:
     return {
@@ -1594,13 +1623,6 @@ def _action_code(signal: Signal) -> str:
         "INVALID_DATA": "DATA",
     }.get(signal.state, "WAIT")
 
-
-def _action_token(signal: Signal) -> str:
-    code = _action_code(signal)
-    if code not in {"NEAR", "TRY", "NOW"}:
-        return code
-    count = max(1, int(getattr(signal, "action_streak_count", 0) or 0))
-    return f"{code}{count}"
 
 
 def _market_bias(signal: Signal) -> float | None:
@@ -1952,10 +1974,7 @@ class LighterMonitor:
         )
         if any(float(self.config.get(key, 0)) <= 0 for key in positive_keys):
             raise ValueError("Ausführungs- und Datenparameter müssen positiv sein")
-        timing_scores = (
-            "detail_timing_confirmation_min_score",
-            "radar_min_tape_quality",
-        )
+        timing_scores = ("radar_min_tape_quality",)
         if any(not 0 <= float(self.config.get(key, -1)) <= 100 for key in timing_scores):
             raise ValueError("Radar-/Timing-Scores müssen zwischen null und 100 liegen")
         radar_weights = [
@@ -1992,11 +2011,13 @@ class LighterMonitor:
                 raise ValueError("candle_count reicht für J nicht aus")
             if int((self.config.get("regime") or {}).get("daily_candle_count", 40)) < springer_days:
                 raise ValueError("daily_candle_count reicht für J nicht aus")
-            classes = self.config.get("springer_classes") or {}
-            class_symbols = [str(symbol).upper() for values in classes.values() for symbol in (values or [])]
-            non_btc = [symbol for symbol in symbols if symbol != "BTC"]
-            if set(class_symbols) != set(non_btc) or len(class_symbols) != len(set(class_symbols)):
-                raise ValueError("springer_classes muss jeden Altcoin exakt einmal enthalten")
+            history_days = int(self.config.get("springer_history_days", 30))
+            history_window = int(self.config.get("springer_history_window_minutes", 15))
+            history_alignment = int(self.config.get("springer_history_alignment_minutes", 15))
+            if not 7 <= history_days <= 45:
+                raise ValueError("springer_history_days ist ungültig")
+            if not 5 <= history_window <= 60 or history_alignment < history_window:
+                raise ValueError("J-Historienfenster ist ungültig")
         pin_lookback = int(self.config.get("btc_pin_lookback_minutes", 60))
         pin_step = float(self.config.get("btc_pin_level_step_usd", 1000.0))
         pin_return_band = float(self.config.get("btc_pin_return_band_step_fraction", 0.18))
@@ -2035,8 +2056,17 @@ class LighterMonitor:
             raise ValueError("btc_breadth_symbols muss eindeutig sein")
         if len(breadth_symbols) < 3 or "BTC" in breadth_symbols:
             raise ValueError("btc_breadth_symbols braucht mindestens drei Nicht-BTC-Märkte")
-        if not set(breadth_symbols).issubset(set(symbols)):
-            raise ValueError("btc_breadth_symbols müssen im Kandidatenpool liegen")
+        if set(breadth_symbols) != (set(symbols) - {"BTC"}):
+            raise ValueError("btc_breadth_symbols muss alle Nicht-BTC-Märkte exakt abdecken")
+        detail_hold_minutes = int(self.config.get("detail_hold_minutes", 15))
+        detail_hold_margin = float(self.config.get("detail_hold_readiness_margin", 4.0))
+        detail_hold_bonus = float(self.config.get("detail_hold_bonus", 6.0))
+        radar_hold_bonus = float(self.config.get("radar_hold_bonus", 7.0))
+        radar_margin = float(self.config.get("radar_replacement_margin", 7.0))
+        if not 0 <= detail_hold_minutes <= 30 or not 0 <= detail_hold_margin <= 10:
+            raise ValueError("Detail-Stabilitätswerte sind ungültig")
+        if not 0 <= detail_hold_bonus <= 15 or not 0 <= radar_hold_bonus <= 15 or not 0 <= radar_margin <= 15:
+            raise ValueError("Radar-Stabilitätswerte sind ungültig")
         regime = self.config.get("regime") or {}
         if bool(regime.get("enabled", True)):
             horizons = [int(value) for value in regime.get("horizons_days", [7, 14, 30])]
@@ -2886,19 +2916,33 @@ class LighterMonitor:
         signals: list[Signal],
         snapshots: Mapping[str, Mapping[str, Any]],
         daily_candles: Mapping[str, list[Mapping[str, Any]]],
+        *,
+        now: datetime,
+        history_path: Path | None,
+        backfill_candles_by_symbol: Mapping[str, list[Mapping[str, Any]]] | None = None,
+        backfill_failed_symbols: set[str] | None = None,
     ) -> dict[str, Any]:
-        """Calculate direction-free recurring movement strength J00..J99."""
+        """Calculate one universal J00..J99 from persistent real 15m impulses."""
         payload: dict[str, Any] = {}
-        class_map = {
-            str(symbol).upper(): str(group).upper()
-            for group, values in (self.config.get("springer_classes") or {}).items()
-            for symbol in (values or [])
+        minute_by_symbol = {
+            symbol: list((snapshot or {}).get("candles") or [])
+            for symbol, snapshot in snapshots.items()
         }
+        history = update_springer_history(
+            path=history_path,
+            minute_candles_by_symbol=minute_by_symbol,
+            now=now,
+            allowed_symbols={item.symbol for item in signals},
+            config=self.config,
+            backfill_candles_by_symbol=backfill_candles_by_symbol,
+            backfill_failed_symbols=backfill_failed_symbols,
+        )
         for item in signals:
-            item.springer_class = class_map.get(item.symbol, "")
             result = calculate_springer_strength(
-                minute_candles=list((snapshots.get(item.symbol) or {}).get("candles") or []),
+                minute_candles=minute_by_symbol.get(item.symbol, []),
                 daily_candles=list(daily_candles.get(item.symbol) or []),
+                historical_impulses=history.get(item.symbol, []),
+                now=now,
                 config=self.config,
             )
             item.springer_available = result.available
@@ -2906,9 +2950,7 @@ class LighterMonitor:
             item.springer_reliability = result.reliability
             item.springer_daily_range_pct = result.daily_range_pct
             item.springer_intraday_impulse_pct = result.intraday_impulse_pct
-            row = result.to_dict()
-            row["class"] = item.springer_class
-            payload[item.symbol] = row
+            payload[item.symbol] = result.to_dict()
         return payload
 
     def _apply_event_context(
@@ -3028,18 +3070,23 @@ class LighterMonitor:
         health = source_health if isinstance(source_health, Mapping) else {}
         by_symbol = health.get("by_symbol") if isinstance(health.get("by_symbol"), Mapping) else {}
         minimum = float(self.config.get("event_source_min_coverage", 0.75))
+        feed_health_present = bool(by_symbol)
         for item in signals:
-            row = by_symbol.get(item.symbol) if isinstance(by_symbol, Mapping) else None
+            row = by_symbol.get(item.symbol) if feed_health_present else None
             if isinstance(row, Mapping):
                 coverage = _clamp(_f(row.get("coverage"), 0.0), 0.0, 1.0)
+                available = coverage >= minimum
             else:
-                coverage = 0.0
+                # The external coin-news JSON is optional. If no feed/source-health
+                # snapshot is configured at all, its absence must neither create E??
+                # nor block/downgrade any signal. E00 then means no verified event
+                # from the sources that are actually active in this run.
+                coverage = 1.0 if not feed_health_present else 0.0
+                available = not feed_health_present
             item.event_source_coverage = coverage
-            # A currently verified mark has a known risk even if another source
-            # is degraded. Otherwise zero risk is only meaningful with adequate
-            # source coverage. Degraded coverage stays internal and is represented
-            # compactly by E?? instead of a duplicate source warning.
-            item.event_score_available = bool(item.event_code) or coverage >= minimum
+            # A verified current mark always has a known risk even when another
+            # optional source is degraded.
+            item.event_score_available = bool(item.event_code) or available
 
     @staticmethod
     def _rank(signals: list[Signal]) -> list[Signal]:
@@ -3086,45 +3133,141 @@ class LighterMonitor:
             item.alias,
         )
 
-    def _rotating_event_header_symbol(
-        self,
-        signals: list[Signal],
-        now: datetime,
-    ) -> str | None:
+    def _priority_event_header_symbol(self, signals: list[Signal]) -> str | None:
+        """Keep the single most important verified alt event stable until it clears."""
         candidates = [
             item for item in signals
             if item.symbol != "BTC" and _header_observation_event_code(item, self.config)
         ]
         if not candidates:
             return None
-        ordered = sorted(
+        return max(
             candidates,
             key=lambda item: (
+                1 if item.event_kind in {"SECURITY", "NETWORK", "MARKET_SHOCK"} else 0,
                 float(item.event_priority + item.event_risk),
                 float(item.event_risk),
                 float(item.event_priority),
                 float(item.attention_score),
                 item.alias,
             ),
-            reverse=True,
+        ).symbol
+
+    def _select_detail_items(
+        self,
+        ranked: list[Signal],
+        *,
+        now: datetime,
+        previous_state: Mapping[str, Any],
+        reserved_top_symbol: str | None,
+    ) -> tuple[list[Signal], dict[str, str]]:
+        """Choose stable lower alt rows without retaining stale/unsafe setups."""
+        btc = next((item for item in ranked if item.symbol == "BTC"), None)
+        maximum_details = int(self.config.get("maximum_detail_count", 4))
+        btc_detail_allowed = btc is not None and not (
+            btc.event_kind == "MARKET_SHOCK" and btc.event_block_new
         )
-        top_score = float(ordered[0].event_priority + ordered[0].event_risk)
-        # Urgent/current events get the reserved slot first. Lower-priority news
-        # still rotates once the urgent band clears instead of competing equally.
-        urgent = [
-            item for item in ordered
-            if float(item.event_priority + item.event_risk) >= max(145.0, top_score - 8.0)
-        ]
-        pool = urgent if urgent else ordered
-        minute_bucket = int(now.timestamp() // 60)
-        return pool[minute_bucket % len(pool)].symbol
+        alt_slots = max(0, maximum_details - (1 if btc_detail_allowed else 0))
+        if alt_slots <= 0:
+            return [], {}
+
+        previous = {
+            str(value).upper() for value in previous_state.get("detail", [])
+            if str(value).strip()
+        }
+        last_qualified = {
+            str(symbol).upper(): str(value)
+            for symbol, value in (previous_state.get("detail_last_qualified") or {}).items()
+        }
+        reserved = str(reserved_top_symbol or "").upper()
+        watch_threshold = float(self.config.get("watch_trade_readiness", 51))
+        hold_margin = max(0.0, float(self.config.get("detail_hold_readiness_margin", 4.0)))
+        hold_minutes = max(0, int(self.config.get("detail_hold_minutes", 15)))
+        hold_bonus = max(0.0, float(self.config.get("detail_hold_bonus", 6.0)))
+        now_utc = now.astimezone(timezone.utc)
+        now_iso = now_utc.isoformat()
+
+        qualified: list[Signal] = []
+        held: list[Signal] = []
+        for item in ranked:
+            if item.symbol == "BTC" or item.symbol == reserved or item.state == "INVALID_DATA":
+                continue
+            if item.event_kind == "MARKET_SHOCK" and item.event_block_new:
+                continue
+            action = _action_code(item)
+            setup = _selected_setup(item)
+            valid_setup = setup.phase in {"ready", "strong", "forming"} and not setup.exit_hint
+            current_qualified = action in {"NEAR", "TRY", "NOW"} and valid_setup
+            if current_qualified:
+                qualified.append(item)
+                last_qualified[item.symbol] = now_iso
+                continue
+
+            # A coin that only just lost NEAR may remain briefly if the setup is
+            # still structurally valid and close to the watch threshold. This is
+            # deliberately bounded and can never retain a shock, invalid setup,
+            # chase warning or materially faded readiness.
+            if item.symbol not in previous or not valid_setup or item.chase_warning:
+                continue
+            if float(item.trade_readiness) < watch_threshold - hold_margin:
+                continue
+            stamp_text = last_qualified.get(item.symbol, "")
+            try:
+                stamp = datetime.fromisoformat(stamp_text.replace("Z", "+00:00"))
+                stamp = stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                continue
+            if hold_minutes and now_utc - stamp.astimezone(timezone.utc) <= timedelta(minutes=hold_minutes):
+                held.append(item)
+
+        action_rank = {"NOW": 3.0, "TRY": 2.0, "NEAR": 1.0}
+
+        def quality(item: Signal, *, is_held: bool = False) -> tuple[float, float, float, float, str]:
+            action = _action_code(item)
+            tier = 0.5 if is_held else action_rank.get(action, 0.0)
+            continuity = hold_bonus if item.symbol in previous else 0.0
+            composite = (
+                float(item.attention_score)
+                + 0.20 * float(item.trade_readiness)
+                + 0.08 * _timing_confirmation_score(item)
+                + continuity
+            )
+            return (tier, composite, float(item.trade_readiness), float(item.confidence), item.alias)
+
+        chosen: list[Signal] = []
+        seen: set[str] = set()
+        for item in sorted(qualified, key=lambda value: quality(value), reverse=True):
+            if item.symbol not in seen and len(chosen) < alt_slots:
+                chosen.append(item)
+                seen.add(item.symbol)
+        for item in sorted(held, key=lambda value: quality(value, is_held=True), reverse=True):
+            if item.symbol not in seen and len(chosen) < alt_slots:
+                chosen.append(item)
+                seen.add(item.symbol)
+
+        chosen = sorted(
+            chosen,
+            key=lambda item: (
+                0 if _direction(item.direction) < 0 else (1 if _direction(item.direction) == 0 else 2),
+                -float(item.attention_score),
+                -float(item.trade_readiness),
+                item.alias,
+            ),
+        )
+        # Keep only still-relevant timestamps, avoiding unbounded state growth.
+        keep = {item.symbol for item in chosen} | {item.symbol for item in qualified}
+        last_qualified = {symbol: value for symbol, value in last_qualified.items() if symbol in keep}
+        return chosen, last_qualified
 
     def _summary_items(
         self,
         signals: list[Signal],
+        *,
+        excluded_symbols: set[str],
+        previous_radar: set[str],
         priority_alt_symbol: str | None = None,
     ) -> list[Signal]:
-        """Always show the three most active alts, then BTC; reserve one slot for important coin news."""
+        """Three stable early alt candidates (short→long), then the BTC anchor."""
         requested = {str(value).upper() for value in self.config.get("candidate_symbols", [])}
         anchor_symbol = str(self.config.get("summary_anchor_symbol", "BTC")).upper()
         count = int(self.config.get("summary_coin_count", 4))
@@ -3132,18 +3275,34 @@ class LighterMonitor:
         alt_slots = max(0, count - (1 if anchor is not None else 0))
         alternatives = [
             item for item in signals
-            if item.symbol in requested and item.symbol != anchor_symbol
+            if item.symbol in requested
+            and item.symbol != anchor_symbol
+            and item.symbol not in excluded_symbols
+            and item.state != "INVALID_DATA"
         ]
         priority_symbol = str(priority_alt_symbol or "").upper()
         priority_item = next((item for item in alternatives if item.symbol == priority_symbol), None)
+        hold_bonus = min(
+            max(0.0, float(self.config.get("radar_hold_bonus", 7.0))),
+            max(0.0, float(self.config.get("radar_replacement_margin", 7.0))),
+        )
+
+        def stable_key(item: Signal) -> tuple[float, float, float, float, str]:
+            base = self._summary_sort_key(item)
+            return (
+                float(base[0]) + (hold_bonus if item.symbol in previous_radar else 0.0),
+                float(base[1]), float(base[2]), float(base[3]), str(base[4]),
+            )
+
         ranked = sorted(
             (item for item in alternatives if item is not priority_item),
-            key=self._summary_sort_key,
+            key=stable_key,
             reverse=True,
         )
         selected = ranked[: max(0, alt_slots - (1 if priority_item is not None and alt_slots else 0))]
         if priority_item is not None and alt_slots:
             selected.append(priority_item)
+
         # Visual order is prospective strongest short on the left (OB/red),
         # neutral in the middle, prospective strongest long on the right (OS/green).
         selected = sorted(
@@ -3164,10 +3323,29 @@ class LighterMonitor:
         now: datetime,
         *,
         priority_header_symbol: str | None = None,
+        display_selection_state_path: Path | None = None,
     ) -> str:
         ranked = self._rank(signals)
-        summary = self._summary_items(signals, priority_header_symbol)
         anchor_symbol = str(self.config.get("summary_anchor_symbol", "BTC")).upper()
+        allowed = {item.symbol for item in signals}
+        previous_state = load_display_selection_state(
+            display_selection_state_path,
+            now=now,
+            allowed_symbols=allowed,
+        )
+        chosen, detail_last_qualified = self._select_detail_items(
+            ranked,
+            now=now,
+            previous_state=previous_state,
+            reserved_top_symbol=priority_header_symbol,
+        )
+        chosen_symbols = {item.symbol for item in chosen}
+        summary = self._summary_items(
+            signals,
+            excluded_symbols=chosen_symbols,
+            previous_radar={str(value).upper() for value in previous_state.get("radar", [])},
+            priority_alt_symbol=priority_header_symbol,
+        )
         event_codes = {
             item.symbol: (
                 str(item.event_display_code or "")
@@ -3176,10 +3354,6 @@ class LighterMonitor:
             )
             for item in summary
         }
-        # The top row is a neutral early radar. Keep only true price-moving
-        # event/incident labels there; execution/data-quality warnings remain
-        # active in the signal engine and detail rows but do not consume header
-        # width.
         warning_codes = {
             item.symbol: _header_observation_warnings(item, self.config)
             for item in summary
@@ -3212,8 +3386,7 @@ class LighterMonitor:
             return " ".join(tokens)
 
         header = summary_line()
-        # Preserve events and acute warnings; ordinary market-quality warnings are
-        # the first thing removed if Discord's compact top row would wrap.
+        # Ordinary observation warnings are expendable before verified event text.
         changed = True
         while not header_fits(header) and changed:
             changed = False
@@ -3229,8 +3402,6 @@ class LighterMonitor:
                 if header_fits(header):
                     break
         if not header_fits(header):
-            # Keep BTC plus the reserved event/incident coin. Hide only duplicate
-            # normal event labels on other radar slots before touching the slots.
             reserved = {anchor_symbol, str(priority_header_symbol or "").upper()}
             for item in summary:
                 if item.symbol in reserved:
@@ -3242,10 +3413,6 @@ class LighterMonitor:
                     if header_fits(header):
                         break
         if not header_fits(header):
-            # Broad data outages can repeat long DATA/STALE/GAP/BOOK/CND labels
-            # across all radar slots. Keep BTC and the reserved event/incident
-            # coin intact; redundant alt labels may be dropped exactly as in
-            # the established compact header fallback.
             data_warnings = {"DATA!", "STALE!", "GAP!", "BOOK!", "CND!"}
             reserved = {anchor_symbol, str(priority_header_symbol or "").upper()}
             for item in summary:
@@ -3260,12 +3427,10 @@ class LighterMonitor:
                     break
                 if header_fits(header):
                     break
-
         if not header_fits(header):
-            # If several altcoins carry simultaneous critical labels, preserve
-            # BTC and the currently reserved urgent coin. Other critical labels
-            # remain active in risk logic and rotate into the reserved slot, but
-            # duplicate header text may be suppressed to prevent wrapping.
+            # Preserve the single reserved urgent coin and BTC; simultaneous
+            # critical labels remain active in risk logic even if they cannot all
+            # physically fit in one compact Discord line.
             reserved = {anchor_symbol, str(priority_header_symbol or "").upper()}
             removable = sorted(
                 (item for item in summary if item.symbol not in reserved),
@@ -3287,72 +3452,16 @@ class LighterMonitor:
                 header = summary_line()
                 if header_fits(header):
                     break
-
         if not header_fits(header):
             raise RuntimeError("Discord-Top-Zeilenlimit überschritten")
 
-        self.last_header_event_symbols = tuple(item.symbol for item in summary if event_codes.get(item.symbol, ""))
+        self.last_header_event_symbols = tuple(
+            item.symbol for item in summary if event_codes.get(item.symbol, "")
+        )
         lines = [header]
-
         btc = next((item for item in ranked if item.symbol == "BTC"), None)
-        maximum_details = int(self.config.get("maximum_detail_count", 4))
-        timing_min = float(self.config.get("detail_timing_confirmation_min_score", 30))
-
-        def action_quality(item: Signal) -> tuple[float, float, float, float, str]:
-            return (
-                float(STATE_TIER.get(item.state, 0)),
-                float(item.attention_score),
-                float(item.trade_readiness),
-                _timing_confirmation_score(item),
-                item.alias,
-            )
-
-        mandatory: list[Signal] = []
-        optional: list[Signal] = []
-        for item in ranked:
-            if item.symbol == "BTC" or item.state == "INVALID_DATA":
-                continue
-            if item.event_kind == "MARKET_SHOCK" and item.event_block_new:
-                continue
-            action = _action_code(item)
-            setup = _selected_setup(item)
-            valid_setup = setup.phase in {"ready", "strong", "forming"} and not setup.exit_hint
-            timing = _timing_confirmation_score(item)
-            if action in {"TRY", "NOW"}:
-                mandatory.append(item)
-            elif action == "NEAR" and valid_setup:
-                # A genuine NEAR is already actionable as a small scout.
-                # Live timing confirms/ranks it but never hides it from the
-                # limited lower slots.
-                mandatory.append(item)
-            elif (
-                valid_setup
-                and STATE_TIER.get(item.state, 0) >= 2
-                and item.attention_score >= float(self.config.get("detail_attention_threshold", 68))
-                and (not item.swing_available or timing >= timing_min)
-            ):
-                optional.append(item)
-
-        # Action-tier-first selection with live timing as an extra tie-breaker.
-        btc_detail_allowed = btc is not None and not (btc.event_kind == "MARKET_SHOCK" and btc.event_block_new)
-        alt_slots = max(0, maximum_details - (1 if btc_detail_allowed else 0))
-        chosen: list[Signal] = []
-        seen: set[str] = set()
-        for item in sorted(mandatory, key=action_quality, reverse=True):
-            if item.symbol not in seen and len(chosen) < alt_slots:
-                chosen.append(item); seen.add(item.symbol)
-        for item in sorted(optional, key=action_quality, reverse=True):
-            if item.symbol not in seen and len(chosen) < alt_slots:
-                chosen.append(item); seen.add(item.symbol)
-        chosen = sorted(
-            chosen,
-            key=lambda item: (
-                0 if _direction(item.direction) < 0 else (1 if _direction(item.direction) == 0 else 2),
-                -float(item.attention_score),
-                -float(item.trade_readiness),
-                -float(item.confidence),
-                item.alias,
-            ),
+        btc_detail_allowed = btc is not None and not (
+            btc.event_kind == "MARKET_SHOCK" and btc.event_block_new
         )
 
         def detail_line(item: Signal) -> str:
@@ -3370,10 +3479,14 @@ class LighterMonitor:
             warnings = [code for code in _warning_codes(item, self.config) if not event or code not in event]
             extras = ([event] if event else []) + warnings
             line = core if not extras else f"{core} {' '.join(extras)}"
-            # Special information is intentionally rightmost and expendable by
-            # priority; the fixed professional core never changes alignment.
             while not line_fits(line) and extras:
-                removable = next((i for i in range(len(extras) - 1, -1, -1) if extras[i] not in critical_warnings and extras[i] != event), None)
+                removable = next(
+                    (
+                        index for index in range(len(extras) - 1, -1, -1)
+                        if extras[index] not in critical_warnings and extras[index] != event
+                    ),
+                    None,
+                )
                 if removable is None:
                     break
                 extras.pop(removable)
@@ -3390,8 +3503,16 @@ class LighterMonitor:
         for item in chosen:
             lines.append(detail_line(item))
         if btc is None and not chosen and ranked:
-            lines.append(detail_line(ranked[0]))
+            fallback = next((item for item in ranked if item.symbol not in {x.symbol for x in summary}), ranked[0])
+            lines.append(detail_line(fallback))
 
+        save_display_selection_state(
+            display_selection_state_path,
+            now=now,
+            radar_symbols=[item.symbol for item in summary if item.symbol != anchor_symbol],
+            detail_symbols=[item.symbol for item in chosen],
+            detail_last_qualified=detail_last_qualified,
+        )
         return "\n".join(lines)
 
     def run(
@@ -3403,8 +3524,9 @@ class LighterMonitor:
         incident_state_path: Path | None = None,
         signal_transition_state_path: Path | None = None,
         signal_streak_state_path: Path | None = None,
-        signal_evaluation_state_path: Path | None = None,
         daily_candle_cache_path: Path | None = None,
+        springer_history_path: Path | None = None,
+        display_selection_state_path: Path | None = None,
         now: datetime | None = None,
     ) -> tuple[str, dict[str, Any]]:
         now = now or datetime.now(timezone.utc)
@@ -3513,11 +3635,59 @@ class LighterMonitor:
             old_timestamps=daily_timestamps,
         )
 
+        # J bootstrap shares the same hard Lighter request budget. It only uses
+        # slots left after markets/funding, per-market 1m+book data and the
+        # bounded daily refresh batch. Thus normal runs never raise the nominal
+        # request envelope above lighter_request_limit_per_minute.
+        springer_backfill: dict[str, list[Mapping[str, Any]]] = {}
+        springer_backfill_failed: set[str] = set()
+        request_limit = max(1, int(self.config.get("lighter_request_limit_per_minute", 54)))
+        nominal_used = 2 + 2 * len(markets) + len(refresh_daily_symbols)
+        spare_requests = max(0, request_limit - nominal_used)
+        if spare_requests > 0 and springer_history_path is not None:
+            mature_daily = {
+                symbol for symbol, rows in daily_candles.items()
+                if len(rows) >= 10 and symbol in markets
+            }
+            backfill_order = springer_backfill_requests(
+                path=springer_history_path,
+                now=now,
+                allowed_symbols=mature_daily,
+                config=self.config,
+            )[: min(4, spare_requests)]
+            if backfill_order:
+                with ThreadPoolExecutor(max_workers=min(workers, len(backfill_order))) as pool:
+                    futures = {
+                        pool.submit(
+                            self.client.springer_history_candles,
+                            int(markets[symbol]["market_id"]),
+                            480,
+                            end_timestamp,
+                        ): symbol
+                        for symbol, end_timestamp in backfill_order
+                    }
+                    for future in as_completed(futures):
+                        symbol = futures[future]
+                        try:
+                            rows = list(future.result() or [])
+                        except Exception:
+                            springer_backfill_failed.add(symbol)
+                            continue
+                        if rows:
+                            springer_backfill[symbol] = rows
+                        else:
+                            springer_backfill_failed.add(symbol)
+
         self._apply_btc_context(signals)
         regime_payload = self._apply_regime_context(signals, snapshots, daily_candles, now)
         extremity_payload = self._apply_extremity_context(signals, snapshots, daily_candles)
         swing_payload = self._apply_swing_context(signals, snapshots)
-        springer_payload = self._apply_springer_context(signals, snapshots, daily_candles)
+        springer_payload = self._apply_springer_context(
+            signals, snapshots, daily_candles,
+            now=now, history_path=springer_history_path,
+            backfill_candles_by_symbol=springer_backfill,
+            backfill_failed_symbols=springer_backfill_failed,
+        )
         incident_snapshot = detect_spontaneous_incidents(
             self.config,
             signals=signals,
@@ -3548,10 +3718,6 @@ class LighterMonitor:
         watch_threshold = float(self.config.get("watch_trade_readiness", 51))
         strong_threshold = float(self.config.get("strong_trade_readiness", 58))
         immediate_threshold = float(self.config.get("immediate_trade_readiness", 69))
-        # Normal project events share the reserved header slot instead of
-        # permanently hiding one another. Acute incidents still override this
-        # choice through incident_snapshot.header_symbol below.
-        event_header_symbol = self._rotating_event_header_symbol(signals, now)
         transition_payload: dict[str, Any] = {}
         if signal_transition_state_path is not None:
             transition_payload = apply_signal_transition_guard(
@@ -3561,11 +3727,8 @@ class LighterMonitor:
                 config=self.config,
                 action_getter=_action_code,
             )
-        # Record the final gap between the numeric readiness tier and the
-        # actually permitted action only after every context/incident/flip guard
-        # has had a chance to downgrade the state. This is critical for later
-        # threshold replay: a high score that was safety-limited must not look
-        # like an ordinary threshold miss.
+        # Record whether safety/context guards forced a lower action tier than
+        # the numeric readiness alone would otherwise permit.
         for item in signals:
             expected_tier = (
                 3 if item.trade_readiness >= immediate_threshold else
@@ -3589,22 +3752,17 @@ class LighterMonitor:
                     signal.action_streak_count = 1
                     signal.action_streak_action = action
                     signal.action_streak_direction = _direction(signal.direction)
-        evaluation_payload: dict[str, Any] = {}
-        if signal_evaluation_state_path is not None:
-            evaluation_payload = update_signal_evaluation(
-                signals,
-                state_path=signal_evaluation_state_path,
-                now=now,
-                action_getter=_action_code,
-                config=self.config,
-            )
         self.last_incidents = incident_snapshot
         self.last_signals = self._rank(signals)
         self.last_snapshots = snapshots
+        # Deterministic event priority prevents minute-by-minute top-row rotation;
+        # an active SHK!/hard incident still owns the reserved slot immediately.
+        event_header_symbol = self._priority_event_header_symbol(self.last_signals)
         report = self._format(
             signals,
             now,
             priority_header_symbol=incident_snapshot.header_symbol or event_header_symbol,
+            display_selection_state_path=display_selection_state_path,
         )
         acute_shock = any(
             item.event_kind == "MARKET_SHOCK" and item.event_block_new
@@ -3625,7 +3783,6 @@ class LighterMonitor:
             "swing": swing_payload,
             "springer": springer_payload,
             "signal_transition": transition_payload,
-            "signal_evaluation": evaluation_payload,
             "incidents": incident_snapshot.to_dict(),
             "event_marks": {
                 symbol: (asdict(mark) if hasattr(mark, "__dataclass_fields__") else dict(mark))

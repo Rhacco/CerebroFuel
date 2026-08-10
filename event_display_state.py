@@ -1,4 +1,4 @@
-# r2
+# r4
 """Hourly display throttling for future events in CF v7.0.0.
 
 Future-day events are shown once in the first successful Discord report of each

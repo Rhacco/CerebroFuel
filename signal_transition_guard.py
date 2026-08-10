@@ -1,4 +1,4 @@
-# r2
+# r4
 """Persistent direction-transition protection for CF v7.0.0."""
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def _load(path: Path) -> dict[str, Any]:
         return {"version": STATE_VERSION, "entries": {}}
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return {"version": STATE_VERSION, "entries": {}}
     if raw.get("version") != STATE_VERSION or not isinstance(raw.get("entries"), dict):
         return {"version": STATE_VERSION, "entries": {}}
@@ -228,7 +228,7 @@ def apply_signal_transition_guard(
         # During an opposite transition, TRY is deliberately provisional.
         # Keep the previous strong direction as the active guard until the new
         # direction reaches NOW (or the guard naturally expires). This also
-        # lets Paper require TRY persistence without changing the visible token.
+        # preserves TRY persistence without changing the visible token.
         promote_strong_reference = bool(
             final_action == "NOW"
             or (final_action == "TRY" and not recent_opposite_strong)
