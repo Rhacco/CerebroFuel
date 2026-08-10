@@ -1,4 +1,4 @@
-# r1
+# r2
 """Verified scheduled and externally confirmed event context for CF v7.0.0.
 
 Automatic facts come only from official public schedules/status pages. Project-

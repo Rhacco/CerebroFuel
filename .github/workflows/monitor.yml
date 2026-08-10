@@ -1,4 +1,4 @@
-# r1
+# r2
 name: Crypto Signal Monitor v7.0.0
 on:
   workflow_dispatch:
@@ -50,8 +50,9 @@ jobs:
             output/signal_evaluation_state.json
             output/parameter_review.json
             output/daily_candle_cache.json
-          key: runtime-state-v700-r1-${{ github.run_id }}
+          key: runtime-state-v700-r2-${{ github.run_id }}
           restore-keys: |
+            runtime-state-v700-r2-
             runtime-state-v700-r1-
       - name: Paper-State wiederherstellen
         env:
@@ -85,4 +86,4 @@ jobs:
             output/signal_evaluation_state.json
             output/parameter_review.json
             output/daily_candle_cache.json
-          key: runtime-state-v700-r1-${{ github.run_id }}
+          key: runtime-state-v700-r2-${{ github.run_id }}

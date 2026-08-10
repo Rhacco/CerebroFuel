@@ -1,4 +1,4 @@
-# r1
+# r2
 """Episode-based NEAR/TRY/NOW outcome evaluation for CF v7.0.0.
 
 One continuous directional setup is one statistical episode, not one sample per

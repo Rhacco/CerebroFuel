@@ -1,4 +1,4 @@
-# r1
+# r2
 """Cautious, re-alertable paper-trade diagnostics for CF v7.0.0.
 
 No finding changes parameters automatically.  Findings are evidence summaries

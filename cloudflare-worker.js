@@ -1,10 +1,12 @@
-// r1
+// r2
 // Crypto event feed and GitHub scheduler for v7.0.0.
 
 const APP_VERSION = "7.0.0";
-const PACKAGE_REVISION = "r1";
-const STORE_KEY = "crypto-events-v700-r1";
-const CACHE_URL = "https://crypto-events.internal/v7.0.0-r1/events.json";
+const PACKAGE_REVISION = "r2";
+const STORE_KEY = "crypto-events-v700-r2";
+const CACHE_URL = "https://crypto-events.internal/v7.0.0-r2/events.json";
+const LEGACY_STORE_KEY = "crypto-events-v700-r1";
+const LEGACY_CACHE_URL = "https://crypto-events.internal/v7.0.0-r1/events.json";
 const ACTIVE_RETENTION_MS = 25 * 60 * 1000;
 const STATUS_GRACE_MS = 10 * 60 * 1000;
 const KV_HEARTBEAT_MS = 10 * 60 * 1000;
@@ -132,6 +134,7 @@ function refreshAuthorization(request, env) {
 async function refreshEventFeed(env, now) {
   const previous = (await readStoredFeed(env)) || emptyFeed(now);
   const previousMeta = isObject(previous.meta) ? previous.meta : {};
+  const previousSameRevision = String(previous.package_revision || "") === PACKAGE_REVISION;
   const sourceLastOk = isObject(previousMeta.source_last_ok) ? { ...previousMeta.source_last_ok } : {};
   const diagnostics = [];
   const fresh = [];
@@ -297,8 +300,8 @@ async function refreshEventFeed(env, now) {
     meta: {
       etf_last_date: etfLastDate || null,
       etf_last_total_m: etfLastTotal,
-      kv_written_at: previousMeta.kv_written_at || null,
-      kv_signature: previousMeta.kv_signature || null,
+      kv_written_at: previousSameRevision ? (previousMeta.kv_written_at || null) : null,
+      kv_signature: previousSameRevision ? (previousMeta.kv_signature || null) : null,
       source_last_ok: sourceLastOk,
       source_health: {
         ...sourceHealth,
@@ -848,23 +851,27 @@ async function fetchJson(url) {
 }
 
 async function readStoredFeed(env) {
-  try {
-    const response = await caches.default.match(new Request(CACHE_URL));
-    if (response) {
-      const value = await response.json();
-      if (isObject(value) && Array.isArray(value.events)) return value;
+  for (const cacheUrl of [CACHE_URL, LEGACY_CACHE_URL]) {
+    try {
+      const response = await caches.default.match(new Request(cacheUrl));
+      if (response) {
+        const value = await response.json();
+        if (isObject(value) && Array.isArray(value.events)) return value;
+      }
+    } catch (error) {
+      console.warn(`Cache read failed: ${shortError(error)}`);
     }
-  } catch (error) {
-    console.warn(`Cache read failed: ${shortError(error)}`);
   }
   if (!env.EVENTS_KV?.get) return null;
-  try {
-    const value = await env.EVENTS_KV.get(STORE_KEY, { type: "json" });
-    return isObject(value) && Array.isArray(value.events) ? value : null;
-  } catch (error) {
-    console.warn(`KV read failed: ${shortError(error)}`);
-    return null;
+  for (const storeKey of [STORE_KEY, LEGACY_STORE_KEY]) {
+    try {
+      const value = await env.EVENTS_KV.get(storeKey, { type: "json" });
+      if (isObject(value) && Array.isArray(value.events)) return value;
+    } catch (error) {
+      console.warn(`KV read failed: ${shortError(error)}`);
+    }
   }
+  return null;
 }
 
 function durableFeedSignature(feed) {

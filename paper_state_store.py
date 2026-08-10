@@ -1,4 +1,4 @@
-# r1
+# r2
 """Strict restore/checkpoint store for the independent v7.0.0 paper state."""
 from __future__ import annotations
 
@@ -15,12 +15,14 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 API = "https://api.github.com"
-BRANCH = "paper-state-v700-r1"
-REMOTE_FILE = "paper_state_v700_r1.json"
+BRANCH = "paper-state-v700-r2"
+REMOTE_FILE = "paper_state_v700_r2.json"
+LEGACY_BRANCH = "paper-state-v700-r1"
+LEGACY_REMOTE_FILE = "paper_state_v700_r1.json"
 APP_VERSION = "7.0.0"
-PACKAGE_REVISION = "r1"
+PACKAGE_REVISION = "r2"
 STATE_SCHEMA = 7
-COMPATIBLE_PACKAGE_REVISIONS = {PACKAGE_REVISION}
+COMPATIBLE_PACKAGE_REVISIONS = {"r1", PACKAGE_REVISION}
 
 
 class GitHubStateStore:
@@ -52,8 +54,8 @@ class GitHubStateStore:
             body = exc.read(500).decode("utf-8", "replace")
             raise RuntimeError(f"GitHub-State-Aufruf fehlgeschlagen ({exc.code}): {body}") from exc
 
-    def remote_file(self) -> dict[str, Any] | None:
-        return self.request("GET", f"/repos/{self.repository}/contents/{REMOTE_FILE}?ref={quote(BRANCH)}", allow_missing=True)
+    def remote_file(self, branch: str = BRANCH, remote_file: str = REMOTE_FILE) -> dict[str, Any] | None:
+        return self.request("GET", f"/repos/{self.repository}/contents/{remote_file}?ref={quote(branch)}", allow_missing=True)
 
     def ensure_branch(self) -> None:
         current = self.request("GET", f"/repos/{self.repository}/git/ref/heads/{quote(BRANCH)}", allow_missing=True)
@@ -116,6 +118,8 @@ def restore(path: Path, store: GitHubStateStore) -> int:
         print("Kein GitHub-State konfiguriert; neuer lokaler Paper-Stand.")
         return 0
     remote = store.remote_file()
+    if remote is None:
+        remote = store.remote_file(LEGACY_BRANCH, LEGACY_REMOTE_FILE)
     if remote is None:
         print("Noch kein v7.0.0-Paper-Checkpoint vorhanden.")
         return 0

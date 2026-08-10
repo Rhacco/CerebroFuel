@@ -1,4 +1,4 @@
-# r1
+# r2
 """Lighter-native signal engine with J/E context for CF v7.0.0."""
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ from signal_transition_guard import apply_signal_transition_guard
 from signal_evaluator import update_signal_evaluation
 
 APP_VERSION = "7.0.0"
-PACKAGE_REVISION = "r1"
+PACKAGE_REVISION = "r2"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 GLOBAL_BTC_EVENT_KINDS = {
@@ -54,7 +54,7 @@ STATE_TIER = {
 }
 
 DAILY_CACHE_SCHEMA = "daily-candles-v700-r1"
-COMPATIBLE_CACHE_REVISIONS = {PACKAGE_REVISION}
+COMPATIBLE_CACHE_REVISIONS = {"r1", PACKAGE_REVISION}
 FUNDING_NORMALIZATION_HOURS = 8.0
 
 
@@ -1666,7 +1666,6 @@ WARNING_DISPLAY_PRIORITY = {
     "RS!": 78,  # relative reversal weakness
     "R!": 72,   # opposing multi-week regime
     "B!": 68,   # weak BTC context
-    "SRC!": 84, # event/news source coverage incomplete
     "V!": 60,   # weak/uneven tape
 }
 
@@ -1734,8 +1733,6 @@ def _warning_codes(item: Signal, config: Mapping[str, Any]) -> list[str]:
         result.append("RS!")
     if item.selected_setup == "EARLY" and item.chase_warning:
         result.append("CH!")
-    if item.event_source_coverage < float(config.get("event_source_min_coverage", 0.75)):
-        result.append("SRC!")
     funding_watch = float(config.get("funding_watch_hourly_pct", 0.015))
     if item.funding_hourly_pct is None:
         result.append("F!")
@@ -1752,7 +1749,7 @@ def _header_observation_warnings(item: Signal, config: Mapping[str, Any]) -> lis
     """Only compact risks useful for observation; detailed execution warnings stay below."""
     if item.state == "INVALID_DATA":
         return [_invalid_code(item)]
-    allowed = {"CH!", "R!", "SRC!", "F!", "RS!"}
+    allowed = {"CH!", "R!", "F!", "RS!"}
     event = str(item.event_display_code or "")
     return [code for code in _warning_codes(item, config) if code in allowed and code not in event][:2]
 
@@ -3040,7 +3037,8 @@ class LighterMonitor:
             item.event_source_coverage = coverage
             # A currently verified mark has a known risk even if another source
             # is degraded. Otherwise zero risk is only meaningful with adequate
-            # source coverage; degraded coverage displays E?? plus SRC!.
+            # source coverage. Degraded coverage stays internal and is represented
+            # compactly by E?? instead of a duplicate source warning.
             item.event_score_available = bool(item.event_code) or coverage >= minimum
 
     @staticmethod

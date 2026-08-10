@@ -1,4 +1,4 @@
-# r1
+# r2
 """Acute incident protection for CF v7.0.0.
 
 A MARKET_SHOCK is price evidence only: a statistically unusual, strongly

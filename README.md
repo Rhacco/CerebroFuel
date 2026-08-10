@@ -1,4 +1,4 @@
-<!-- r1 -->
+<!-- r2 -->
 # Crypto Signal Monitor v7.0.0
 
 ## Kernanzeige
@@ -30,7 +30,7 @@ Funding wird nur an tatsächlich überschrittenen UTC-Stundengrenzen verbucht. N
 Der Optimizer ändert **keine** Live-Parameter automatisch. Er liefert wiederholbare, datenbasierte Hinweise mit Stichprobe, Trefferquote/R-Vergleich und konkreter Prüfempfehlung; dieselbe Problemklasse kann nach neuer Evidenz erneut gemeldet werden.
 
 ## Events / Betrieb
-Jeder Pool-Coin besitzt dieselbe Basissuche auf verifizierten offiziellen Domains; zusätzliche strukturierte Status-/Release-/Unlock-/Feed-Quellen werden nur verwendet, wenn sie verifiziert sind. Quellen-Gesundheit wird pro Coin mitgeführt; dadurch ist Teilabdeckung sichtbar statt still als `E00` zu erscheinen. BTC erhält zusätzlich die relevanten US-Makrotermine sowie verifizierte BTC-spezifische Risikoquellen.
+Jeder Pool-Coin besitzt dieselbe Basissuche auf verifizierten offiziellen Domains; zusätzliche strukturierte Status-/Release-/Unlock-/Feed-Quellen werden nur verwendet, wenn sie verifiziert sind. Quellen-Gesundheit wird pro Coin intern mitgeführt; ohne bereits verifiziertes aktuelles Ereignis erscheint unzureichende Abdeckung kompakt als `E??` statt als zusätzlicher Warncode. BTC erhält zusätzlich die relevanten US-Makrotermine sowie verifizierte BTC-spezifische Risikoquellen.
 
 Der Cloudflare Worker speichert den neuen Feed vor dem GitHub-Dispatch und übergibt exakt denselben Snapshot samt `source_health` direkt als Workflow-Input. `/refresh` ist nur mit gesetztem `REFRESH_TOKEN` und passendem Bearer-Token aktiv. Lighter-REST-Aufrufe teilen sich ein gemeinsames Rolling-Minute-Budget und 405/429-Cooldown.
 

@@ -1,4 +1,4 @@
-# r1
+# r2
 """Historical springer strength (J00..J99) for CF v7.0.0.
 
 J measures recurring *normal* movement opportunity, not direction and not event

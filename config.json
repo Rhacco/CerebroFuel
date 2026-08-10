@@ -1,6 +1,6 @@
 {
   "schema_version": "7.0.0",
-  "package_revision": "r1",
+  "package_revision": "r2",
   "lighter_base_url": "https://mainnet.zklighter.elliot.ai/api/v1",
   "timezone": "Europe/Berlin",
   "candidate_symbols": [

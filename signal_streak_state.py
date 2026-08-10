@@ -1,4 +1,4 @@
-# r1
+# r2
 """Persistent action-state streaks for CF v7.0.0 detail tokens."""
 from __future__ import annotations
 

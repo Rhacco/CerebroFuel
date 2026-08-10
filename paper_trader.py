@@ -1,4 +1,4 @@
-# r1
+# r2
 """Deterministic, exploratory paper-trading engine for CF v7.0.0."""
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from typing import Any, Iterable, Mapping
 
 STATE_SCHEMA = 7
 APP_VERSION = "7.0.0"
-PACKAGE_REVISION = "r1"
-COMPATIBLE_PACKAGE_REVISIONS = {PACKAGE_REVISION}
+PACKAGE_REVISION = "r2"
+COMPATIBLE_PACKAGE_REVISIONS = {"r1", PACKAGE_REVISION}
 FUNDING_MODEL_VERSION = "lighter-hourly-settlement-v2"
 ENTRY_STATES = {
     "BUY": 1, "SELL": -1,
@@ -392,7 +392,7 @@ class PaperTrader:
             not isinstance(payload, dict)
             or int(payload.get("schema", -1)) != STATE_SCHEMA
             or payload.get("app_version") != APP_VERSION
-            or payload.get("package_revision") != PACKAGE_REVISION
+            or payload.get("package_revision") not in COMPATIBLE_PACKAGE_REVISIONS
             or not isinstance(payload.get("positions"), dict)
             or _f(payload.get("balance_usd"), -1.0) < 0
             or invalid_position
@@ -400,6 +400,7 @@ class PaperTrader:
             raise RuntimeError("Paper-State ist inkompatibel oder beschädigt")
         if payload.get("funding_model_version") != FUNDING_MODEL_VERSION:
             raise RuntimeError("Paper-State verwendet ein inkompatibles Funding-Modell")
+        payload["package_revision"] = PACKAGE_REVISION
         return payload
 
     def _save_state(self) -> None:

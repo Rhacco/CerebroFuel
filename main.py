@@ -1,4 +1,4 @@
-# r1
+# r2
 """Crypto Signal Monitor v7.0.0 — unified J/E, events and shock protection."""
 from __future__ import annotations
 
