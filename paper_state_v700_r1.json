@@ -4,9 +4,9 @@
   "checkpoint_requested": false,
   "cooldowns": {},
   "funding_model_version": "lighter-hourly-settlement-v2",
-  "last_checkpoint_at": "2026-08-10T09:06:35.978761+00:00",
-  "last_decision_key": "1786352760000",
-  "last_run_at": "2026-08-10T09:06:32.094914+00:00",
+  "last_checkpoint_at": "2026-08-10T09:08:31.892800+00:00",
+  "last_decision_key": "1786352880000",
+  "last_run_at": "2026-08-10T09:08:28.803553+00:00",
   "ledger": [
     {
       "action": {
@@ -3401,143 +3401,166 @@
         "target_two_price": 4.013323999999999
       },
       "timestamp": "2026-08-10T09:06:32.094914+00:00"
+    },
+    {
+      "action": {
+        "alias": "UNI",
+        "direction": -1,
+        "full_close": false,
+        "is_add": true,
+        "kind": "OPEN",
+        "leverage": 10,
+        "margin_usd": 4,
+        "priority": 87.59691412448771,
+        "realized_pnl_usd": 0.0,
+        "reason": "Signalstufe erhöht; Preis noch nah am Einstieg",
+        "symbol": "UNI"
+      },
+      "balance_usd": 99.810423,
+      "details": {
+        "entry_fee_usd": 0.0,
+        "fill_price": 4.0464,
+        "new_entry_price": 4.046657121070915,
+        "new_margin_usd": 7.0
+      },
+      "timestamp": "2026-08-10T09:08:28.803553+00:00"
     }
   ],
   "observations": {
     "ADA": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "APT": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "AVAX": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "BTC": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "ENA": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "ETH": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "FARTCOIN": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "HYPE": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "JUP": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "KAITO": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "LDO": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "NEAR": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "ONDO": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "PENGU": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "PUMP": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "SOL": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "SUI": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "TAO": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "UNI": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": -1,
-      "entry_streak": 2,
-      "state": "WATCH_SHORT"
+      "entry_streak": 4,
+      "state": "STRONG_SHORT"
     },
     "WLD": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "XPL": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "XRP": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
     },
     "ZEC": {
-      "candle_ms": 1786352760000,
+      "candle_ms": 1786352880000,
       "entry_direction": 0,
       "entry_streak": 0,
       "state": "NO_TRADE"
@@ -3547,7 +3570,7 @@
   "positions": {
     "UNI": {
       "alias": "UNI",
-      "base_size": 7.41289844329133,
+      "base_size": 17.29822861331901,
       "degrade_streak": 0,
       "direction": -1,
       "entry_confidence": 74.43834380037515,
@@ -3601,8 +3624,9 @@
         "reversal_relative_confirmed": true,
         "reversal_relative_opposition": false,
         "reversal_structural_reclaim": true,
-        "risk_committed_usd": 0.06447554526229715,
+        "risk_committed_usd": 0.1524219102,
         "risk_usd": 0.06447554526229715,
+        "scale_count": 1,
         "setup": "W",
         "setup_age_minutes": 1,
         "setup_consumed_fraction": 0.31053806400479983,
@@ -3620,43 +3644,43 @@
         "volume_confirmation": 100.0
       },
       "entry_fee_remaining_usd": 0.0,
-      "entry_price": 4.047,
+      "entry_price": 4.046657121070915,
       "entry_rank": 1,
       "entry_readiness": 57.0,
       "entry_roundtrip_cost_pct": 0.032122559920942005,
-      "entry_state": "WATCH_SHORT",
+      "entry_state": "STRONG_SHORT",
       "funding_accrued_usd": 0.0,
       "funding_observed_settlements": 0,
       "funding_unknown_settlements": 0,
-      "funding_updated_at": "2026-08-10T09:06:32.094914+00:00",
-      "last_candle_ms": 1786352760000,
+      "funding_updated_at": "2026-08-10T09:08:28.803553+00:00",
+      "last_candle_ms": 1786352880000,
       "last_funding_hourly_pct": 0.0012,
       "last_funding_settlement_ms": 1786352400000,
-      "last_mark_at": "2026-08-10T09:06:32.094914+00:00",
-      "last_mark_price": 4.0483,
-      "last_scale_at": null,
+      "last_mark_at": "2026-08-10T09:08:28.803553+00:00",
+      "last_mark_price": 4.0479,
+      "last_scale_at": "2026-08-10T09:08:28.803553+00:00",
       "leverage": 10,
-      "margin_usd": 3.0,
-      "notional_usd": 30.0,
+      "margin_usd": 7.0,
+      "notional_usd": 70.0,
       "opened_at": "2026-08-10T09:06:32.094914+00:00",
       "opposite_try_direction": 0,
       "probe_entry": true,
       "realized_pnl_usd": 0.0,
-      "risk_committed_usd": 0.06447554526229715,
-      "risk_usd": 0.06447554526229715,
-      "scale_count": 0,
+      "risk_committed_usd": 0.1524219102,
+      "risk_usd": 0.1524219102,
+      "scale_count": 1,
       "setup": "W",
-      "signal_tier": 1,
+      "signal_tier": 2,
       "stop_pct": 0.18279592428671515,
-      "stop_price": 4.054397751055883,
+      "stop_price": 4.054054245358091,
       "symbol": "UNI",
       "taker_fee_pct": 0.0,
-      "target_one_price": 4.0335589999999995,
+      "target_one_price": 4.0330170543929516,
       "target_one_taken": false,
-      "target_two_price": 4.013323999999999
+      "target_two_price": 4.012783768787597
     }
   },
-  "run_count": 168,
+  "run_count": 170,
   "schema": 7,
   "starting_balance_usd": 100.0
 }
