@@ -1,4 +1,4 @@
-# r4
+# r1
 """Small persistent state for stable Discord radar/detail membership."""
 from __future__ import annotations
 
@@ -7,7 +7,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-STATE_VERSION = "display-selection-v700-r1"
+STATE_VERSION = "display-selection-v710-r1"
+COMPATIBLE_STATE_VERSIONS = {STATE_VERSION, "display-selection-v700-r1"}
 
 
 def _parse_time(value: Any) -> datetime | None:
@@ -33,7 +34,7 @@ def load_display_selection_state(
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return blank
-    if payload.get("version") != STATE_VERSION:
+    if payload.get("version") not in COMPATIBLE_STATE_VERSIONS:
         return blank
     updated = _parse_time(payload.get("updated_at"))
     if updated is None or now.astimezone(timezone.utc) - updated.astimezone(timezone.utc) > timedelta(hours=6):

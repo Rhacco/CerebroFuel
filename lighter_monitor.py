@@ -1,5 +1,5 @@
-# r4
-"""Lighter-native signal engine with persistent J/E context for CF v7.0.0."""
+# r1
+"""Lighter-native signal engine with persistent J/E context for CF v7.1.0."""
 from __future__ import annotations
 
 import json
@@ -30,8 +30,8 @@ from signal_streak_state import apply_signal_streaks
 from signal_transition_guard import apply_signal_transition_guard
 from display_selection_state import load_display_selection_state, save_display_selection_state
 
-APP_VERSION = "7.0.0"
-PACKAGE_REVISION = "r4"
+APP_VERSION = "7.1.0"
+PACKAGE_REVISION = "r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 GLOBAL_BTC_EVENT_KINDS = {
@@ -55,8 +55,11 @@ STATE_TIER = {
     "INVALID_DATA": 0,
 }
 
-DAILY_CACHE_SCHEMA = "daily-candles-v700-r1"
-COMPATIBLE_CACHE_REVISIONS = {"r1", "r2", "r3", PACKAGE_REVISION}
+DAILY_CACHE_SCHEMA = "daily-candles-v710-r1"
+COMPATIBLE_DAILY_CACHE_IDENTITIES = {
+    (DAILY_CACHE_SCHEMA, APP_VERSION, PACKAGE_REVISION),
+    *(("daily-candles-v700-r1", "7.0.0", f"r{revision}") for revision in range(1, 7)),
+}
 FUNDING_NORMALIZATION_HOURS = 8.0
 
 
@@ -75,11 +78,12 @@ def _load_daily_candle_cache(
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return {}, {}, {}
-    if (
-        payload.get("schema") != DAILY_CACHE_SCHEMA
-        or payload.get("app_version") != APP_VERSION
-        or payload.get("package_revision") not in COMPATIBLE_CACHE_REVISIONS
-    ):
+    cache_identity = (
+        str(payload.get("schema") or ""),
+        str(payload.get("app_version") or ""),
+        str(payload.get("package_revision") or ""),
+    )
+    if cache_identity not in COMPATIBLE_DAILY_CACHE_IDENTITIES:
         return {}, {}, {}
     fresh: dict[str, list[Mapping[str, Any]]] = {}
     fallback: dict[str, list[Mapping[str, Any]]] = {}
@@ -343,6 +347,8 @@ class Signal:
     event_title: str = ""
     event_priority: float = 0.0
     event_risk: float = 0.0
+    event_local_risk: float = 0.0
+    event_global_risk: float = 0.0
     event_score_available: bool = True
     event_source_coverage: float = 1.0
     event_block_new: bool = False
@@ -1521,7 +1527,15 @@ def _springer_token(signal: Signal) -> str:
 def _event_risk_token(signal: Signal, config: Mapping[str, Any]) -> str:
     if not signal.event_score_available:
         return str(config.get("event_score_unknown_code", "E??"))
-    value = max(0, min(99, int(round(float(signal.event_risk)))))
+    # Keep E coin-specific during ordinary market conditions. A distant BTC
+    # macro appointment still remains active internally and is shown in the BTC
+    # header, but it must not turn every altcoin into E20 for hours/days. Only
+    # materially near global risk is promoted into each detail-row E score.
+    local_risk = _clamp(_f(getattr(signal, "event_local_risk", 0.0)))
+    global_risk = _clamp(_f(getattr(signal, "event_global_risk", 0.0)))
+    global_min = _clamp(_f(config.get("event_global_score_display_min_risk", 45.0), 45.0))
+    display_risk = max(local_risk, global_risk if global_risk >= global_min else 0.0)
+    value = max(0, min(99, int(round(display_risk))))
     return f"E{value:02d}"
 
 
@@ -2998,9 +3012,13 @@ class LighterMonitor:
             item.event_priority = max(
                 _clamp(_f(field(mark, "priority", 0.0))) for mark in applicable
             )
-            item.event_risk = max(
-                _clamp(_f(field(mark, "risk", 0.0))) for mark in applicable
+            item.event_local_risk = (
+                _clamp(_f(field(own_mark, "risk", 0.0))) if own_mark is not None else 0.0
             )
+            item.event_global_risk = (
+                _clamp(_f(field(global_mark, "risk", 0.0))) if global_mark is not None else 0.0
+            )
+            item.event_risk = max(item.event_local_risk, item.event_global_risk)
             item.event_block_new = any(
                 bool(field(mark, "block_new", False)) for mark in applicable
             )
@@ -3077,10 +3095,9 @@ class LighterMonitor:
                 coverage = _clamp(_f(row.get("coverage"), 0.0), 0.0, 1.0)
                 available = coverage >= minimum
             else:
-                # The external coin-news JSON is optional. If no feed/source-health
-                # snapshot is configured at all, its absence must neither create E??
-                # nor block/downgrade any signal. E00 then means no verified event
-                # from the sources that are actually active in this run.
+                # If no project source-health snapshot is available, its absence
+                # must never create E?? or block/downgrade a signal. E00 then means
+                # no verified event from the sources actually active in this run.
                 coverage = 1.0 if not feed_health_present else 0.0
                 available = not feed_health_present
             item.event_source_coverage = coverage

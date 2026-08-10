@@ -1,17 +1,15 @@
-# r4
-"""Verified scheduled and externally confirmed event context for CF v7.0.0.
+# r1
+"""Verified macro and coin-event context for CF v7.1.0.
 
-Macro facts come from authoritative public schedules. Coin events arrive only
-through the worker snapshot or an explicitly configured HTTPS fallback feed and
-are accepted only when marked verified with an allowlisted HTTPS evidence URL.
+Macro facts come from authoritative public schedules. Coin status/news/release/
+unlock facts are collected on the GitHub runner and accepted only with verified,
+allowlisted HTTPS evidence. An external JSON feed is purely additive when set.
 Events never create a Long/Short direction; they only add visibility and neutral
 risk controls.
 """
 from __future__ import annotations
 
-import base64
 import calendar
-import gzip
 import json
 import os
 import re
@@ -27,8 +25,15 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-CACHE_VERSION = "event-cache-v700-r1"
-USER_AGENT = "crypto-signal-monitor/7.0.0"
+from project_event_sources import (
+    APP_VERSION as PROJECT_EVENT_VERSION,
+    PACKAGE_REVISION as PROJECT_EVENT_REVISION,
+    collect_project_event_feed,
+)
+
+CACHE_VERSION = "event-cache-v710-r1"
+COMPATIBLE_CACHE_VERSIONS = {CACHE_VERSION, "event-cache-v700-r1"}
+USER_AGENT = "crypto-signal-monitor/7.1.0"
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4,
     "may": 5, "june": 6, "july": 7, "august": 8,
@@ -1409,7 +1414,7 @@ def load_critical_events(
     diagnostics: list[str] = []
     source_health: dict[str, Any] = {}
     cached = _load_json(cache_path)
-    if cached.get("version") != CACHE_VERSION:
+    if cached.get("version") not in COMPATIBLE_CACHE_VERSIONS:
         cached = {"version": CACHE_VERSION}
     now_s = int(now.timestamp())
 
@@ -1538,11 +1543,6 @@ def load_critical_events(
     cached["schedule_events"] = [asdict(event) for event in schedule_events]
     cached["schedule_fetched_at"] = max(source_fetched_at.values(), default=0)
 
-    # Coin/project status, release, news and unlock sources are normalized by
-    # the central Cloudflare event feed. Keeping this monitor-side loader free
-    # of symbol-specific status exceptions makes every configured coin follow
-    # the same verified-feed path.
-
     # Large BTC option expiries are derived hourly from Deribit's official
     # public open-interest endpoint. A label appears only when both the absolute
     # notional and share-of-total thresholds are met.
@@ -1587,65 +1587,74 @@ def load_critical_events(
     source_domains_by_symbol = (
         source_domains_by_symbol if isinstance(source_domains_by_symbol, Mapping) else {}
     )
-    feed_events: list[CriticalEvent] = []
-    # A Cloudflare-triggered workflow can carry the exact feed snapshot that
-    # was just persisted.  This bypasses Cache API locality and KV propagation
-    # delay: when valid, it is authoritative for the Worker feed of this run.
-    dispatch_raw = os.getenv("CRYPTO_EVENTS_DISPATCH_PAYLOAD", "").strip()
-    dispatch_feed_valid = False
-    if dispatch_raw:
-        try:
-            if dispatch_raw.startswith("gz:"):
-                compressed = base64.b64decode(dispatch_raw[3:], validate=True)
-                if len(compressed) > 64_000:
-                    raise ValueError("komprimierter Dispatch-Feed ist zu groß")
-                decoded = gzip.decompress(compressed)
-                if len(decoded) > 500_000:
-                    raise ValueError("entpackter Dispatch-Feed ist zu groß")
-                dispatch_payload = json.loads(decoded.decode("utf-8"))
-            else:
-                if len(dispatch_raw) > 500_000:
-                    raise ValueError("Dispatch-Feed ist zu groß")
-                dispatch_payload = json.loads(dispatch_raw)
-            if not isinstance(dispatch_payload, Mapping):
-                raise ValueError("Dispatch-Feed ist kein JSON-Objekt")
-            feed_events.extend(
-                _verified_feed_events(
-                    dispatch_payload,
-                    allowlist,
-                    symbols,
-                    symbol_aliases,
-                    source_domains_by_symbol,
-                )
-            )
-            source_health = _feed_source_health(dispatch_payload)
-            dispatch_feed_valid = True
-        except (ValueError, TypeError, UnicodeDecodeError, OSError, json.JSONDecodeError) as exc:
-            diagnostics.append(f"CRYPTO_EVENTS_DISPATCH_PAYLOAD ist ungültig: {exc}")
 
-    # A separately configured HTTPS feed is only a fallback when the worker did
-    # not dispatch a snapshot. If neither transport is configured, coin-news
-    # enrichment is simply absent; macro/market analysis continues normally.
-    # The remote verified feed also carries acute security incidents, so it is
-    # checked every minute by default. A failed incident feed is retained only
-    # briefly; stale "active" alerts must never live for the general 48-hour
-    # calendar cache window.
+    # Coin/project event work runs here on GitHub, not inside Cloudflare.
+    # This preserves the full verified source set while keeping the minutely
+    # Workers Free scheduler well below its CPU-sensitive workload.
+    prior_project_state = cached.get("project_event_state")
+    try:
+        project_feed, project_state, project_diagnostics = collect_project_event_feed(
+            now=now,
+            symbols=symbols,
+            state=prior_project_state,
+            timeout=timeout,
+        )
+    except Exception as exc:
+        # Per-source network failures are already contained by the collector.
+        # This final guard only protects the monitor from an unexpected collector
+        # defect and never invents a healthy source state.
+        diagnostics.append(f"Projekt-Ereignisquellen ausgefallen: {exc}")
+        prior_project_state = (
+            dict(prior_project_state) if isinstance(prior_project_state, Mapping) else {}
+        )
+        prior_updated_at = int(prior_project_state.get("updated_at") or 0)
+        state_is_recent = bool(prior_updated_at and now_s - prior_updated_at <= 12 * 60)
+        prior_health = prior_project_state.get("source_health")
+        if not (state_is_recent and isinstance(prior_health, Mapping)):
+            prior_health = {
+                "by_symbol": {
+                    symbol: {
+                        "coverage": 0.0, "ok": 0, "total": 1,
+                        "degraded": True, "missing": ["collector"],
+                    }
+                    for symbol in sorted(symbols)
+                },
+                "overall_coverage": 0.0,
+                "tracked_sources": len(symbols),
+            }
+        project_feed = {
+            "version": PROJECT_EVENT_VERSION,
+            "package_revision": PROJECT_EVENT_REVISION,
+            "generated_at": _iso(now),
+            "events": prior_project_state.get("events", []),
+            "meta": {"source_health": prior_health},
+        }
+        project_state = prior_project_state
+        project_diagnostics = []
+    cached["project_event_state"] = project_state
+    diagnostics.extend(project_diagnostics)
+    feed_events: list[CriticalEvent] = _verified_feed_events(
+        project_feed,
+        allowlist,
+        symbols,
+        symbol_aliases,
+        source_domains_by_symbol,
+    )
+    source_health = _feed_source_health(project_feed)
+
+    # A separately configured HTTPS JSON feed is strictly optional and additive.
+    # It never determines local source coverage, never blocks the monitor, and a
+    # failure only drops that supplemental feed after its short stale window.
     feed_url = os.getenv("CRYPTO_EVENTS_URL", "").strip()
     remote_feed_events = cached_events("remote_feed_events")
     remote_feed_fetched_at = int(cached.get("remote_feed_fetched_at") or 0)
     remote_feed_checked_at = int(cached.get("remote_feed_checked_at") or 0)
-    if feed_url and not dispatch_feed_valid and isinstance(cached.get("remote_feed_source_health"), Mapping):
-        source_health = dict(cached.get("remote_feed_source_health") or {})
     feed_refresh = max(1, int(section.get("verified_feed_refresh_minutes", 1))) * 60
     feed_max_stale = max(
         1,
         int(section.get("verified_feed_cache_max_stale_minutes", 10)),
     ) * 60
-    if feed_url and not dispatch_feed_valid:
-        # The feed endpoint is an explicitly configured transport (usually the
-        # project's own workers.dev URL). It must be HTTPS, while every event
-        # inside it still requires verified=true and an individually allowlisted
-        # HTTPS evidence URL. This keeps arbitrary feed contents untrusted.
+    if feed_url:
         try:
             feed_transport = urlparse(feed_url)
         except ValueError:
@@ -1655,8 +1664,10 @@ def load_critical_events(
             or feed_transport.scheme != "https"
             or not feed_transport.hostname
         ):
-            diagnostics.append("Ereignisfeed-URL ist nicht gültig oder nicht HTTPS")
+            diagnostics.append("Optionaler Ereignisfeed ist nicht gültig oder nicht HTTPS")
             remote_feed_events = []
+            cached.pop("remote_feed_events", None)
+            cached.pop("remote_feed_fetched_at", None)
         elif now_s - remote_feed_checked_at >= feed_refresh or remote_feed_checked_at <= 0:
             cached["remote_feed_checked_at"] = now_s
             try:
@@ -1668,20 +1679,21 @@ def load_critical_events(
                     symbol_aliases,
                     source_domains_by_symbol,
                 )
-                source_health = _feed_source_health(raw)
                 cached["remote_feed_fetched_at"] = now_s
-                cached["remote_feed_source_health"] = source_health
                 cached["remote_feed_events"] = [asdict(event) for event in remote_feed_events]
             except Exception as exc:
-                diagnostics.append(f"Verifizierter Ereignisfeed nicht aktualisiert: {exc}")
+                diagnostics.append(f"Optionaler Ereignisfeed nicht aktualisiert: {exc}")
                 if remote_feed_fetched_at and now_s - remote_feed_fetched_at > feed_max_stale:
                     remote_feed_events = []
-    else:
-        remote_feed_events = []
-        if not dispatch_feed_valid:
-            source_health = {}
-    if not dispatch_feed_valid:
+                    cached.pop("remote_feed_events", None)
+                    cached.pop("remote_feed_fetched_at", None)
         feed_events.extend(remote_feed_events)
+    else:
+        # If the optional feed is not configured, remove any obsolete cached
+        # supplement instead of carrying dead data forever.
+        cached.pop("remote_feed_events", None)
+        cached.pop("remote_feed_fetched_at", None)
+        cached.pop("remote_feed_checked_at", None)
 
     all_events = _dedupe([
         *schedule_events, *derivative_events, *feed_events

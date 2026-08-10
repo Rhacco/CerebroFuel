@@ -1,4 +1,4 @@
-# r4
+# r1
 """Discord webhook sender: every call creates a new message."""
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ def send_discord(
         request = Request(
             webhook_url,
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json", "User-Agent": "cf/7.0.0"},
+            headers={"Content-Type": "application/json", "User-Agent": "cf/7.1.0"},
             method="POST",
         )
         try:

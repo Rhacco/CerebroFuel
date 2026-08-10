@@ -1,5 +1,5 @@
-# r4
-"""Persistent action-state streaks for CF v7.0.0 detail tokens."""
+# r1
+"""Persistent action-state streaks for CF v7.1.0 detail tokens."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-STATE_VERSION = "signal-streak-v700-r1"
+STATE_VERSION = "signal-streak-v710-r1"
+COMPATIBLE_STATE_VERSIONS = {STATE_VERSION, "signal-streak-v700-r1"}
 TRACKED_ACTIONS = {"NEAR", "TRY", "NOW"}
 MAX_COUNT = 999
 
@@ -27,7 +28,7 @@ def _load(path: Path) -> dict[str, Any]:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return {"version": STATE_VERSION, "entries": {}}
-    if raw.get("version") != STATE_VERSION or not isinstance(raw.get("entries"), dict):
+    if raw.get("version") not in COMPATIBLE_STATE_VERSIONS or not isinstance(raw.get("entries"), dict):
         return {"version": STATE_VERSION, "entries": {}}
     return raw
 

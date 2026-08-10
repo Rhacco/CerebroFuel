@@ -1,5 +1,5 @@
-# r4
-"""Live speed, activity, two-sided movement and BTC pinning context for CF v7.0.0.
+# r1
+"""Live speed, activity, two-sided movement and BTC pinning context for CF v7.1.0.
 
 The core signal state remains authoritative. This layer only adds timing context:
 - SPD measures how quickly price is moving now.
