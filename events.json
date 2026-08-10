@@ -1,5 +1,6 @@
 {
-  "schema_version": "6.1.0",
-  "package_revision": "r5",
+  "schema_version": "7.0.0",
+  "package_revision": "r1",
+  "generated_at": null,
   "events": []
 }

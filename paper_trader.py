@@ -1,5 +1,5 @@
-# r5
-"""Deterministic, multi-candidate paper-trading engine for CF v6.1.0."""
+# r1
+"""Deterministic, exploratory paper-trading engine for CF v7.0.0."""
 from __future__ import annotations
 
 import json
@@ -10,12 +10,11 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 
-STATE_SCHEMA = 6
-APP_VERSION = "6.1.0"
-PACKAGE_REVISION = "r5"
-COMPATIBLE_PACKAGE_REVISIONS = {"r2", "r3", "r4", PACKAGE_REVISION}
-FUNDING_MODEL_VERSION = "lighter-8h-normalized-to-hourly-v1"
-FUNDING_SOURCE_HOURS = 8.0
+STATE_SCHEMA = 7
+APP_VERSION = "7.0.0"
+PACKAGE_REVISION = "r1"
+COMPATIBLE_PACKAGE_REVISIONS = {PACKAGE_REVISION}
+FUNDING_MODEL_VERSION = "lighter-hourly-settlement-v2"
 ENTRY_STATES = {
     "BUY": 1, "SELL": -1,
     "STRONG_LONG": 1, "STRONG_SHORT": -1,
@@ -98,17 +97,13 @@ def _timing_score(signal: Any) -> float:
     return max(0.0, min(100.0, speed * 0.42 + activity * 0.43 + two_sided * 0.15))
 
 
-def _flow_values(signal: Any, direction: int = 0) -> tuple[bool, float, float, int, bool, bool]:
-    """Return flow availability, ER, AGE, direction and alignment flags."""
-    available = bool(getattr(signal, "flow_available", False))
-    if not available:
-        return False, 0.0, 0.0, 0, False, False
-    score = max(-99.0, min(99.0, _f(getattr(signal, "flow_score", 0.0))))
-    age = max(0.0, min(99.0, _f(getattr(signal, "flow_age_score", 0.0))))
-    flow_direction = int(_f(getattr(signal, "flow_direction", 0.0)))
-    aligned = direction in {-1, 1} and flow_direction == direction
-    opposed = direction in {-1, 1} and flow_direction == -direction
-    return True, score, age, flow_direction, aligned, opposed
+def _springer_values(signal: Any | None) -> tuple[bool, float, float]:
+    """Return direction-free J availability, score and reliability."""
+    if signal is None or not bool(getattr(signal, "springer_available", False)):
+        return False, 0.0, 0.0
+    score = max(0.0, min(99.0, _f(getattr(signal, "springer_score", 0.0))))
+    reliability = max(0.0, min(1.0, _f(getattr(signal, "springer_reliability", 0.0))))
+    return True, score, reliability
 
 
 def _money(value: float, signed: bool = False, compact: bool = True) -> str:
@@ -326,46 +321,27 @@ class PaperTrader:
         target_two_roi = float(self.config.get("paper_profit_target_two_roi_pct", 8.0))
         if not 2.0 <= target_one_roi < target_two_roi <= 10.0:
             raise ValueError("Paper-Gewinnziele müssen zwischen 2% und 10% liegen")
-        run_threshold = float(self.config.get("paper_flow_run_threshold", 45.0))
-        jump_threshold = float(self.config.get("paper_flow_jump_threshold", -45.0))
-        if not 20.0 <= run_threshold <= 90.0 or not -90.0 <= jump_threshold <= -20.0:
-            raise ValueError("Paper-ER-Schwellen sind ungültig")
-        multipliers = (
-            float(self.config.get("paper_flow_jump_margin_multiplier", 0.85)),
-            float(self.config.get("paper_flow_run_opposed_margin_multiplier", 0.78)),
-            float(self.config.get("paper_flow_jump_hold_multiplier", 0.65)),
-            float(self.config.get("paper_flow_run_opposed_hold_multiplier", 0.60)),
-        )
-        if any(not 0.35 <= value <= 1.0 for value in multipliers):
-            raise ValueError("Paper-ER-Abschlagsfaktoren sind ungültig")
-        run_margin_max = float(self.config.get("paper_flow_run_aligned_margin_multiplier_max", 1.12))
-        run_hold_max = float(self.config.get("paper_flow_run_hold_multiplier_max", 2.25))
-        if not 1.0 <= run_margin_max <= 1.30 or not 1.0 <= run_hold_max <= 4.0:
-            raise ValueError("Paper-ER-Run-Faktoren sind ungültig")
-        flow_age_threshold = float(self.config.get("paper_flow_long_age_threshold", 50.0))
-        if not 0.0 <= flow_age_threshold <= 99.0:
-            raise ValueError("paper_flow_long_age_threshold ist ungültig")
-        for key in ("paper_flow_jump_leverage_cap", "paper_flow_run_opposed_leverage_cap"):
-            cap = int(self.config.get(key, 20))
-            if not minimum <= cap <= maximum:
-                raise ValueError("Paper-ER-Hebelcap ist ungültig")
-        target_multipliers = (
-            float(self.config.get("paper_flow_jump_target_one_multiplier", 0.80)),
-            float(self.config.get("paper_flow_jump_target_two_multiplier", 0.70)),
-            float(self.config.get("paper_flow_run_opposed_target_two_multiplier", 0.75)),
-        )
-        if any(not 0.40 <= value <= 1.0 for value in target_multipliers):
-            raise ValueError("Paper-ER-Zielfaktor ist ungültig")
-        flow_target_max = float(self.config.get("paper_flow_run_target_two_max_roi_pct", 10.0))
-        if not target_two_roi <= flow_target_max <= 15.0:
-            raise ValueError("Paper-ER-Ziel-2-Limit ist ungültig")
-        for key in (
-            "paper_flow_try_reduce_durable_pct",
-            "paper_flow_try_reduce_jumpy_pct",
-            "paper_flow_try_reduce_against_pct",
+        j_low = float(self.config.get("paper_springer_low_score", 28.0))
+        j_high = float(self.config.get("paper_springer_high_score", 78.0))
+        j_extreme = float(self.config.get("paper_springer_extreme_score", 92.0))
+        if not 0 <= j_low < j_high < j_extreme <= 99:
+            raise ValueError("Paper-J-Schwellen sind ungültig")
+        for key, low, high in (
+            ("paper_springer_low_margin_multiplier", 0.50, 1.0),
+            ("paper_springer_high_margin_multiplier", 1.0, 1.25),
+            ("paper_springer_extreme_margin_multiplier", 0.50, 1.0),
+            ("paper_springer_high_hold_multiplier", 0.50, 1.0),
+            ("paper_springer_extreme_hold_multiplier", 0.35, 1.0),
         ):
-            if not 10.0 <= float(self.config.get(key, 50.0)) <= 100.0:
-                raise ValueError("Paper-ER-TRY-Reduktion ist ungültig")
+            value = float(self.config.get(key, 1.0))
+            if not low <= value <= high:
+                raise ValueError(f"{key} ist ungültig")
+        extreme_cap = int(self.config.get("paper_springer_extreme_leverage_cap", 25))
+        if not minimum <= extreme_cap <= maximum:
+            raise ValueError("paper_springer_extreme_leverage_cap ist ungültig")
+        grace = int(self.config.get("paper_funding_settlement_grace_minutes", 10))
+        if not 1 <= grace <= 20:
+            raise ValueError("paper_funding_settlement_grace_minutes ist ungültig")
         same_direction = int(self.config.get("paper_max_same_direction_positions", 2))
         if not 1 <= same_direction <= positions:
             raise ValueError("paper_max_same_direction_positions ist ungültig")
@@ -392,128 +368,6 @@ class PaperTrader:
             "funding_model_version": FUNDING_MODEL_VERSION,
         }
 
-    def _migrate_funding_model(self, payload: dict[str, Any]) -> None:
-        """One-time migration from the pre-r5 8h-as-hourly funding model."""
-        if payload.get("funding_model_version") == FUNDING_MODEL_VERSION:
-            return
-
-        def corrected_close(
-            action: dict[str, Any],
-            details: dict[str, Any],
-            prior_realized: float,
-        ) -> tuple[float, float]:
-            old_funding = _f(details.get("funding_usd"))
-            corrected_funding = old_funding / FUNDING_SOURCE_HOURS
-            gross = _f(details.get("gross_pnl_usd"))
-            exit_fee = _f(details.get("exit_fee_usd"))
-            entry_fee = _f(details.get("entry_fee_usd"))
-            raw_net = gross - exit_fee - corrected_funding - entry_fee
-            close_margin = max(0.0, _f(action.get("margin_usd")))
-            corrected_net = max(raw_net, -close_margin) if close_margin > 0 else raw_net
-            old_net = _f(action.get("realized_pnl_usd"))
-            details["funding_usd"] = round(corrected_funding, 12)
-            details["raw_net_pnl_usd"] = round(raw_net, 12)
-            details["isolated_loss_capped"] = bool(raw_net < -close_margin) if close_margin > 0 else False
-            details["trade_net_pnl_usd"] = round(prior_realized + corrected_net, 12)
-            return corrected_net, corrected_net - old_net
-
-        def mark_legacy_features(container: Mapping[str, Any] | dict[str, Any]) -> None:
-            if not isinstance(container, dict):
-                return
-            features = container.get("entry_features")
-            if not isinstance(features, dict):
-                return
-            if features.get("funding_hourly_pct") is not None:
-                features["funding_hourly_pct"] = round(
-                    _f(features.get("funding_hourly_pct")) / FUNDING_SOURCE_HOURS,
-                    12,
-                )
-            # Pre-r5 readiness/extremity were calculated with the 8h-equivalent
-            # funding value treated as hourly. Monetary P/L can be corrected,
-            # but those historical derived features cannot be reconstructed from
-            # the ledger alone. Keep the trade history, but never mix it into new
-            # optimizer evidence as though feature semantics were identical.
-            features["funding_model_version"] = "pre-r5-8h-as-hourly"
-            features["optimizer_compatible"] = False
-
-        balance_delta = 0.0
-        running_realized: dict[str, float] = {}
-        ledger = payload.get("ledger")
-        if isinstance(ledger, list):
-            for row in ledger:
-                if not isinstance(row, dict):
-                    continue
-                action = row.get("action")
-                details = row.get("details")
-                if not isinstance(action, dict) or not isinstance(details, dict):
-                    continue
-                symbol = str(action.get("symbol") or "")
-                kind = str(action.get("kind") or "")
-                mark_legacy_features(details)
-                reverse_features = details.get("reverse_close")
-                if isinstance(reverse_features, dict):
-                    mark_legacy_features(reverse_features)
-                if kind == "OPEN" and not bool(action.get("is_add", False)):
-                    running_realized[symbol] = 0.0
-                    continue
-                if kind == "CLOSE":
-                    prior = running_realized.get(symbol, 0.0)
-                    corrected_net, delta = corrected_close(action, details, prior)
-                    balance_delta += delta
-                    action["realized_pnl_usd"] = round(corrected_net, 12)
-                    running_realized[symbol] = prior + corrected_net
-                    if bool(details.get("full_close", False)):
-                        running_realized.pop(symbol, None)
-                    continue
-                if kind == "REVERSE":
-                    reverse_close = details.get("reverse_close")
-                    if isinstance(reverse_close, dict):
-                        prior = running_realized.get(symbol, 0.0)
-                        old_reverse_net = _f(action.get("realized_pnl_usd"))
-                        synthetic_action = {
-                            # For old REVERSE rows the new-position margin is not
-                            # necessarily the closed margin.  If the old close was
-                            # isolated-loss capped, the realised loss itself gives
-                            # the exact cap; otherwise use a non-binding ceiling.
-                            "margin_usd": (
-                                abs(old_reverse_net)
-                                if bool(reverse_close.get("isolated_loss_capped", False))
-                                else 1_000_000_000.0
-                            ),
-                            "realized_pnl_usd": old_reverse_net,
-                        }
-                        corrected_net, delta = corrected_close(synthetic_action, reverse_close, prior)
-                        balance_delta += delta
-                        action["realized_pnl_usd"] = round(corrected_net, 12)
-                    # REVERSE closes the old trade and immediately starts a new one.
-                    running_realized[symbol] = 0.0
-
-        positions = payload.get("positions")
-        if isinstance(positions, dict):
-            for symbol, position in positions.items():
-                if not isinstance(position, dict):
-                    continue
-                mark_legacy_features(position)
-                if position.get("last_funding_hourly_pct") is not None:
-                    position["last_funding_hourly_pct"] = round(
-                        _f(position.get("last_funding_hourly_pct")) / FUNDING_SOURCE_HOURS,
-                        12,
-                    )
-                position["funding_accrued_usd"] = round(
-                    _f(position.get("funding_accrued_usd")) / FUNDING_SOURCE_HOURS,
-                    12,
-                )
-                if symbol in running_realized:
-                    position["realized_pnl_usd"] = round(running_realized[symbol], 12)
-                position.setdefault("funding_estimated_hours", 0.0)
-                position.setdefault("funding_unknown_hours", 0.0)
-                position.setdefault("last_mark_price", _f(position.get("entry_price")))
-                position.setdefault("last_mark_at", position.get("opened_at"))
-
-        payload["balance_usd"] = round(_f(payload.get("balance_usd")) + balance_delta, 10)
-        payload["funding_model_version"] = FUNDING_MODEL_VERSION
-        payload["checkpoint_requested"] = True
-
     def _load_state(self) -> dict[str, Any]:
         if not self.state_path.exists():
             return self._initial_state()
@@ -538,14 +392,14 @@ class PaperTrader:
             not isinstance(payload, dict)
             or int(payload.get("schema", -1)) != STATE_SCHEMA
             or payload.get("app_version") != APP_VERSION
-            or payload.get("package_revision") not in COMPATIBLE_PACKAGE_REVISIONS
+            or payload.get("package_revision") != PACKAGE_REVISION
             or not isinstance(payload.get("positions"), dict)
             or _f(payload.get("balance_usd"), -1.0) < 0
             or invalid_position
         ):
             raise RuntimeError("Paper-State ist inkompatibel oder beschädigt")
-        self._migrate_funding_model(payload)
-        payload["package_revision"] = PACKAGE_REVISION
+        if payload.get("funding_model_version") != FUNDING_MODEL_VERSION:
+            raise RuntimeError("Paper-State verwendet ein inkompatibles Funding-Modell")
         return payload
 
     def _save_state(self) -> None:
@@ -601,68 +455,68 @@ class PaperTrader:
         return str(max(stamps)) if stamps else self.now.strftime("%Y%m%d%H%M")
 
     def _funding_update(self, position: dict[str, Any], signal: Any | None) -> None:
-        previous = _parse_time(position.get("funding_updated_at"), self.now)
-        elapsed_hours = max(0.0, (self.now - previous).total_seconds() / 3600.0)
-        if elapsed_hours <= 0:
+        """Book funding only at crossed UTC hour marks.
+
+        The public funding-rates endpoint is normalized to an 8h-equivalent
+        value upstream; the monitor already converts the selected Lighter row
+        to an hourly percentage. A current observation is used only for the
+        latest crossed settlement while it is still inside a short grace
+        window. Older missed settlements are explicitly unknown instead of
+        receiving a retroactive guessed rate.
+        """
+        now_ms = int(self.now.timestamp() * 1000)
+        hour_ms = 3_600_000
+        opened = _parse_time(position.get("opened_at"), self.now)
+        default_last = int(opened.timestamp() * 1000) // hour_ms * hour_ms
+        last_boundary = int(position.get("last_funding_settlement_ms", default_last) or default_last)
+        current_boundary = now_ms // hour_ms * hour_ms
+        if current_boundary <= last_boundary:
+            if signal is not None and getattr(signal, "funding_hourly_pct", None) is not None:
+                position["last_funding_hourly_pct"] = float(signal.funding_hourly_pct)
+            position["funding_updated_at"] = _iso(self.now)
             return
+
+        boundaries = list(range(last_boundary + hour_ms, current_boundary + 1, hour_ms))
         current_rate = (
             None
             if signal is None or getattr(signal, "funding_hourly_pct", None) is None
             else float(signal.funding_hourly_pct)
         )
-        last_rate = position.get("last_funding_hourly_pct")
-        fallback_rate = None if last_rate is None else _f(last_rate)
-
-        # A funding rate observed now must not be projected backwards across a
-        # long runner outage. Lighter settles funding hourly, so at most the
-        # most recent hour can be modelled from one observed/current or last
-        # known rate. Any older unobserved interval is kept explicitly unknown
-        # instead of being silently discarded or fabricated. Normal minute-by-
-        # minute operation is unchanged because elapsed_hours is then << 1.
-        modelled_hours = min(elapsed_hours, 1.0)
-        unknown_hours = max(0.0, elapsed_hours - modelled_hours)
-        rate_pct = current_rate if current_rate is not None else fallback_rate
-        if rate_pct is not None and modelled_hours > 0:
-            direction = int(position["direction"])
-            cost = (
-                _f(position["notional_usd"])
-                * rate_pct
-                / 100.0
-                * modelled_hours
-                * direction
+        grace_ms = int(self.config.get("paper_funding_settlement_grace_minutes", 10)) * 60_000
+        observed = 0
+        unknown = 0
+        latest = boundaries[-1]
+        for boundary in boundaries:
+            can_observe = (
+                boundary == latest
+                and current_rate is not None
+                and 0 <= now_ms - boundary <= grace_ms
             )
-            position["funding_accrued_usd"] = round(
-                _f(position.get("funding_accrued_usd")) + cost,
-                10,
-            )
-            if current_rate is not None:
-                position["last_funding_hourly_pct"] = current_rate
+            if can_observe:
+                cost = (
+                    _f(position.get("notional_usd"))
+                    * current_rate
+                    / 100.0
+                    * int(position.get("direction", 0))
+                )
+                position["funding_accrued_usd"] = round(
+                    _f(position.get("funding_accrued_usd")) + cost, 10
+                )
+                observed += 1
             else:
-                position["funding_estimated_hours"] = round(
-                    _f(position.get("funding_estimated_hours")) + modelled_hours,
-                    6,
-                )
-                self._log(
-                    f"FUNDING {position['alias']}: aktuelle Rate fehlt, "
-                    f"letzte bekannte Rate für {modelled_hours:.2f}h fortgeschrieben"
-                )
-        elif modelled_hours > 0:
-            unknown_hours += modelled_hours
+                unknown += 1
 
-        if unknown_hours > 1e-9:
-            position["funding_unknown_hours"] = round(
-                _f(position.get("funding_unknown_hours")) + unknown_hours,
-                6,
-            )
-            self._log(
-                f"FUNDING {position['alias']}: {unknown_hours:.2f}h ohne "
-                "historisch beobachtbare Rate; Intervall als unbekannt markiert"
-            )
-
-        # Advance the sampling clock even on a gap. Otherwise a future current
-        # rate would be retroactively applied to an interval for which it was
-        # never observed.
+        if current_rate is not None:
+            position["last_funding_hourly_pct"] = current_rate
+        position["funding_observed_settlements"] = int(position.get("funding_observed_settlements", 0)) + observed
+        position["funding_unknown_settlements"] = int(position.get("funding_unknown_settlements", 0)) + unknown
+        position["last_funding_settlement_ms"] = current_boundary
         position["funding_updated_at"] = _iso(self.now)
+        if unknown:
+            self._log(
+                f"FUNDING {position['alias']}: {unknown} verpasste Stundenabrechnung(en) "
+                "ohne beobachtbare Grenzrate; als unbekannt markiert"
+            )
 
     def _mark_price(self, symbol: str) -> float | None:
         signal = self.signals.get(symbol)
@@ -791,19 +645,12 @@ class PaperTrader:
             quality_cap = min(quality_cap, 25)
         if signal.execution_score < 55 or signal.volume_confirmation < 38:
             quality_cap = min(quality_cap, 20)
-        if signal.funding_hourly_pct is None:
-            quality_cap = min(quality_cap, int(self.config.get("paper_missing_funding_leverage_cap", 30)))
-        flow_available, flow_score, flow_age, _, flow_aligned, flow_opposed = _flow_values(signal, direction)
-        if flow_available:
-            jump_threshold = float(self.config.get("paper_flow_jump_threshold", -45.0))
-            run_threshold = float(self.config.get("paper_flow_run_threshold", 45.0))
-            if flow_score <= jump_threshold:
-                quality_cap = min(quality_cap, int(self.config.get("paper_flow_jump_leverage_cap", 20)))
-            elif flow_score >= run_threshold and flow_opposed:
-                opposed_cap = int(self.config.get("paper_flow_run_opposed_leverage_cap", 20))
-                if flow_age >= float(self.config.get("paper_flow_long_age_threshold", 50.0)):
-                    opposed_cap = min(opposed_cap, 15)
-                quality_cap = min(quality_cap, opposed_cap)
+        j_available, j_score, _ = _springer_values(signal)
+        if j_available and j_score >= float(self.config.get("paper_springer_extreme_score", 92.0)):
+            quality_cap = min(
+                quality_cap,
+                int(self.config.get("paper_springer_extreme_leverage_cap", 25)),
+            )
         maintenance = max(0.0, _f(getattr(signal, "maintenance_margin_pct", 0.0)) / 100.0)
         safety = stop_pct / 100.0 + float(self.config.get("paper_liquidation_buffer_pct", 0.25)) / 100.0 + maintenance
         liquidation_cap = int(math.floor(1.0 / safety)) if safety > 0 else maximum
@@ -938,18 +785,14 @@ class PaperTrader:
             pct *= 1.12
         elif quality < 62:
             pct *= 0.82
-        direction = ENTRY_STATES.get(signal.state, 0)
-        flow_available, flow_score, flow_age, _, flow_aligned, flow_opposed = _flow_values(signal, direction)
-        if flow_available:
-            jump_threshold = float(self.config.get("paper_flow_jump_threshold", -45.0))
-            run_threshold = float(self.config.get("paper_flow_run_threshold", 45.0))
-            if flow_score <= jump_threshold:
-                pct *= float(self.config.get("paper_flow_jump_margin_multiplier", 0.85))
-            elif flow_score >= run_threshold and flow_aligned:
-                maximum = float(self.config.get("paper_flow_run_aligned_margin_multiplier_max", 1.12))
-                pct *= 1.0 + (maximum - 1.0) * (flow_age / 99.0)
-            elif flow_score >= run_threshold and flow_opposed:
-                pct *= float(self.config.get("paper_flow_run_opposed_margin_multiplier", 0.78))
+        j_available, j_score, _ = _springer_values(signal)
+        if j_available:
+            if j_score >= float(self.config.get("paper_springer_extreme_score", 92.0)):
+                pct *= float(self.config.get("paper_springer_extreme_margin_multiplier", 0.88))
+            elif j_score >= float(self.config.get("paper_springer_high_score", 78.0)):
+                pct *= float(self.config.get("paper_springer_high_margin_multiplier", 1.08))
+            elif j_score < float(self.config.get("paper_springer_low_score", 28.0)):
+                pct *= float(self.config.get("paper_springer_low_margin_multiplier", 0.86))
         rank_factor = {1: 1.0, 2: 0.90, 3: 0.80, 4: 0.70}.get(rank, 0.60)
         equity, free, _ = self._equity()
         amount = equity * pct * rank_factor / 100.0
@@ -1033,20 +876,13 @@ class PaperTrader:
         roi_one = float(self.config.get("paper_profit_target_one_roi_pct", 3.0))
         roi_two = float(self.config.get("paper_profit_target_two_roi_pct", 8.0))
         if signal is not None:
-            available, flow_score, flow_age, _, aligned, opposed = _flow_values(signal, direction)
-            if available:
-                jump_threshold = float(self.config.get("paper_flow_jump_threshold", -45.0))
-                run_threshold = float(self.config.get("paper_flow_run_threshold", 45.0))
-                if flow_score <= jump_threshold:
-                    roi_one = max(2.0, roi_one * float(self.config.get("paper_flow_jump_target_one_multiplier", 0.80)))
-                    roi_two = max(roi_one + 1.0, roi_two * float(self.config.get("paper_flow_jump_target_two_multiplier", 0.70)))
-                elif flow_score >= run_threshold and aligned:
-                    age_fraction = flow_age / 99.0
-                    maximum = float(self.config.get("paper_flow_run_target_two_max_roi_pct", 10.0))
-                    roi_two = min(maximum, roi_two + (maximum - roi_two) * age_fraction)
-                elif flow_score >= run_threshold and opposed:
+            j_available, j_score, _ = _springer_values(signal)
+            if j_available:
+                if j_score >= float(self.config.get("paper_springer_extreme_score", 92.0)):
                     roi_one = max(2.0, roi_one * 0.90)
-                    roi_two = max(roi_one + 1.0, roi_two * float(self.config.get("paper_flow_run_opposed_target_two_multiplier", 0.75)))
+                    roi_two = max(roi_one + 1.0, roi_two * 0.90)
+                elif j_score >= float(self.config.get("paper_springer_high_score", 78.0)):
+                    roi_two = min(10.0, roi_two * 1.10)
         target_one_move = cost + roi_one / lev
         target_two_move = max(cost + roi_two / lev, target_one_move * 1.25)
         target_one = entry * (1.0 + sign * target_one_move / 100.0)
@@ -1182,9 +1018,10 @@ class PaperTrader:
             "entry_price": entry,
             "opened_at": _iso(self.now),
             "funding_updated_at": _iso(self.now),
+            "last_funding_settlement_ms": int(self.now.timestamp() * 1000) // 3_600_000 * 3_600_000,
             "last_funding_hourly_pct": float(signal.funding_hourly_pct),
-            "funding_estimated_hours": 0.0,
-            "funding_unknown_hours": 0.0,
+            "funding_observed_settlements": 0,
+            "funding_unknown_settlements": 0,
             "last_mark_price": float(entry),
             "last_mark_at": _iso(self.now),
             "last_candle_ms": int(getattr(signal, "candle_timestamp_ms", 0) or 0),
@@ -1202,6 +1039,7 @@ class PaperTrader:
             "realized_pnl_usd": 0.0,
             "taker_fee_pct": taker_fee_pct,
             "risk_usd": actual_risk,
+            "risk_committed_usd": actual_risk,
             "entry_roundtrip_cost_pct": actual_roundtrip_cost,
             "entry_readiness": float(signal.trade_readiness),
             "entry_confidence": float(signal.confidence),
@@ -1255,10 +1093,12 @@ class PaperTrader:
                 "extremity_return_1d": getattr(signal, "extremity_return_1d", None),
                 "extremity_return_3d": getattr(signal, "extremity_return_3d", None),
                 "extremity_return_7d": getattr(signal, "extremity_return_7d", None),
-                "flow_available": bool(getattr(signal, "flow_available", False)),
-                "flow_score": float(getattr(signal, "flow_score", 0.0)),
-                "flow_age_score": float(getattr(signal, "flow_age_score", 0.0)),
-                "flow_direction": int(_f(getattr(signal, "flow_direction", 0.0))),
+                "springer_class": str(getattr(signal, "springer_class", "") or ""),
+                "springer_available": bool(getattr(signal, "springer_available", False)),
+                "springer_score": float(getattr(signal, "springer_score", 0.0)),
+                "springer_reliability": float(getattr(signal, "springer_reliability", 0.0)),
+                "event_score_available": bool(getattr(signal, "event_score_available", True)),
+                "event_source_coverage": float(getattr(signal, "event_source_coverage", 1.0)),
                 "technical_stop_price": getattr(signal, "technical_stop_price", None),
                 "technical_stop_pct": getattr(signal, "technical_stop_pct", None),
                 "reversal_structural_reclaim": bool(getattr(_setup(signal), "structural_reclaim", False)),
@@ -1271,6 +1111,7 @@ class PaperTrader:
                 "leverage": int(leverage),
                 "margin_usd": float(margin),
                 "risk_usd": float(actual_risk),
+                "risk_committed_usd": float(actual_risk),
                 "probe_entry": signal.state in PROBE_STATES | SCOUT_STATES,
                 "symbol": symbol,
                 "rank": int(rank),
@@ -1408,12 +1249,16 @@ class PaperTrader:
         entry_features.setdefault("confidence", _f(position.get("entry_confidence")))
         entry_features.setdefault("leverage", int(position.get("leverage", 0)))
         entry_features.setdefault("risk_usd", _f(position.get("risk_usd")))
+        entry_features["risk_committed_usd"] = max(
+            _f(entry_features.get("risk_committed_usd")),
+            _f(position.get("risk_committed_usd")),
+        )
         entry_features.setdefault("probe_entry", bool(position.get("probe_entry", False)))
-        funding_estimated_hours = _f(position.get("funding_estimated_hours"))
-        funding_unknown_hours = _f(position.get("funding_unknown_hours"))
-        # Unknown funding makes the final net P/L incomplete. Keep the trade in
-        # the ledger, but do not treat it as clean optimizer evidence.
-        if funding_unknown_hours > 1e-9:
+        funding_observed_settlements = int(position.get("funding_observed_settlements", 0) or 0)
+        funding_unknown_settlements = int(position.get("funding_unknown_settlements", 0) or 0)
+        # Unknown settlement rates make the final net P/L incomplete. Keep the
+        # trade in the ledger, but exclude it from parameter evidence.
+        if funding_unknown_settlements > 0:
             entry_features["optimizer_compatible"] = False
         close_details = {
             "entry_price": entry,
@@ -1423,8 +1268,8 @@ class PaperTrader:
             "entry_fee_usd": entry_fee,
             "exit_fee_usd": exit_fee,
             "funding_usd": funding,
-            "funding_estimated_hours": funding_estimated_hours,
-            "funding_unknown_hours": funding_unknown_hours,
+            "funding_observed_settlements": funding_observed_settlements,
+            "funding_unknown_settlements": funding_unknown_settlements,
             "raw_net_pnl_usd": raw_net,
             "trade_net_pnl_usd": trade_net_pnl,
             "isolated_loss_capped": loss_capped,
@@ -1580,19 +1425,14 @@ class PaperTrader:
                 self._log(f"HOLD {signal.alias}: entgegengesetztes TRY bereits berücksichtigt")
                 return True
             pct = max(10.0, min(100.0, float(self.config.get("paper_opposite_try_reduce_pct", 50))))
-            available, flow_score, flow_age, flow_direction, aligned_old, _ = _flow_values(signal, int(position["direction"]))
-            if available:
-                run_threshold = float(self.config.get("paper_flow_run_threshold", 45.0))
-                jump_threshold = float(self.config.get("paper_flow_jump_threshold", -45.0))
-                old_enough = flow_age >= float(self.config.get("paper_flow_long_age_threshold", 50.0))
-                # AGE distinguishes a genuinely durable run from a merely clean
-                # new impulse. Only an old clean path earns the smaller TRY cut.
-                if flow_score >= run_threshold and aligned_old and old_enough:
-                    pct = float(self.config.get("paper_flow_try_reduce_durable_pct", 35.0))
-                elif flow_score >= run_threshold and flow_direction == new_direction and old_enough:
-                    pct = float(self.config.get("paper_flow_try_reduce_against_pct", 65.0))
-                elif flow_score <= jump_threshold:
-                    pct = float(self.config.get("paper_flow_try_reduce_jumpy_pct", 60.0))
+            j_available, j_score, _ = _springer_values(signal)
+            if j_available:
+                if j_score >= float(self.config.get("paper_springer_extreme_score", 92.0)):
+                    pct = max(pct, 65.0)
+                elif j_score >= float(self.config.get("paper_springer_high_score", 78.0)):
+                    pct = max(pct, 55.0)
+                elif j_score < float(self.config.get("paper_springer_low_score", 28.0)):
+                    pct = min(pct, 45.0)
             old_margin = _f(position["margin_usd"])
             close_margin = max(1.0, old_margin * pct / 100.0)
             close_margin = min(old_margin, close_margin)
@@ -1659,34 +1499,30 @@ class PaperTrader:
             "T": int(self.config.get("paper_trend_max_hold_minutes", 60)),
             "W": int(self.config.get("paper_reversal_max_hold_minutes", 40)),
         }.get(str(position.get("setup")), 45)
-        available, flow_score, flow_age, _, aligned, opposed = _flow_values(signal, int(position.get("direction", 0)))
+        available, score, _ = _springer_values(signal)
         if not available:
             return base
-        jump_threshold = float(self.config.get("paper_flow_jump_threshold", -45.0))
-        run_threshold = float(self.config.get("paper_flow_run_threshold", 45.0))
-        multiplier = 1.0
-        if flow_score <= jump_threshold:
-            multiplier = float(self.config.get("paper_flow_jump_hold_multiplier", 0.65))
-        elif flow_score >= run_threshold and aligned:
-            maximum = float(self.config.get("paper_flow_run_hold_multiplier_max", 2.25))
-            multiplier = 1.0 + (maximum - 1.0) * (flow_age / 99.0)
-        elif flow_score >= run_threshold and opposed:
-            multiplier = float(self.config.get("paper_flow_run_opposed_hold_multiplier", 0.60))
-        return max(10, min(240, int(round(base * multiplier))))
+        if score >= float(self.config.get("paper_springer_extreme_score", 92.0)):
+            multiplier = float(self.config.get("paper_springer_extreme_hold_multiplier", 0.65))
+        elif score >= float(self.config.get("paper_springer_high_score", 78.0)):
+            multiplier = float(self.config.get("paper_springer_high_hold_multiplier", 0.82))
+        elif score < float(self.config.get("paper_springer_low_score", 28.0)):
+            multiplier = 1.10
+        else:
+            multiplier = 1.0
+        return max(10, min(180, int(round(base * multiplier))))
 
     def _degrade_limit(self, position: Mapping[str, Any], signal: Any) -> int:
         base = max(2, int(self.config.get("paper_exit_degrade_runs", 7)))
-        available, flow_score, flow_age, _, aligned, opposed = _flow_values(signal, int(position.get("direction", 0)))
+        available, score, _ = _springer_values(signal)
         if not available:
             return base
-        jump_threshold = float(self.config.get("paper_flow_jump_threshold", -45.0))
-        run_threshold = float(self.config.get("paper_flow_run_threshold", 45.0))
-        if flow_score <= jump_threshold:
+        if score >= float(self.config.get("paper_springer_extreme_score", 92.0)):
             return max(3, base - 2)
-        if flow_score >= run_threshold and aligned:
-            return min(15, base + int(round(3.0 * flow_age / 99.0)))
-        if flow_score >= run_threshold and opposed:
-            return max(2, base - 3)
+        if score >= float(self.config.get("paper_springer_high_score", 78.0)):
+            return max(3, base - 1)
+        if score < float(self.config.get("paper_springer_low_score", 28.0)):
+            return min(12, base + 1)
         return base
 
     def _max_hold_status(
@@ -1874,6 +1710,11 @@ class PaperTrader:
         position["entry_state"] = signal.state
         position["probe_entry"] = new_tier < 3
         position["risk_usd"] = round(_f(position.get("risk_usd")) + added_risk, 10)
+        position["risk_committed_usd"] = round(_f(position.get("risk_committed_usd")) + added_risk, 10)
+        features = position.get("entry_features")
+        if isinstance(features, dict):
+            features["risk_committed_usd"] = position["risk_committed_usd"]
+            features["scale_count"] = int(position.get("scale_count", 0))
         reason = "Signalstufe erhöht" if upgrade else "erneute starke Bestätigung"
         action = PaperAction(
             symbol=signal.symbol, alias=signal.alias, kind="OPEN",
@@ -1919,7 +1760,7 @@ class PaperTrader:
         for symbol, position in list((self.state.get("positions") or {}).items()):
             reason: str | None = None
             if symbol not in allowed_symbols:
-                reason = "Symbol nicht im v6.1.0-Kandidatenpool"
+                reason = "Symbol nicht im v7.0.0-Kandidatenpool"
             if reason is None:
                 continue
             signal = self.signals.get(symbol)

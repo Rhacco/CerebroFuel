@@ -1,5 +1,5 @@
-# r5
-"""Crypto Signal Monitor v6.1.0 — Lighter pool with incident protection."""
+# r1
+"""Crypto Signal Monitor v7.0.0 — unified J/E, events and shock protection."""
 from __future__ import annotations
 
 import argparse
@@ -58,6 +58,7 @@ def main() -> int:
     report, payload = monitor.run(
         event_marks=event_snapshot.marks,
         event_display_codes=event_plan.codes,
+        event_source_health=event_snapshot.source_health,
         incident_state_path=output / "incident_state.json",
         signal_transition_state_path=output / "signal_transition_state.json",
         signal_streak_state_path=output / "signal_streak_state.json",
@@ -126,7 +127,7 @@ def main() -> int:
         send_discord(
             webhook,
             report,
-            username=str(config.get("discord_username", "CF v6.1.0")),
+            username=str(config.get("discord_username", "CF v7.0.0")),
             avatar_url=str(config.get("discord_avatar_url", "")).strip(),
         )
         mark_event_displayed(
@@ -143,7 +144,7 @@ def main() -> int:
             send_discord(
                 webhook,
                 parameter_alert_text,
-                username=str(config.get("discord_username", "CF v6.1.0")),
+                username=str(config.get("discord_username", "CF v7.0.0")),
                 avatar_url=str(config.get("discord_avatar_url", "")).strip(),
             )
         if parameter_review is not None and (not parameter_review.get("alert") or parameter_alert_text):

@@ -1,5 +1,5 @@
-# r5
-"""Strict restore/checkpoint store for the independent v6.1.0 paper state."""
+# r1
+"""Strict restore/checkpoint store for the independent v7.0.0 paper state."""
 from __future__ import annotations
 
 import argparse
@@ -15,12 +15,12 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 API = "https://api.github.com"
-BRANCH = "paper-state-v610-r2"
-REMOTE_FILE = "paper_state_v610_r2.json"
-APP_VERSION = "6.1.0"
-PACKAGE_REVISION = "r5"
-STATE_SCHEMA = 6
-COMPATIBLE_PACKAGE_REVISIONS = {"r2", "r3", "r4", PACKAGE_REVISION}
+BRANCH = "paper-state-v700-r1"
+REMOTE_FILE = "paper_state_v700_r1.json"
+APP_VERSION = "7.0.0"
+PACKAGE_REVISION = "r1"
+STATE_SCHEMA = 7
+COMPATIBLE_PACKAGE_REVISIONS = {PACKAGE_REVISION}
 
 
 class GitHubStateStore:
@@ -39,7 +39,7 @@ class GitHubStateStore:
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json",
-            "User-Agent": "cf-paper-state/6.1.0",
+            "User-Agent": "cf-paper-state/7.0.0",
             "X-GitHub-Api-Version": "2022-11-28",
         })
         try:
@@ -74,7 +74,7 @@ def _validate_state(raw: Any) -> dict[str, Any]:
     if schema != STATE_SCHEMA:
         raise RuntimeError("Paper-State-Schema ist inkompatibel")
     if raw.get("app_version") != APP_VERSION or raw.get("package_revision") not in COMPATIBLE_PACKAGE_REVISIONS:
-        raise RuntimeError("Paper-State gehört nicht zu einer kompatiblen v6.1.0-Revision")
+        raise RuntimeError("Paper-State gehört nicht zur aktuellen v7.0.0-Revision")
     if not isinstance(raw.get("positions"), dict):
         raise RuntimeError("Paper-State-Positionen sind ungültig")
     try:
@@ -108,7 +108,7 @@ def restore(path: Path, store: GitHubStateStore) -> int:
             _read_state(path)
         except RuntimeError as exc:
             path.unlink(missing_ok=True)
-            print(f"Warnung: unbrauchbarer v6.1.0-Paper-State wurde verworfen ({exc}).", file=sys.stderr)
+            print(f"Warnung: unbrauchbarer v7.0.0-Paper-State wurde verworfen ({exc}).", file=sys.stderr)
         else:
             print("Paper-State aus dem Laufzeit-Cache geladen.")
             return 0
@@ -117,7 +117,7 @@ def restore(path: Path, store: GitHubStateStore) -> int:
         return 0
     remote = store.remote_file()
     if remote is None:
-        print("Noch kein v6.1.0-Paper-Checkpoint vorhanden.")
+        print("Noch kein v7.0.0-Paper-Checkpoint vorhanden.")
         return 0
     try:
         state = _validate_state(json.loads(base64.b64decode(str(remote["content"])).decode("utf-8")))

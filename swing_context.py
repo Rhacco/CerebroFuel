@@ -1,7 +1,7 @@
-# r5
-"""Live speed, activity, two-sided movement and BTC pinning context for CF v6.1.0.
+# r1
+"""Live speed, activity, two-sided movement and BTC pinning context for CF v7.0.0.
 
-The v5.5 signal state remains authoritative. This layer only adds timing context:
+The core signal state remains authoritative. This layer only adds timing context:
 - SPD measures how quickly price is moving now.
 - ACT measures how actively the Lighter market is turning over now.
 - two_sided_score measures recent meaningful movement in both directions.
@@ -125,7 +125,7 @@ def calculate_swing_metrics(
 ) -> SwingResult:
     """Measure live speed/activity and diagnostic two-sided movement.
 
-    The result does not create or promote a trading state. v5.5-style
+    The result does not create or promote a trading state.
     NEAR/TRY/NOW remains authoritative; these metrics only confirm, rank and
     size those states.
     """
@@ -401,7 +401,7 @@ def calculate_pin(
         # the midpoint. sqrt keeps a strong, recently-held level visible while BTC
         # is still reasonably near it, without allowing a stale pin at midpoint.
         current_factor = math.sqrt(max(0.0, current_affinity) / 100.0)
-        score = _clamp(raw_score * current_factor * math.sqrt(coverage))
+        score = _clamp(raw_score * current_factor * math.sqrt(coverage), 0.0, 99.0)
 
         result = PinResult(
             available=True,

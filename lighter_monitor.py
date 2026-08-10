@@ -1,5 +1,5 @@
-# r5
-"""Lighter-native v5.5-style signal engine with compact flow context for CF v6.1.0."""
+# r1
+"""Lighter-native signal engine with J/E context for CF v7.0.0."""
 from __future__ import annotations
 
 import json
@@ -22,14 +22,14 @@ from urllib.request import Request, urlopen
 from regime_context import calculate_regimes
 from extremity_context import calculate_extremity, extremity_color
 from swing_context import calculate_pin, calculate_swing_metrics
-from flow_context import calculate_flow_metrics
+from springer_context import calculate_springer_strength
 from incident_context import IncidentSnapshot, detect_spontaneous_incidents
 from signal_streak_state import apply_signal_streaks
 from signal_transition_guard import apply_signal_transition_guard
 from signal_evaluator import update_signal_evaluation
 
-APP_VERSION = "6.1.0"
-PACKAGE_REVISION = "r5"
+APP_VERSION = "7.0.0"
+PACKAGE_REVISION = "r1"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 GLOBAL_BTC_EVENT_KINDS = {
@@ -53,7 +53,7 @@ STATE_TIER = {
     "INVALID_DATA": 0,
 }
 
-DAILY_CACHE_SCHEMA = "daily-candles-v610-r3"
+DAILY_CACHE_SCHEMA = "daily-candles-v700-r1"
 COMPATIBLE_CACHE_REVISIONS = {PACKAGE_REVISION}
 FUNDING_NORMALIZATION_HOURS = 8.0
 
@@ -112,7 +112,7 @@ def _load_daily_candle_cache(
         )
         # A fallback may be stale in fetch time, but never stale in market-day
         # coverage. Missing yesterday is safer treated as unavailable than as a
-        # seemingly current multi-day AGE/regime input.
+        # seemingly current multi-day regime/Springer input.
         if age_seconds <= max_stale_hours * 3600 and has_latest_completed_day:
             fallback[symbol] = rows
             timestamps[symbol] = updated.isoformat()
@@ -312,13 +312,12 @@ class Signal:
     swing_volume_pulse_ratio: float = 0.0
     live_activity_score: float = 0.0
     two_sided_score: float = 0.0
-    flow_available: bool = False
-    flow_score: float = 0.0
-    flow_raw_efficiency_ratio: float = 0.0
-    flow_age_available: bool = False
-    flow_age_score: float = 0.0
-    flow_regime: str = "UNKNOWN"
-    flow_direction: int = 0
+    springer_class: str = ""
+    springer_available: bool = False
+    springer_score: float = 0.0
+    springer_reliability: float = 0.0
+    springer_daily_range_pct: float = 0.0
+    springer_intraday_impulse_pct: float = 0.0
     btc_pin_available: bool = False
     btc_pin_level: float = 0.0
     btc_pin_score: float = 0.0
@@ -343,6 +342,8 @@ class Signal:
     event_title: str = ""
     event_priority: float = 0.0
     event_risk: float = 0.0
+    event_score_available: bool = True
+    event_source_coverage: float = 1.0
     event_block_new: bool = False
     event_leverage_cap: int | None = None
     event_source_name: str = ""
@@ -351,6 +352,9 @@ class Signal:
     event_is_global: bool = False
     chase_warning: bool = False
     chase_blocked: bool = False
+    base_trade_readiness: float = 0.0
+    state_limited_by_setup: bool = False
+    state_limited_by_guard: bool = False
     windows: dict[int, Window] = field(default_factory=dict)
     early: Setup = field(default_factory=lambda: Setup("EARLY"))
     trend: Setup = field(default_factory=lambda: Setup("TREND"))
@@ -1472,21 +1476,18 @@ def _signed_extremity_token(signal: Signal) -> str:
     return f"{signal.alias}{sign}{value:02d}"
 
 
-def _flow_token(signal: Signal) -> str:
-    if not signal.flow_available:
-        return "ER?00"
-    value = max(-99, min(99, int(round(float(signal.flow_score)))))
-    # Keep a constant five-character token. Exact neutral follows the requested
-    # ER-00 convention; positive values mean runable, negative values jumpy.
-    sign = "+" if value > 0 else "-"
-    return f"ER{sign}{abs(value):02d}"
+def _springer_token(signal: Signal) -> str:
+    if not signal.springer_available:
+        return "J??"
+    value = max(0, min(99, int(round(float(signal.springer_score)))))
+    return f"J{value:02d}"
 
 
-def _flow_age_token(signal: Signal) -> str:
-    if not signal.flow_age_available:
-        return "AGE??"
-    value = max(0, min(99, int(round(float(signal.flow_age_score)))))
-    return f"AGE{value:02d}"
+def _event_risk_token(signal: Signal, config: Mapping[str, Any]) -> str:
+    if not signal.event_score_available:
+        return str(config.get("event_score_unknown_code", "E??"))
+    value = max(0, min(99, int(round(float(signal.event_risk)))))
+    return f"E{value:02d}"
 
 
 def _pin_token(signal: Signal) -> str:
@@ -1665,23 +1666,20 @@ WARNING_DISPLAY_PRIORITY = {
     "RS!": 78,  # relative reversal weakness
     "R!": 72,   # opposing multi-week regime
     "B!": 68,   # weak BTC context
+    "SRC!": 84, # event/news source coverage incomplete
     "V!": 60,   # weak/uneven tape
 }
 
 
-HEADER_HIGH_IMPACT_EVENT_KINDS = {
-    "SECURITY",
-    "NETWORK",
-    "MARKET_SHOCK",
-    "UNLOCK",
-    "SUPPLY",
-    "ETF",
-    "ETF_FLOW",
+HEADER_OBSERVATION_EVENT_KINDS = {
+    "SECURITY", "NETWORK", "MARKET_SHOCK", "UNLOCK", "SUPPLY",
+    "ETF", "ETF_FLOW", "EXPIRY", "UPGRADE", "MAINTENANCE",
+    "GOVERNANCE", "NEWS",
 }
 
 
-def _header_high_impact_event_code(item: Signal) -> str:
-    """Return at most one genuinely price-moving coin event for the compact top row."""
+def _header_observation_event_code(item: Signal, config: Mapping[str, Any]) -> str:
+    """Return one verified event/news code worth watching in the compact top row."""
     code = str(item.event_display_code or "")
     if not code:
         return ""
@@ -1705,6 +1703,11 @@ def _header_high_impact_event_code(item: Signal) -> str:
         return unlock_code
 
     if kind in {"UNLOCK", "SUPPLY", "ETF", "ETF_FLOW"}:
+        return code
+    if kind in HEADER_OBSERVATION_EVENT_KINDS and (
+        float(item.event_risk) >= float(config.get("header_observation_min_event_risk", 25.0))
+        or float(item.event_priority) >= float(config.get("header_observation_min_event_priority", 65.0))
+    ):
         return code
     return ""
 
@@ -1731,6 +1734,8 @@ def _warning_codes(item: Signal, config: Mapping[str, Any]) -> list[str]:
         result.append("RS!")
     if item.selected_setup == "EARLY" and item.chase_warning:
         result.append("CH!")
+    if item.event_source_coverage < float(config.get("event_source_min_coverage", 0.75)):
+        result.append("SRC!")
     funding_watch = float(config.get("funding_watch_hourly_pct", 0.015))
     if item.funding_hourly_pct is None:
         result.append("F!")
@@ -1741,6 +1746,15 @@ def _warning_codes(item: Signal, config: Mapping[str, Any]) -> list[str]:
     ordinary = [code for code in unique if code != event_code]
     ordinary.sort(key=lambda code: WARNING_DISPLAY_PRIORITY.get(code, 50), reverse=True)
     return ([event_code] if event_code else []) + ordinary
+
+
+def _header_observation_warnings(item: Signal, config: Mapping[str, Any]) -> list[str]:
+    """Only compact risks useful for observation; detailed execution warnings stay below."""
+    if item.state == "INVALID_DATA":
+        return [_invalid_code(item)]
+    allowed = {"CH!", "R!", "SRC!", "F!", "RS!"}
+    event = str(item.event_display_code or "")
+    return [code for code in _warning_codes(item, config) if code in allowed and code not in event][:2]
 
 
 class LighterMonitor:
@@ -1967,34 +1981,25 @@ class LighterMonitor:
             raise ValueError("swing_activity_lookback_minutes ist ungültig")
         if not 10 <= int(self.config.get("swing_two_sided_lookback_minutes", 20)) <= 40:
             raise ValueError("swing_two_sided_lookback_minutes ist ungültig")
-        if bool(self.config.get("flow_enabled", True)):
-            flow_scale = float(self.config.get("flow_score_scale", 2.4))
-            flow_run = float(self.config.get("flow_run_threshold", 20.0))
-            flow_jump = float(self.config.get("flow_jump_threshold", -20.0))
-            flow_age_run = float(self.config.get("flow_age_run_match_threshold", 12.0))
-            flow_age_jump = float(self.config.get("flow_age_jump_match_threshold", -12.0))
-            flow_age_jump_strength = float(self.config.get("flow_age_jump_strength_min", 0.18))
-            flow_age_jump_efficiency = float(self.config.get("flow_age_jump_efficiency_max", 0.45))
-            flow_age_mixed = float(self.config.get("flow_age_mixed_band", 28.0))
-            flow_age_consistency = float(self.config.get("flow_age_daily_consistency_min", 0.62))
-            if not 0.5 <= flow_scale <= 5.0:
-                raise ValueError("flow_score_scale ist ungültig")
-            if not 0 < flow_run <= 80 or not -80 <= flow_jump < 0:
-                raise ValueError("Flow-Regime-Schwellen sind ungültig")
-            if not 0 <= flow_age_run <= flow_run or not flow_jump <= flow_age_jump <= 0:
-                raise ValueError("Flow-AGE-Schwellen sind ungültig")
-            if not 0.05 <= flow_age_jump_strength <= 0.60:
-                raise ValueError("flow_age_jump_strength_min ist ungültig")
-            if not 0.10 <= flow_age_jump_efficiency <= 0.70:
-                raise ValueError("flow_age_jump_efficiency_max ist ungültig")
-            if not 5 <= flow_age_mixed <= 50:
-                raise ValueError("flow_age_mixed_band ist ungültig")
-            if not 0.50 <= flow_age_consistency <= 0.90:
-                raise ValueError("flow_age_daily_consistency_min ist ungültig")
-            if int(self.config.get("candle_count", 360)) < 301:
-                raise ValueError("Flow benötigt mindestens 301 1m-Kerzen")
-            if int((self.config.get("regime") or {}).get("daily_candle_count", 40)) < 31:
-                raise ValueError("Flow-AGE benötigt mindestens 31 Tageskerzen")
+        if bool(self.config.get("springer_enabled", True)):
+            springer_minutes = int(self.config.get("springer_minute_lookback_minutes", 300))
+            springer_min = int(self.config.get("springer_min_contiguous_minutes", 180))
+            springer_days = int(self.config.get("springer_daily_lookback_days", 30))
+            if not 180 <= springer_minutes <= 480:
+                raise ValueError("springer_minute_lookback_minutes ist ungültig")
+            if not 120 <= springer_min <= springer_minutes:
+                raise ValueError("springer_min_contiguous_minutes ist ungültig")
+            if not 10 <= springer_days <= 30:
+                raise ValueError("springer_daily_lookback_days ist ungültig")
+            if int(self.config.get("candle_count", 360)) < springer_minutes + 1:
+                raise ValueError("candle_count reicht für J nicht aus")
+            if int((self.config.get("regime") or {}).get("daily_candle_count", 40)) < springer_days:
+                raise ValueError("daily_candle_count reicht für J nicht aus")
+            classes = self.config.get("springer_classes") or {}
+            class_symbols = [str(symbol).upper() for values in classes.values() for symbol in (values or [])]
+            non_btc = [symbol for symbol in symbols if symbol != "BTC"]
+            if set(class_symbols) != set(non_btc) or len(class_symbols) != len(set(class_symbols)):
+                raise ValueError("springer_classes muss jeden Altcoin exakt einmal enthalten")
         pin_lookback = int(self.config.get("btc_pin_lookback_minutes", 60))
         pin_step = float(self.config.get("btc_pin_level_step_usd", 1000.0))
         pin_return_band = float(self.config.get("btc_pin_return_band_step_fraction", 0.18))
@@ -2022,6 +2027,12 @@ class LighterMonitor:
         request_limit = int(self.config.get("lighter_request_limit_per_minute", 54))
         if not 10 <= request_limit <= 60:
             raise ValueError("lighter_request_limit_per_minute muss zwischen 10 und 60 liegen")
+        daily_batch = int(self.config.get("daily_candle_refresh_batch_size", 4))
+        if not 1 <= daily_batch <= 8:
+            raise ValueError("daily_candle_refresh_batch_size ist ungültig")
+        worst_normal_requests = 2 + 2 * len(symbols) + daily_batch
+        if worst_normal_requests > request_limit:
+            raise ValueError("Lighter-Requestbudget reicht für Pool plus Daily-Refresh nicht aus")
         breadth_symbols = [str(value).upper() for value in self.config.get("btc_breadth_symbols", [])]
         if len(breadth_symbols) != len(set(breadth_symbols)):
             raise ValueError("btc_breadth_symbols muss eindeutig sein")
@@ -2486,6 +2497,18 @@ class LighterMonitor:
             signal.reasons.append("Setup abgelaufen/aussteigen prüfen")
         if funding_magnitude > funding_watch and not funding_block:
             signal.reasons.append("Funding gegen Richtung")
+        signal.base_trade_readiness = float(signal.trade_readiness)
+        raw_tier = (
+            3 if signal.trade_readiness >= immediate_threshold else
+            2 if signal.trade_readiness >= strong_threshold else
+            1 if signal.trade_readiness >= watch_threshold else 0
+        )
+        actual_tier = {
+            "BUY": 3, "SELL": 3,
+            "STRONG_LONG": 2, "STRONG_SHORT": 2,
+            "WATCH_LONG": 1, "WATCH_SHORT": 1,
+        }.get(signal.state, 0)
+        signal.state_limited_by_setup = bool(not hard_block and actual_tier < raw_tier)
         return signal
 
     def _apply_btc_context(self, signals: list[Signal]) -> None:
@@ -2827,7 +2850,7 @@ class LighterMonitor:
         signals: list[Signal],
         snapshots: Mapping[str, Mapping[str, Any]],
     ) -> dict[str, Any]:
-        """Add live timing/activity plus BTC round-level pinning without changing v5.5 signal states."""
+        """Add live timing/activity plus BTC round-level pinning without creating direction."""
         payload: dict[str, Any] = {}
         for item in signals:
             rows = list((snapshots.get(item.symbol) or {}).get("candles") or [])
@@ -2861,28 +2884,34 @@ class LighterMonitor:
             payload[item.symbol] = row
         return payload
 
-    def _apply_flow_context(
+    def _apply_springer_context(
         self,
         signals: list[Signal],
         snapshots: Mapping[str, Mapping[str, Any]],
         daily_candles: Mapping[str, list[Mapping[str, Any]]],
     ) -> dict[str, Any]:
-        """Describe current path structure without changing v5.5-derived states."""
+        """Calculate direction-free recurring movement strength J00..J99."""
         payload: dict[str, Any] = {}
+        class_map = {
+            str(symbol).upper(): str(group).upper()
+            for group, values in (self.config.get("springer_classes") or {}).items()
+            for symbol in (values or [])
+        }
         for item in signals:
-            result = calculate_flow_metrics(
+            item.springer_class = class_map.get(item.symbol, "")
+            result = calculate_springer_strength(
                 minute_candles=list((snapshots.get(item.symbol) or {}).get("candles") or []),
                 daily_candles=list(daily_candles.get(item.symbol) or []),
                 config=self.config,
             )
-            item.flow_available = result.available
-            item.flow_score = result.score
-            item.flow_raw_efficiency_ratio = result.raw_efficiency_ratio
-            item.flow_age_available = result.age_available
-            item.flow_age_score = result.age_score
-            item.flow_regime = result.regime
-            item.flow_direction = result.direction
-            payload[item.symbol] = result.to_dict()
+            item.springer_available = result.available
+            item.springer_score = result.score
+            item.springer_reliability = result.reliability
+            item.springer_daily_range_pct = result.daily_range_pct
+            item.springer_intraday_impulse_pct = result.intraday_impulse_pct
+            row = result.to_dict()
+            row["class"] = item.springer_class
+            payload[item.symbol] = row
         return payload
 
     def _apply_event_context(
@@ -2993,6 +3022,27 @@ class LighterMonitor:
             else:
                 item.reasons.append(f"kritisches Ereignis: {reason_code}")
 
+    def _apply_event_source_health(
+        self,
+        signals: list[Signal],
+        source_health: Mapping[str, Any] | None,
+    ) -> None:
+        """Attach per-symbol news/event coverage without inventing an E score."""
+        health = source_health if isinstance(source_health, Mapping) else {}
+        by_symbol = health.get("by_symbol") if isinstance(health.get("by_symbol"), Mapping) else {}
+        minimum = float(self.config.get("event_source_min_coverage", 0.75))
+        for item in signals:
+            row = by_symbol.get(item.symbol) if isinstance(by_symbol, Mapping) else None
+            if isinstance(row, Mapping):
+                coverage = _clamp(_f(row.get("coverage"), 0.0), 0.0, 1.0)
+            else:
+                coverage = 0.0
+            item.event_source_coverage = coverage
+            # A currently verified mark has a known risk even if another source
+            # is degraded. Otherwise zero risk is only meaningful with adequate
+            # source coverage; degraded coverage displays E?? plus SRC!.
+            item.event_score_available = bool(item.event_code) or coverage >= minimum
+
     @staticmethod
     def _rank(signals: list[Signal]) -> list[Signal]:
         for item in signals:
@@ -3004,12 +3054,14 @@ class LighterMonitor:
                 "NO_TRADE": -8.0, "INVALID_DATA": -30.0,
             }.get(item.state, 0.0)
             late_penalty = 40.0 if setup.exit_hint or setup.phase in {"late", "invalidated"} else 0.0
+            springer = float(item.springer_score) if item.springer_available else 50.0
             item.attention_score = _clamp(
-                item.trade_readiness * 0.34
-                + item.confidence * 0.18
-                + item.opportunity * 0.20
-                + setup.score * 0.18
-                + item.tape_quality * 0.10
+                item.trade_readiness * 0.31
+                + item.confidence * 0.17
+                + item.opportunity * 0.18
+                + setup.score * 0.17
+                + item.tape_quality * 0.09
+                + springer * 0.08
                 + state_bonus
                 - late_penalty
                 - (float(5.0) if item.selected_setup == "TREND" else 0.0)
@@ -3026,12 +3078,13 @@ class LighterMonitor:
         )
 
     def _summary_sort_key(self, item: Signal) -> tuple[float, float, float, float, str]:
-        """Rank the neutral top-row radar by live activity, not by trade action."""
+        """Rank the neutral top-row radar; every active 15m shock outranks normal radar activity."""
+        shock_bonus = 200.0 if item.event_kind == "MARKET_SHOCK" and item.event_block_new else 0.0
         return (
-            _radar_activity_score(item, self.config),
-            float(item.live_activity_score),
-            float(item.swing_speed_score),
+            shock_bonus + _radar_activity_score(item, self.config),
             abs(float(item.extremity_score)) if item.extremity_available else 0.0,
+            float(item.springer_score) if item.springer_available else 0.0,
+            float(item.live_activity_score),
             item.alias,
         )
 
@@ -3042,7 +3095,7 @@ class LighterMonitor:
     ) -> str | None:
         candidates = [
             item for item in signals
-            if item.symbol != "BTC" and _header_high_impact_event_code(item)
+            if item.symbol != "BTC" and _header_observation_event_code(item, self.config)
         ]
         if not candidates:
             return None
@@ -3121,7 +3174,7 @@ class LighterMonitor:
             item.symbol: (
                 str(item.event_display_code or "")
                 if item.symbol == anchor_symbol
-                else _header_high_impact_event_code(item)
+                else _header_observation_event_code(item, self.config)
             )
             for item in summary
         }
@@ -3129,7 +3182,10 @@ class LighterMonitor:
         # event/incident labels there; execution/data-quality warnings remain
         # active in the signal engine and detail rows but do not consume header
         # width.
-        warning_codes = {item.symbol: [] for item in summary}
+        warning_codes = {
+            item.symbol: _header_observation_warnings(item, self.config)
+            for item in summary
+        }
         critical_warnings = {"SEC!", "NET!", "SHK!"}
 
         max_len = int(self.config.get("discord_max_codepoints_per_line", 42))
@@ -3147,16 +3203,14 @@ class LighterMonitor:
             tokens: list[str] = []
             for item in summary:
                 event = event_codes.get(item.symbol, "")
+                warnings = "".join(warning_codes.get(item.symbol, []))
                 color = "⚫" if item.state == "INVALID_DATA" else extremity_color(item.extremity_score, item.extremity_available)
                 if item.symbol == anchor_symbol:
-                    # Pxx replaces the literal BTC alias in the top row. The
-                    # alternating BTC payload stays unchanged: macro/event on
-                    # event minutes, otherwise the compact four-digit price.
                     pin = _pin_token(item)
                     payload = event or _btc_price_code(item.live_price or item.price)
-                    tokens.append(f"{pin}{color}{payload}")
+                    tokens.append(f"{pin}{color}{payload}{warnings}")
                 else:
-                    tokens.append(f"{item.alias}{color}{event}")
+                    tokens.append(f"{item.alias}{color}{event}{warnings}")
             return " ".join(tokens)
 
         header = summary_line()
@@ -3193,7 +3247,7 @@ class LighterMonitor:
             # Broad data outages can repeat long DATA/STALE/GAP/BOOK/CND labels
             # across all radar slots. Keep BTC and the reserved event/incident
             # coin intact; redundant alt labels may be dropped exactly as in
-            # the robust v5.5 header fallback.
+            # the established compact header fallback.
             data_warnings = {"DATA!", "STALE!", "GAP!", "BOOK!", "CND!"}
             reserved = {anchor_symbol, str(priority_header_symbol or "").upper()}
             for item in summary:
@@ -3260,6 +3314,8 @@ class LighterMonitor:
         for item in ranked:
             if item.symbol == "BTC" or item.state == "INVALID_DATA":
                 continue
+            if item.event_kind == "MARKET_SHOCK" and item.event_block_new:
+                continue
             action = _action_code(item)
             setup = _selected_setup(item)
             valid_setup = setup.phase in {"ready", "strong", "forming"} and not setup.exit_hint
@@ -3267,7 +3323,7 @@ class LighterMonitor:
             if action in {"TRY", "NOW"}:
                 mandatory.append(item)
             elif action == "NEAR" and valid_setup:
-                # A genuine v5.5 NEAR is already actionable as a small scout.
+                # A genuine NEAR is already actionable as a small scout.
                 # Live timing confirms/ranks it but never hides it from the
                 # limited lower slots.
                 mandatory.append(item)
@@ -3279,8 +3335,9 @@ class LighterMonitor:
             ):
                 optional.append(item)
 
-        # v5.5-style selection, now with live timing as an extra tie-breaker.
-        alt_slots = max(0, maximum_details - (1 if btc is not None else 0))
+        # Action-tier-first selection with live timing as an extra tie-breaker.
+        btc_detail_allowed = btc is not None and not (btc.event_kind == "MARKET_SHOCK" and btc.event_block_new)
+        alt_slots = max(0, maximum_details - (1 if btc_detail_allowed else 0))
         chosen: list[Signal] = []
         seen: set[str] = set()
         for item in sorted(mandatory, key=action_quality, reverse=True):
@@ -3292,22 +3349,24 @@ class LighterMonitor:
         chosen = sorted(
             chosen,
             key=lambda item: (
-                _direction(item.direction) * float(item.trade_readiness),
-                _direction(item.direction) * float(item.confidence),
+                0 if _direction(item.direction) < 0 else (1 if _direction(item.direction) == 0 else 2),
+                -float(item.attention_score),
+                -float(item.trade_readiness),
+                -float(item.confidence),
                 item.alias,
             ),
         )
 
         def detail_line(item: Signal) -> str:
             if item.state == "INVALID_DATA":
-                return f"⚫? 05⚫20⚫60⚫ ER?00 AGE?? {item.alias}?00"
+                return f"⚫? 05⚫20⚫60⚫ J?? E?? {item.alias}?00"
             windows = "".join(
                 f"{minutes:02d}{_window_color(item.windows.get(minutes, Window(minutes)))}"
                 for minutes in DISPLAY_WINDOWS
             )
             core = (
-                f"{_detail_head(item)} {windows} {_flow_token(item)} "
-                f"{_flow_age_token(item)} {_signed_extremity_token(item)}"
+                f"{_detail_head(item)} {windows} {_springer_token(item)} "
+                f"{_event_risk_token(item, self.config)} {_signed_extremity_token(item)}"
             )
             event = "" if item.symbol == anchor_symbol else str(item.event_display_code or "")
             warnings = [code for code in _warning_codes(item, self.config) if not event or code not in event]
@@ -3328,7 +3387,7 @@ class LighterMonitor:
                 raise RuntimeError(f"Discord-Detailzeilenlimit überschritten: {item.symbol}")
             return line
 
-        if btc is not None:
+        if btc_detail_allowed and btc is not None:
             lines.append(detail_line(btc))
         for item in chosen:
             lines.append(detail_line(item))
@@ -3342,6 +3401,7 @@ class LighterMonitor:
         *,
         event_marks: Mapping[str, Any] | None = None,
         event_display_codes: Mapping[str, str] | None = None,
+        event_source_health: Mapping[str, Any] | None = None,
         incident_state_path: Path | None = None,
         signal_transition_state_path: Path | None = None,
         signal_streak_state_path: Path | None = None,
@@ -3386,6 +3446,16 @@ class LighterMonitor:
             max_stale_hours=max(1, int(self.config.get("daily_candle_cache_max_stale_hours", 6))),
         )
         refreshed_daily: set[str] = set()
+        daily_batch = max(1, int(self.config.get("daily_candle_refresh_batch_size", 4)))
+        def daily_priority(symbol: str) -> tuple[int, str]:
+            # Missing cache first, then the oldest known timestamp. This keeps
+            # cold-start bounded while guaranteeing every pool coin refreshes.
+            if symbol not in fallback_daily:
+                return (0, "")
+            return (1, str(daily_timestamps.get(symbol, "")))
+        refresh_daily_symbols = set(
+            sorted((symbol for symbol in markets if symbol not in fresh_daily), key=daily_priority)[:daily_batch]
+        )
         workers = min(8, max(1, int(self.config.get("parallel_requests", 6))))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {
@@ -3394,6 +3464,7 @@ class LighterMonitor:
                     row,
                     fresh_daily.get(symbol),
                     fallback_daily.get(symbol),
+                    symbol in refresh_daily_symbols,
                 ): symbol
                 for symbol, row in markets.items()
             }
@@ -3448,7 +3519,7 @@ class LighterMonitor:
         regime_payload = self._apply_regime_context(signals, snapshots, daily_candles, now)
         extremity_payload = self._apply_extremity_context(signals, snapshots, daily_candles)
         swing_payload = self._apply_swing_context(signals, snapshots)
-        flow_payload = self._apply_flow_context(signals, snapshots, daily_candles)
+        springer_payload = self._apply_springer_context(signals, snapshots, daily_candles)
         incident_snapshot = detect_spontaneous_incidents(
             self.config,
             signals=signals,
@@ -3475,6 +3546,10 @@ class LighterMonitor:
             }
         merged_display_codes.update(incident_snapshot.display_codes)
         self._apply_event_context(signals, merged_marks, merged_display_codes)
+        self._apply_event_source_health(signals, event_source_health)
+        watch_threshold = float(self.config.get("watch_trade_readiness", 51))
+        strong_threshold = float(self.config.get("strong_trade_readiness", 58))
+        immediate_threshold = float(self.config.get("immediate_trade_readiness", 69))
         # Normal project events share the reserved header slot instead of
         # permanently hiding one another. Acute incidents still override this
         # choice through incident_snapshot.header_symbol below.
@@ -3488,6 +3563,20 @@ class LighterMonitor:
                 config=self.config,
                 action_getter=_action_code,
             )
+        # Record the final gap between the numeric readiness tier and the
+        # actually permitted action only after every context/incident/flip guard
+        # has had a chance to downgrade the state. This is critical for later
+        # threshold replay: a high score that was safety-limited must not look
+        # like an ordinary threshold miss.
+        for item in signals:
+            expected_tier = (
+                3 if item.trade_readiness >= immediate_threshold else
+                2 if item.trade_readiness >= strong_threshold else
+                1 if item.trade_readiness >= watch_threshold else 0
+            )
+            actual_tier = {"NOW": 3, "TRY": 2, "NEAR": 1}.get(_action_code(item), 0)
+            item.state_limited_by_guard = bool(actual_tier < expected_tier)
+
         if signal_streak_state_path is not None:
             apply_signal_streaks(
                 signals,
@@ -3509,6 +3598,7 @@ class LighterMonitor:
                 state_path=signal_evaluation_state_path,
                 now=now,
                 action_getter=_action_code,
+                config=self.config,
             )
         self.last_incidents = incident_snapshot
         self.last_signals = self._rank(signals)
@@ -3518,7 +3608,11 @@ class LighterMonitor:
             now,
             priority_header_symbol=incident_snapshot.header_symbol or event_header_symbol,
         )
-        minimum_lines = int(self.config.get("minimum_detail_count", 1)) + 1
+        acute_shock = any(
+            item.event_kind == "MARKET_SHOCK" and item.event_block_new
+            for item in signals
+        )
+        minimum_lines = 1 if acute_shock else int(self.config.get("minimum_detail_count", 1)) + 1
         maximum_lines = int(self.config.get("maximum_detail_count", 4)) + 1
         if not minimum_lines <= len(report.splitlines()) <= maximum_lines:
             raise RuntimeError("Discord-Ausgabe hat unerwartete Zeilenzahl")
@@ -3531,7 +3625,7 @@ class LighterMonitor:
             "regime": regime_payload,
             "extremity": extremity_payload,
             "swing": swing_payload,
-            "flow": flow_payload,
+            "springer": springer_payload,
             "signal_transition": transition_payload,
             "signal_evaluation": evaluation_payload,
             "incidents": incident_snapshot.to_dict(),
@@ -3547,6 +3641,7 @@ class LighterMonitor:
         market: Mapping[str, Any],
         fresh_daily: list[Mapping[str, Any]] | None = None,
         fallback_daily: list[Mapping[str, Any]] | None = None,
+        refresh_daily: bool = True,
     ) -> tuple[list[Mapping[str, Any]], Mapping[str, Any], list[Mapping[str, Any]], bool]:
         market_id = int(market["market_id"])
         candle_count = int(self.config.get("candle_count", 360))
@@ -3555,6 +3650,8 @@ class LighterMonitor:
         book = self.client.book(market_id)
         if fresh_daily:
             return candles, book, fresh_daily[-daily_count:], False
+        if not refresh_daily:
+            return candles, book, (fallback_daily or [])[-daily_count:], False
         try:
             daily = self.client.daily_candles(market_id, count=daily_count)
             return candles, book, daily, bool(daily)

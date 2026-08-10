@@ -1,36 +1,37 @@
-<!-- r5 -->
-# Crypto Signal Monitor v6.1.0
+<!-- r1 -->
+# Crypto Signal Monitor v7.0.0
 
-## Anzeige
-Oben: drei aktuell aktivste Altcoins, Short → Long. Direkt am Coin bleiben nur hochrelevante Sonderlagen (Unlock, Security/Network/Schock, Supply/ETF). Rechts BTC kompakt als `Pxx` + Farbe + vierstelliger Kursrest bzw. Makro-/ETF-Hinweis.
+## Kernanzeige
+Oben stehen BTC plus die aktuell wichtigsten Radar-Coins. Beobachtungswürdige akute News/Warnungen werden möglichst direkt hinter der Coin-Farbe gezeigt. Ein bestätigter einseitiger 15m-Ausreißer wird unabhängig vom normalen Ranking mit `SHK!` nach oben gezogen und bleibt aus den unteren Trade-Zeilen, bis die Bewegung ausreichend beruhigt ist oder ein belastbarer Richtungswechsel beginnt.
 
-Unten: BTC fest zuerst, danach die stärksten Aktionskandidaten Short → Long. Einheitlicher Kern:
-`Druck · 05/20/60 · ER±xx · AGEyy · COIN±EXT`
-Erst danach dürfen Coin-News/Warnungen abweichen.
+Unten bleibt der gemeinsame Kern kompakt und einheitlich:
+`Druck · 05/20/60 · Jxx · Exx · COIN±EXT`
+Erst danach folgen die wichtigsten akuten Warnungen, die mehr als reine Beobachtung erfordern.
 
-- `ER-99 … ER-00 … ER+99`: aktuelle Pfadstruktur aus 30m/2h/5h; nur tatsächlich relevante Range zählt. Stark negativ = schnelle beidseitige Sprünge, um 00 = gemischt/ruhiger, stark positiv = effizient laufende Bewegung. Das Vorzeichen ist **keine** Long/Short-Richtung.
-- `AGE00 … AGE99`: Beständigkeit derselben Struktur über 2h → 5h → 2d → 3d → 7d → 14d → 30d. Lange Stufen zählen nur, wenn auch rollende Teilfenster zur aktuellen Lage passen.
-- `COIN+47/-47`: Extremity; `Pxx`: BTC-Pinning an 1.000-$-Marken. P wird relativ zum 1.000-$-Abstand kontinuierlich aus aktueller/historischer Nähe, Verweildauer und Rückkehr berechnet. `P??` = Pin-Daten nicht belastbar; `P00` = gültig praktisch keine Bindung.
+- `J00…J99`: richtungsfreie Springer-Stärke aus wiederkehrenden 15m-Impulsen der jüngsten zusammenhängenden Minutenhistorie plus robuster 10–30d-Range/Verlässlichkeit. Ein einzelner Ausreißer wird ausdrücklich abgewertet; Events gehören nicht in J.
+- `E00…E99`: akutes Event-/Störungsrisiko aus verifizierten Ereignissen. `E??` bedeutet unzureichende aktuelle Quellenabdeckung, nicht „kein Risiko“.
+- `COIN+xx/-xx`: Extremity. Überdehnung ist ein starker Anti-Chase-Faktor; E/T werden in Laufrichtung früh gebremst bzw. blockiert, während ein bestätigtes Reversal die gegengerichtete Extremity nutzen darf.
+- `P00…P99`: BTC-Pinning an 1.000-$-Marken. `P??` = Daten nicht belastbar; `P00` = gültige Daten, praktisch keine aktuelle Bindung.
 
-Speed/Activity, Two-Sided, 7/14/30D-Regime, Orderbuch- und Qualitätswerte bleiben intern für Auswahl/Risiko aktiv. Tageskontext verwendet ausschließlich abgeschlossene Tageskerzen mit dem tatsächlichen Bucket-Ende; Minutenfenster werden bei Datenlücken nicht künstlich verlängert.
+Poolklassen: A = natürliche Springer (`KAITO PENGU FARTCOIN LDO ZEC WLD PUMP SUI ENA`), B = Hebel-Springer (`ETH SOL HYPE XRP`), C = Event/Regime-Springer (`XPL ONDO ADA TAO JUP NEAR AVAX UNI APT`). Die Klasse erzeugt keine Richtung und ersetzt keine Live-Daten.
 
-## Signal und Ausführung
-Long/Short entsteht nur aus Preisstruktur der E/T/W-Setups. Quote-Volumen bestätigt Stärke, erzeugt aber keine Richtung. Die Freigabe berücksichtigt zusätzlich Tape-Qualität, OI/Liquidität, BTC-/Regime-Risiko, Funding und die für die Richtung tatsächlich benötigte Orderbuchseite.
+## Signal
+Long/Short entsteht ausschließlich aus der Preisstruktur der E/T/W-Setups. Volumen, J, Events und historische Klassen dürfen bestätigen, priorisieren oder Risiko reduzieren, aber keine Richtung erfinden. Die numerischen Basisschwellen bleiben `NEAR 51 / TRY 58 / NOW 69`; NOW benötigt zusätzlich die jeweiligen präzisen Setup-, Frische-, Edge-, Daten-, Funding-, Tape-, Liquiditäts- und Richtungs-Gates. Positive Kontextfaktoren dürfen ein nicht bestätigtes Setup nicht künstlich hochstufen.
 
-- Long-Kosten: Einstieg über Asks, modellierter Ausstieg über Bids.
-- Short-Kosten: Einstieg über Bids, modellierter Rückkauf über Asks.
-- Fehlende Tiefe oder fehlendes Lighter-Funding blockiert einen neuen Trade.
-- `/funding-rates` wird als 8h-äquivalenter Vergleichswert eingelesen und vor Signal/Paper auf einen Stundenwert normalisiert.
-- REST-Aufrufe teilen sich ein gemeinsames Rolling-Minute-Budget und einen gemeinsamen 405/429-Cooldown.
+Ausführung wird richtungsspezifisch geprüft: Long steigt über Asks ein und modelliert den Ausstieg über Bids; Short umgekehrt. Fehlende Tiefe oder fehlendes Funding blockiert neue Trades. Lighter-`/funding-rates` wird als 8h-äquivalenter Vergleichswert eingelesen und vor Verwendung auf den Stundenkontext normalisiert. Tageskontext verwendet nur abgeschlossene Daily-Buckets; Minutenfenster werden bei Lücken nicht künstlich verlängert.
 
-## Paper
-NEAR eröffnet nur einen kleinen Scout, TRY baut in gleicher Richtung zügig aus und reduziert ein Gegensignal einmalig, NOW übernimmt volle Bestätigung bzw. Schließen/Reverse. ER/AGE bestimmen **nicht** die Handelsrichtung: sprunghafte Phasen werden kleiner/kürzer mit schnelleren Zielen geführt; ein alter, sauber laufender und richtungsgleicher Pfad darf länger laufen. Ein sauber laufender Pfad gegen die Position reduziert Größe/Hebel/Haltedauer.
+`SHK!` ist ein Sicherheitszustand aus echten Lighter-Preisdaten: ein ungewöhnlich großer, effizient einseitiger 15m-Move relativ zu robuster eigener Historie. Er blockiert neue Paper-/Detail-Trades, bis Retracement, Gegenbewegung oder ausreichende Beruhigung vorliegt. Ein Schock wird nicht automatisch einem Exploit oder einer News-Ursache zugeschrieben.
 
-Fehlende aktuelle Marks werden nicht als Null-P/L behandelt, sondern mit dem letzten bekannten Mark ausdrücklich als stale bewertet. Funding-Lücken werden nur für höchstens ein Stundenintervall mit einer beobachteten bzw. letzten bekannten Stundenrate modelliert; ältere Laufunterbrechungen bleiben ausdrücklich als unbekannte Stunden markiert. Die maximale Setup-Haltedauer gilt auch bei fehlenden Signaldaten und wiederholter identischer Entscheidungskerze.
+## Lernen / Paper
+Paper bleibt bewusst explorativ: NEAR kann kleine Scouts eröffnen, TRY ausbauen, NOW stärker gewichten; mehrere Positionen und kontrollierte Scale-ins sind möglich. J beeinflusst Größe/Haltedauer nur richtungsfrei: hohe wiederkehrende Aktivität darf etwas aktiver getestet werden, extreme J-Lagen werden wegen Slippage-/Whipsaw-Risiko wieder begrenzt. E/`SHK!`, Extremity, Kosten, Datenqualität und Gegenkontext bleiben harte Sicherheitsfaktoren.
 
-Alte r2/r3/r4-Paper-States bleiben lesbar. Vor-r5-Fundingbeträge werden einmalig vom früher falsch als stündlich behandelten 8h-Wert korrigiert. Alte abgeleitete Entry-Features werden danach nicht als neue Optimizer-Evidenz verwendet; neue Optimizer-Hinweise bleiben vergleichende/heuristische Hinweise und ändern keine Parameter automatisch.
+Funding wird nur an tatsächlich überschrittenen UTC-Stundengrenzen verbucht. Nicht belegbare Settlements werden als unbekannt markiert und nicht als Optimizer-Evidenz verwendet. Scale-ins erhöhen den lebenszeitlichen Risikonenner für R-Auswertungen. Der Evaluator speichert echte Signal-Episoden statt Minuten-Duplikate sowie die kontinuierlichen Startmerkmale und Promotions, damit `51/58/69` später auf denselben Rohsignalen sauber verglichen werden können.
+
+Der Optimizer ändert **keine** Live-Parameter automatisch. Er liefert wiederholbare, datenbasierte Hinweise mit Stichprobe, Trefferquote/R-Vergleich und konkreter Prüfempfehlung; dieselbe Problemklasse kann nach neuer Evidenz erneut gemeldet werden.
 
 ## Events / Betrieb
-Der Cloudflare Worker speichert den frisch erzeugten Event-Feed vor dem GitHub-Dispatch und übergibt denselben Snapshot zusätzlich direkt als Workflow-Input. Kleine Feeds bleiben JSON, große Feeds werden gzip/base64 übertragen. Damit hängt der ausgelöste Lauf nicht von Cache-/KV-Replikationszeit ab. `/refresh` ist nur mit gesetztem `REFRESH_TOKEN` und passendem Bearer-Token aktiv.
+Jeder Pool-Coin besitzt dieselbe Basissuche auf verifizierten offiziellen Domains; zusätzliche strukturierte Status-/Release-/Unlock-/Feed-Quellen werden nur verwendet, wenn sie verifiziert sind. Quellen-Gesundheit wird pro Coin mitgeführt; dadurch ist Teilabdeckung sichtbar statt still als `E00` zu erscheinen. BTC erhält zusätzlich die relevanten US-Makrotermine sowie verifizierte BTC-spezifische Risikoquellen.
 
-Workflow-Concurrency bleibt revisionsunabhängig auf v6.1.0; Runtime-/Paper-State kann kontrolliert aus r2/r3/r4 übernommen werden. Der Daily-Candle-Cache wird wegen der korrigierten Zeitsemantik neu aufgebaut.
+Der Cloudflare Worker speichert den neuen Feed vor dem GitHub-Dispatch und übergibt exakt denselben Snapshot samt `source_health` direkt als Workflow-Input. `/refresh` ist nur mit gesetztem `REFRESH_TOKEN` und passendem Bearer-Token aktiv. Lighter-REST-Aufrufe teilen sich ein gemeinsames Rolling-Minute-Budget und 405/429-Cooldown.
+
+v7 verwendet bewusst frische, revisionsgebundene Runtime-/Paper-Zustände; alte v6-Lernwerte werden wegen geänderter J/E-/Funding-/Episode-Semantik nicht ungeprüft weitergeführt. Reale Lighter-/GitHub-/Cloudflare-Läufe bleiben die abschließende Umgebungsvalidierung.

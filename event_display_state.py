@@ -1,5 +1,5 @@
-# r5
-"""Hourly display throttling for future events in CF v6.1.0.
+# r1
+"""Hourly display throttling for future events in CF v7.0.0.
 
 Future-day events are shown once in the first successful Discord report of each
 local clock hour. The event loader supplies today's timed macro only on its
@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
-STATE_VERSION = "event-display-v610-r2"
+STATE_VERSION = "event-display-v700-r1"
 
 
 @dataclass(frozen=True)

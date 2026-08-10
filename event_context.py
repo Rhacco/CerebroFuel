@@ -1,5 +1,5 @@
-# r5
-"""Verified scheduled and externally confirmed event context for CF v6.1.0.
+# r1
+"""Verified scheduled and externally confirmed event context for CF v7.0.0.
 
 Automatic facts come only from official public schedules/status pages. Project-
 specific events such as token unlocks are accepted only from a local or remote
@@ -27,8 +27,8 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-CACHE_VERSION = "event-cache-v610-r2"
-USER_AGENT = "crypto-signal-monitor/6.1.0"
+CACHE_VERSION = "event-cache-v700-r1"
+USER_AGENT = "crypto-signal-monitor/7.0.0"
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4,
     "may": 5, "june": 6, "july": 7, "august": 8,
@@ -164,6 +164,7 @@ class EventSnapshot:
     diagnostics: list[str]
     generated_at: str
     display_marks: dict[str, EventMark] = field(default_factory=dict)
+    source_health: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -174,6 +175,7 @@ class EventSnapshot:
             },
             "events": [asdict(event) for event in self.events],
             "diagnostics": list(self.diagnostics),
+            "source_health": dict(self.source_health),
         }
 
 
@@ -1326,6 +1328,18 @@ def _pick_display_marks(
     return display
 
 
+def _feed_source_health(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, Mapping):
+        return {}
+    meta = raw.get("meta")
+    if not isinstance(meta, Mapping):
+        return {}
+    health = meta.get("source_health")
+    if not isinstance(health, Mapping):
+        return {}
+    return json.loads(json.dumps(health, ensure_ascii=False))
+
+
 def load_critical_events(
     config: Mapping[str, Any],
     *,
@@ -1347,6 +1361,7 @@ def load_critical_events(
     timeout = max(3.0, min(20.0, float(section.get("timeout_seconds", 8.0))))
     timezone_name = str(config.get("timezone", "Europe/Berlin"))
     diagnostics: list[str] = []
+    source_health: dict[str, Any] = {}
     cached = _load_json(cache_path)
     if cached.get("version") != CACHE_VERSION:
         cached = {"version": CACHE_VERSION}
@@ -1562,6 +1577,7 @@ def load_critical_events(
                     symbol_aliases,
                 )
             )
+            source_health = _feed_source_health(dispatch_payload)
             dispatch_feed_valid = True
         except (ValueError, TypeError, UnicodeDecodeError, OSError, json.JSONDecodeError) as exc:
             diagnostics.append(f"CRYPTO_EVENTS_DISPATCH_PAYLOAD ist ungültig: {exc}")
@@ -1591,6 +1607,8 @@ def load_critical_events(
     remote_feed_events = cached_events("remote_feed_events")
     remote_feed_fetched_at = int(cached.get("remote_feed_fetched_at") or 0)
     remote_feed_checked_at = int(cached.get("remote_feed_checked_at") or 0)
+    if not dispatch_feed_valid and isinstance(cached.get("remote_feed_source_health"), Mapping):
+        source_health = dict(cached.get("remote_feed_source_health") or {})
     feed_refresh = max(1, int(section.get("verified_feed_refresh_minutes", 1))) * 60
     feed_max_stale = max(
         1,
@@ -1622,7 +1640,9 @@ def load_critical_events(
                     symbols,
                     symbol_aliases,
                 )
+                source_health = _feed_source_health(raw)
                 cached["remote_feed_fetched_at"] = now_s
+                cached["remote_feed_source_health"] = source_health
                 cached["remote_feed_events"] = [asdict(event) for event in remote_feed_events]
             except Exception as exc:
                 diagnostics.append(f"Verifizierter Ereignisfeed nicht aktualisiert: {exc}")
@@ -1649,7 +1669,8 @@ def load_critical_events(
     except OSError as exc:
         diagnostics.append(f"Ereignis-Cache nicht gespeichert: {exc}")
     return EventSnapshot(
-        marks, all_events, diagnostics, _iso(now) or "", display_marks=display_marks
+        marks, all_events, diagnostics, _iso(now) or "",
+        display_marks=display_marks, source_health=source_health,
     )
 
 

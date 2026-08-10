@@ -1,5 +1,5 @@
-# r5
-"""Persistent action-state streaks for CF v6.1.0 detail tokens."""
+# r1
+"""Persistent action-state streaks for CF v7.0.0 detail tokens."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-STATE_VERSION = "signal-streak-v610-r2"
+STATE_VERSION = "signal-streak-v700-r1"
 TRACKED_ACTIONS = {"NEAR", "TRY", "NOW"}
 MAX_COUNT = 999
 

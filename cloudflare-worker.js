@@ -1,13 +1,12 @@
-// r5
-// Crypto event feed and GitHub scheduler for v6.1.0.
+// r1
+// Crypto event feed and GitHub scheduler for v7.0.0.
 
-const APP_VERSION = "6.1.0";
-const PACKAGE_REVISION = "r5";
-const STORE_KEY = "crypto-events-v610-r2";
-const CACHE_URL = "https://crypto-events.internal/v6.1.0-r2/events.json";
+const APP_VERSION = "7.0.0";
+const PACKAGE_REVISION = "r1";
+const STORE_KEY = "crypto-events-v700-r1";
+const CACHE_URL = "https://crypto-events.internal/v7.0.0-r1/events.json";
 const ACTIVE_RETENTION_MS = 25 * 60 * 1000;
 const STATUS_GRACE_MS = 10 * 60 * 1000;
-const STATUS_BATCH_COUNT = 2;
 const KV_HEARTBEAT_MS = 10 * 60 * 1000;
 const NEWS_REFRESH_MS = 5 * 60 * 1000;
 const ETF_REFRESH_MS = 5 * 60 * 1000;
@@ -18,62 +17,29 @@ const UNLOCK_BATCH_SIZE = 4;
 const SEEN_RETENTION_MS = 48 * 60 * 60 * 1000;
 
 const PROJECTS = Object.freeze({
-  BTC: {
-    domains: ["bitcoin.org", "bitcoincore.org"],
-    github: ["bitcoin/bitcoin"],
-  },
-  SOL: {
-    domains: ["solana.com"],
-    github: ["anza-xyz/agave"],
-  },
-  HYPE: {
-    domains: ["hyperfoundation.org", "hyperliquid.xyz"],
-    unlockSlug: "hyperliquid",
-  },
-  ENA: {
-    domains: ["ethena.fi", "ethenafoundation.com"],
-    unlockSlug: "ethena",
-  },
-  PUMP: {
-    domains: ["pump.fun"],
-  },
-  ADA: {
-    domains: ["cardano.org", "essentialcardano.io", "iohk.io"],
-    github: ["IntersectMBO/cardano-node"],
-  },
-  AVAX: {
-    domains: ["avax.network"],
-    github: ["ava-labs/avalanchego"],
-    unlockSlug: "avalanche-2",
-  },
-  APT: {
-    domains: ["aptosfoundation.org", "aptoslabs.com", "aptos.dev"],
-    github: ["aptos-labs/aptos-core"],
-    unlockSlug: "aptos",
-  },
-  NEAR: {
-    domains: ["near.org", "nearfoundation.org"],
-    github: ["near/nearcore"],
-  },
-  JUP: {
-    domains: ["jup.ag"],
-  },
-  ONDO: {
-    domains: ["ondo.finance"],
-    unlockSlug: "ondo-finance",
-  },
-  TIA: {
-    domains: ["celestia.org"],
-    github: ["celestiaorg/celestia-app"],
-  },
-  DOGE: {
-    domains: ["dogecoin.com", "dogecoin.org"],
-    github: ["dogecoin/dogecoin"],
-  },
-  XRP: {
-    domains: ["xrpl.org", "ripple.com"],
-    github: ["XRPLF/rippled"],
-  },
+  BTC: { domains: ["bitcoin.org", "bitcoincore.org"], github: ["bitcoin/bitcoin"] },
+  KAITO: { domains: ["kaito.ai"], unlockSlug: "kaito" },
+  PENGU: { domains: ["pudgypenguins.com"] },
+  FARTCOIN: { domains: ["fart.dev"] },
+  LDO: { domains: ["lido.fi"] },
+  ZEC: { domains: ["z.cash", "electriccoin.co"], github: ["zcash/zcash"] },
+  WLD: { domains: ["world.org"], unlockSlug: "worldcoin-wld" },
+  PUMP: { domains: ["pump.fun"] },
+  SUI: { domains: ["sui.io"], github: ["MystenLabs/sui"], unlockSlug: "sui" },
+  ENA: { domains: ["ethena.fi", "ethenafoundation.com"], unlockSlug: "ethena" },
+  ETH: { domains: ["ethereum.org", "ethereum.foundation"], github: ["ethereum/go-ethereum"] },
+  SOL: { domains: ["solana.com"], github: ["anza-xyz/agave"] },
+  HYPE: { domains: ["hyperfoundation.org", "hyperliquid.xyz"], unlockSlug: "hyperliquid" },
+  XRP: { domains: ["xrpl.org", "ripple.com"], github: ["XRPLF/rippled"] },
+  XPL: { domains: ["plasma.to"], unlockSlug: "plasma" },
+  ONDO: { domains: ["ondo.finance"], unlockSlug: "ondo-finance" },
+  ADA: { domains: ["cardano.org", "essentialcardano.io", "iohk.io"], github: ["IntersectMBO/cardano-node"] },
+  TAO: { domains: ["bittensor.com"], github: ["opentensor/bittensor"] },
+  JUP: { domains: ["jup.ag"] },
+  NEAR: { domains: ["near.org", "nearfoundation.org"], github: ["near/nearcore"] },
+  AVAX: { domains: ["avax.network"], github: ["ava-labs/avalanchego"], unlockSlug: "avalanche-2" },
+  UNI: { domains: ["uniswap.org", "blog.uniswap.org"], github: ["Uniswap/v4-core"] },
+  APT: { domains: ["aptosfoundation.org", "aptoslabs.com", "aptos.dev"], github: ["aptos-labs/aptos-core"], unlockSlug: "aptos" },
 });
 
 const STATUSPAGE_SOURCES = Object.freeze([
@@ -81,6 +47,8 @@ const STATUSPAGE_SOURCES = Object.freeze([
   ["SOL", "https://status.solana.com/api/v2/scheduled-maintenances/upcoming.json", "Solana Status", "scheduled_maintenances"],
   ["HYPE", "https://hyperliquid.statuspage.io/api/v2/incidents/unresolved.json", "Hyperliquid Status", "incidents"],
   ["HYPE", "https://hyperliquid.statuspage.io/api/v2/scheduled-maintenances/upcoming.json", "Hyperliquid Status", "scheduled_maintenances"],
+  ["SUI", "https://status.sui.io/api/v2/incidents/unresolved.json", "Sui Status", "incidents"],
+  ["SUI", "https://status.sui.io/api/v2/scheduled-maintenances/upcoming.json", "Sui Status", "scheduled_maintenances"],
   ["AVAX", "https://status.avax.network/api/v2/incidents/unresolved.json", "Avalanche Status", "incidents"],
   ["AVAX", "https://status.avax.network/api/v2/scheduled-maintenances/upcoming.json", "Avalanche Status", "scheduled_maintenances"],
 ]);
@@ -88,12 +56,15 @@ const STATUSPAGE_SOURCES = Object.freeze([
 const HTML_STATUS_SOURCES = Object.freeze([
   ["JUP", "https://status.jup.ag/", "All services are online", "Jupiter Status"],
   ["NEAR", "https://status.near.org/", "No problems detected", "NEAR Status"],
-  ["TIA", "https://status.celestia.org/", "fully operational", "Celestia Status"],
 ]);
 
 const OFFICIAL_FEEDS = Object.freeze([
   ["SOL", "https://solana.com/changelog/rss.xml", "Solana Changelog"],
 ]);
+
+const RELEASE_REFRESH_MS = 5 * 60 * 1000;
+const STATUS_REFRESH_MS = 4 * 60 * 1000;
+const STATUS_BATCH_SIZE = 4;
 
 const MONTHS = Object.freeze({
   january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
@@ -160,171 +131,182 @@ function refreshAuthorization(request, env) {
 
 async function refreshEventFeed(env, now) {
   const previous = (await readStoredFeed(env)) || emptyFeed(now);
+  const previousMeta = isObject(previous.meta) ? previous.meta : {};
+  const sourceLastOk = isObject(previousMeta.source_last_ok) ? { ...previousMeta.source_last_ok } : {};
   const diagnostics = [];
   const fresh = [];
+  const nowIso = now.toISOString();
+  const nowMs = now.getTime();
 
-  const allStatusSources = [
-    ...STATUSPAGE_SOURCES.map((row) => ["statuspage", ...row]),
-    ...HTML_STATUS_SOURCES.map((row) => ["html", ...row]),
+  const markOk = (id) => { sourceLastOk[id] = nowIso; };
+  const lastOk = (id) => parseMillis(sourceLastOk[id]);
+  const due = (id, interval) => !lastOk(id) || nowMs - lastOk(id) >= interval;
+
+  // Status sources are selected by oldest successful check. A failed source
+  // therefore stays due and is retried on the next minute instead of being
+  // hidden by a rotating batch counter.
+  const statusSources = [
+    ...STATUSPAGE_SOURCES.map((row) => ({ type: "statuspage", row, id: `status:${row[0]}:${row[1]}` })),
+    ...HTML_STATUS_SOURCES.map((row) => ({ type: "html", row, id: `status:${row[0]}:${row[1]}` })),
   ];
-  const statusBatchIndex = Math.floor(now.getTime() / 60_000) % STATUS_BATCH_COUNT;
-  const statusBatch = allStatusSources.filter((_, index) => index % STATUS_BATCH_COUNT === statusBatchIndex);
-  const statusResults = await Promise.allSettled(statusBatch.map((row) => {
-    if (row[0] === "statuspage") {
-      const [, symbol, url, name, collection] = row;
+  const statusDue = statusSources
+    .filter((source) => due(source.id, STATUS_REFRESH_MS))
+    .sort((a, b) => (lastOk(a.id) || 0) - (lastOk(b.id) || 0))
+    .slice(0, STATUS_BATCH_SIZE);
+  const statusResults = await Promise.allSettled(statusDue.map((source) => {
+    const row = source.row;
+    if (source.type === "statuspage") {
+      const [symbol, url, name, collection] = row;
       return fetchStatuspage(symbol, url, name, collection, now);
     }
-    const [, symbol, url, healthy, name] = row;
+    const [symbol, url, healthy, name] = row;
     return fetchHtmlStatus(symbol, url, healthy, name, now);
   }));
   let statusOk = 0;
-  for (const result of statusResults) {
+  for (let index = 0; index < statusResults.length; index += 1) {
+    const result = statusResults[index];
+    const source = statusDue[index];
     if (result.status === "fulfilled") {
       statusOk += 1;
+      markOk(source.id);
       fresh.push(...result.value);
-    } else diagnostics.push(`status: ${shortError(result.reason)}`);
+    } else diagnostics.push(`status ${source.row[0]}: ${shortError(result.reason)}`);
   }
 
   const xrpEscrow = scheduledXrpEscrowUnlock(now);
   if (xrpEscrow) fresh.push(xrpEscrow);
 
-  const previousMeta = isObject(previous.meta) ? previous.meta : {};
-  const lastNews = parseMillis(previousMeta.news_checked_at);
-  let newsCheckedAt = previousMeta.news_checked_at || null;
-  let newsOk = Number(previousMeta?.source_health?.news_ok || 0);
-  let newsTotal = Number(previousMeta?.source_health?.news_total || 0);
-  if (!lastNews || now.getTime() - lastNews >= NEWS_REFRESH_MS) {
-    const newsResults = await Promise.allSettled([
-      ...buildGdeltQueries().map((batch) => fetchGdeltBatch(batch, now)),
-      ...OFFICIAL_FEEDS.map(([symbol, url, name]) => fetchOfficialFeed(symbol, url, name, now)),
-    ]);
-    newsOk = 0;
-    newsTotal = newsResults.length;
-    for (const result of newsResults) {
-      if (result.status === "fulfilled") {
-        newsOk += 1;
-        fresh.push(...result.value);
-      } else diagnostics.push(`news: ${shortError(result.reason)}`);
-    }
-    // If every news source failed, retry on the next minute instead of hiding
-    // the outage behind the normal five-minute refresh interval.
-    if (newsOk > 0) newsCheckedAt = now.toISOString();
+  // Every pool coin has the same baseline official-domain news channel. GDELT
+  // is only an index/transport: article URLs are still accepted solely when
+  // they resolve to a configured official project domain.
+  const gdeltDue = buildGdeltQueries().filter((batch) =>
+    batch.symbols.some((symbol) => due(`news:${symbol}`, NEWS_REFRESH_MS)),
+  );
+  const gdeltResults = await Promise.allSettled(gdeltDue.map((batch) => fetchGdeltBatch(batch, now)));
+  let newsOk = 0;
+  let newsTotal = gdeltResults.length;
+  for (let index = 0; index < gdeltResults.length; index += 1) {
+    const result = gdeltResults[index];
+    const batch = gdeltDue[index];
+    if (result.status === "fulfilled") {
+      newsOk += 1;
+      for (const symbol of batch.symbols) markOk(`news:${symbol}`);
+      fresh.push(...result.value);
+    } else diagnostics.push(`news ${batch.symbols.join(",")}: ${shortError(result.reason)}`);
   }
 
-  const lastEtf = parseMillis(previousMeta.etf_checked_at);
-  let etfCheckedAt = previousMeta.etf_checked_at || null;
+  const feedDue = OFFICIAL_FEEDS
+    .map((row) => ({ row, id: `feed:${row[0]}:${row[1]}` }))
+    .filter((source) => due(source.id, NEWS_REFRESH_MS));
+  const feedResults = await Promise.allSettled(
+    feedDue.map((source) => fetchOfficialFeed(source.row[0], source.row[1], source.row[2], now)),
+  );
+  newsTotal += feedResults.length;
+  for (let index = 0; index < feedResults.length; index += 1) {
+    const result = feedResults[index];
+    const source = feedDue[index];
+    if (result.status === "fulfilled") {
+      newsOk += 1;
+      markOk(source.id);
+      fresh.push(...result.value);
+    } else diagnostics.push(`feed ${source.row[0]}: ${shortError(result.reason)}`);
+  }
+
   let etfLastDate = String(previousMeta.etf_last_date || "");
   let etfLastTotal = Number.isFinite(Number(previousMeta.etf_last_total_m))
     ? Number(previousMeta.etf_last_total_m) : null;
-  let etfOk = Number(previousMeta?.source_health?.etf_ok || 0);
-  if (!lastEtf || now.getTime() - lastEtf >= ETF_REFRESH_MS) {
+  let etfOk = 0;
+  const etfAttempted = due("etf:BTC", ETF_REFRESH_MS);
+  if (etfAttempted) {
     try {
       const row = await fetchBitcoinEtfFlow(now);
       etfOk = 1;
-      etfCheckedAt = now.toISOString();
+      markOk("etf:BTC");
       if (row) {
         const hasBaseline = Boolean(etfLastDate) && etfLastTotal !== null;
         const changed = row.date !== etfLastDate || Math.round(row.totalM) !== Math.round(etfLastTotal);
         if (hasBaseline && changed && Math.abs(Math.round(row.totalM)) >= 1) {
           const rounded = Math.round(row.totalM);
           const signed = `${rounded >= 0 ? "+" : "-"}${Math.abs(rounded)}M`;
-          const expiresAt = new Date(now.getTime() + ETF_ACTIVE_RETENTION_MS).toISOString();
+          const expiresAt = new Date(nowMs + ETF_ACTIVE_RETENTION_MS).toISOString();
           fresh.push(eventRow({
-            symbol: "BTC",
-            kind: "ETF_FLOW",
-            title: `US spot Bitcoin ETF net flow ${signed}`,
-            startsAt: now.toISOString(),
-            endsAt: expiresAt,
-            expiresAt,
-            exactTime: true,
-            priority: 91,
-            sourceName: "Farside Investors Bitcoin ETF Flow",
-            sourceUrl: ETF_SOURCE_URL,
-            active: true,
-            sourceType: "etf_flow",
+            symbol: "BTC", kind: "ETF_FLOW", title: `US spot Bitcoin ETF net flow ${signed}`,
+            startsAt: nowIso, endsAt: expiresAt, expiresAt, exactTime: true, priority: 91,
+            sourceName: "Farside Investors Bitcoin ETF Flow", sourceUrl: ETF_SOURCE_URL,
+            active: true, sourceType: "etf_flow",
           }));
         }
         etfLastDate = row.date;
         etfLastTotal = row.totalM;
       }
     } catch (error) {
-      etfOk = 0;
       diagnostics.push(`etf: ${shortError(error)}`);
-      // Failed ETF checks retry next minute instead of waiting five minutes.
     }
   }
 
-  const repos = githubSources();
-  const batchCount = Math.max(1, Math.ceil(repos.length / 4));
-  const batchIndex = Math.floor(now.getTime() / 60_000) % batchCount;
-  const githubBatch = repos.slice(batchIndex * 4, batchIndex * 4 + 4);
+  const repoSources = githubSources().map(([symbol, repo]) => ({
+    symbol, repo, id: `release:${symbol}:${repo}`,
+  }));
+  const repoDue = repoSources
+    .filter((source) => due(source.id, RELEASE_REFRESH_MS))
+    .sort((a, b) => (lastOk(a.id) || 0) - (lastOk(b.id) || 0))
+    .slice(0, 4);
   const releaseResults = await Promise.allSettled(
-    githubBatch.map(([symbol, repo]) => fetchGithubReleases(symbol, repo, now)),
+    repoDue.map((source) => fetchGithubReleases(source.symbol, source.repo, now)),
   );
   let releaseOk = 0;
-  for (const result of releaseResults) {
+  for (let index = 0; index < releaseResults.length; index += 1) {
+    const result = releaseResults[index];
+    const source = repoDue[index];
     if (result.status === "fulfilled") {
       releaseOk += 1;
+      markOk(source.id);
       fresh.push(...result.value);
-    } else diagnostics.push(`release: ${shortError(result.reason)}`);
+    } else diagnostics.push(`release ${source.symbol}: ${shortError(result.reason)}`);
   }
 
-  const lastUnlock = parseMillis(previousMeta.unlocks_checked_at);
-  let unlocksCheckedAt = previousMeta.unlocks_checked_at || null;
-  let unlockBatch = Number(previousMeta.unlock_batch || 0);
-  let unlockOk = Number(previousMeta?.source_health?.unlock_ok || 0);
-  let unlockTotal = Number(previousMeta?.source_health?.unlock_total || 0);
-  if (!lastUnlock || now.getTime() - lastUnlock >= UNLOCK_REFRESH_MS) {
-    const unlockSources = Object.entries(PROJECTS).filter(([, project]) => project.unlockSlug);
-    const unlockBatchCount = Math.max(1, Math.ceil(unlockSources.length / UNLOCK_BATCH_SIZE));
-    unlockBatch = Math.floor(now.getTime() / UNLOCK_REFRESH_MS) % unlockBatchCount;
-    const rows = unlockSources.slice(
-      unlockBatch * UNLOCK_BATCH_SIZE,
-      unlockBatch * UNLOCK_BATCH_SIZE + UNLOCK_BATCH_SIZE,
-    );
-    const unlockResults = await Promise.allSettled(
-      rows.map(([symbol, project]) => fetchTokenomistUnlock(symbol, project.unlockSlug, now)),
-    );
-    unlockOk = 0;
-    unlockTotal = unlockResults.length;
-    for (const result of unlockResults) {
-      if (result.status === "fulfilled") {
-        unlockOk += 1;
-        if (result.value) fresh.push(result.value);
-      } else diagnostics.push(`unlock: ${shortError(result.reason)}`);
-    }
-    if (unlockOk > 0) unlocksCheckedAt = now.toISOString();
+  const unlockSources = Object.entries(PROJECTS)
+    .filter(([, project]) => project.unlockSlug)
+    .map(([symbol, project]) => ({ symbol, slug: project.unlockSlug, id: `unlock:${symbol}:${project.unlockSlug}` }));
+  const unlockDue = unlockSources
+    .filter((source) => due(source.id, UNLOCK_REFRESH_MS))
+    .sort((a, b) => (lastOk(a.id) || 0) - (lastOk(b.id) || 0))
+    .slice(0, UNLOCK_BATCH_SIZE);
+  const unlockResults = await Promise.allSettled(
+    unlockDue.map((source) => fetchTokenomistUnlock(source.symbol, source.slug, now)),
+  );
+  let unlockOk = 0;
+  for (let index = 0; index < unlockResults.length; index += 1) {
+    const result = unlockResults[index];
+    const source = unlockDue[index];
+    if (result.status === "fulfilled") {
+      unlockOk += 1;
+      markOk(source.id);
+      if (result.value) fresh.push(result.value);
+    } else diagnostics.push(`unlock ${source.symbol}: ${shortError(result.reason)}`);
   }
 
   const merged = mergeEvents(previous, fresh, now);
+  const sourceHealth = buildSourceHealth(sourceLastOk, now);
   return {
     version: APP_VERSION,
     package_revision: PACKAGE_REVISION,
-    generated_at: now.toISOString(),
+    generated_at: nowIso,
     events: merged.events,
-    diagnostics: diagnostics.slice(0, 24),
+    diagnostics: diagnostics.slice(0, 32),
     meta: {
-      news_checked_at: newsCheckedAt,
-      etf_checked_at: etfCheckedAt,
       etf_last_date: etfLastDate || null,
       etf_last_total_m: etfLastTotal,
-      unlocks_checked_at: unlocksCheckedAt,
-      unlock_batch: unlockBatch,
-      github_batch: batchIndex,
-      status_batch: statusBatchIndex,
       kv_written_at: previousMeta.kv_written_at || null,
       kv_signature: previousMeta.kv_signature || null,
+      source_last_ok: sourceLastOk,
       source_health: {
-        status_ok: statusOk,
-        status_total: statusResults.length,
-        news_ok: newsOk,
-        news_total: newsTotal,
-        etf_ok: etfOk,
-        etf_total: 1,
-        release_ok: releaseOk,
-        release_total: releaseResults.length,
-        unlock_ok: unlockOk,
-        unlock_total: unlockTotal,
+        ...sourceHealth,
+        status_ok: statusOk, status_total: statusResults.length,
+        news_ok: newsOk, news_total: newsTotal,
+        etf_ok: etfOk, etf_total: etfAttempted ? 1 : 0,
+        release_ok: releaseOk, release_total: releaseResults.length,
+        unlock_ok: unlockOk, unlock_total: unlockResults.length,
       },
       seen_events: merged.seen,
     },
@@ -339,11 +321,65 @@ function emptyFeed(now) {
     events: [],
     diagnostics: [],
     meta: {
-      news_checked_at: null, etf_checked_at: null, etf_last_date: null, etf_last_total_m: null, unlocks_checked_at: null, unlock_batch: 0, github_batch: 0, status_batch: 0,
-      kv_written_at: null, kv_signature: null,
-      source_health: { status_ok: 0, status_total: 0, news_ok: 0, news_total: 0, etf_ok: 0, etf_total: 1, release_ok: 0, release_total: 0, unlock_ok: 0, unlock_total: 0 },
+      etf_last_date: null,
+      etf_last_total_m: null,
+      kv_written_at: null,
+      kv_signature: null,
+      source_last_ok: {},
+      source_health: { by_symbol: {}, overall_coverage: 0 },
       seen_events: {},
     },
+  };
+}
+
+function expectedSourceIds(symbol) {
+  const project = PROJECTS[symbol] || {};
+  const ids = [`news:${symbol}`];
+  for (const row of STATUSPAGE_SOURCES) if (row[0] === symbol) ids.push(`status:${symbol}:${row[1]}`);
+  for (const row of HTML_STATUS_SOURCES) if (row[0] === symbol) ids.push(`status:${symbol}:${row[1]}`);
+  for (const row of OFFICIAL_FEEDS) if (row[0] === symbol) ids.push(`feed:${symbol}:${row[1]}`);
+  for (const repo of project.github || []) ids.push(`release:${symbol}:${repo}`);
+  if (project.unlockSlug) ids.push(`unlock:${symbol}:${project.unlockSlug}`);
+  if (symbol === "BTC") ids.push("etf:BTC");
+  return ids;
+}
+
+function sourceFreshnessMs(id) {
+  if (id.startsWith("unlock:")) return 90 * 60 * 1000;
+  if (id.startsWith("release:")) return 15 * 60 * 1000;
+  if (id.startsWith("status:")) return 12 * 60 * 1000;
+  return 12 * 60 * 1000;
+}
+
+function buildSourceHealth(sourceLastOk, now) {
+  const nowMs = now.getTime();
+  const bySymbol = {};
+  let allOk = 0;
+  let allTotal = 0;
+  for (const symbol of Object.keys(PROJECTS)) {
+    const expected = expectedSourceIds(symbol);
+    const missing = [];
+    let ok = 0;
+    for (const id of expected) {
+      const stamp = parseMillis(sourceLastOk[id]);
+      if (stamp && nowMs - stamp <= sourceFreshnessMs(id)) ok += 1;
+      else missing.push(id.split(":", 2).join(":"));
+    }
+    const total = expected.length;
+    allOk += ok;
+    allTotal += total;
+    bySymbol[symbol] = {
+      coverage: total ? ok / total : 0,
+      ok,
+      total,
+      degraded: ok < total,
+      missing: [...new Set(missing)].slice(0, 8),
+    };
+  }
+  return {
+    by_symbol: bySymbol,
+    overall_coverage: allTotal ? allOk / allTotal : 0,
+    tracked_sources: allTotal,
   };
 }
 
@@ -485,7 +521,8 @@ async function fetchGdeltBatch(batch, now) {
     "unlock", "vesting", "buyback", "burn", "mint", "tokenomics", "supply", "ETF",
     "airdrop", "listing", "delisting", "acquisition", "treasury", "partnership",
     "integration", "lawsuit", "legal settlement", "regulatory", "regulatory license", "staking",
-    "validator", "migration", "token sale",
+    "validator", "migration", "token sale", "emission", "bridge", "oracle",
+    "emergency", "incident", "pause", "token distribution",
   ];
   const query = `(${domainQuery}) AND (${eventTerms.map(quoteGdelt).join(" OR ")})`;
   const url = new URL("https://api.gdeltproject.org/api/v2/doc/doc");
@@ -943,6 +980,7 @@ async function dispatchSnapshot(feed) {
     package_revision: PACKAGE_REVISION,
     generated_at: feed?.generated_at || new Date().toISOString(),
     events: Array.isArray(feed?.events) ? feed.events : [],
+    meta: { source_health: isObject(feed?.meta?.source_health) ? feed.meta.source_health : {} },
   });
   // GitHub workflow_dispatch accepts at most 65,535 characters across inputs.
   // Normal feeds stay plain JSON (zero compression CPU). Only unusually large
