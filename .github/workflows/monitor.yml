@@ -1,4 +1,4 @@
-# r1
+# r2
 name: Crypto Signal Monitor v7.1.0
 on:
   workflow_dispatch:
@@ -40,21 +40,24 @@ jobs:
             output/daily_candle_cache.json
             output/springer_history.json
             output/display_selection_state.json
-          key: runtime-state-v710-r1-${{ github.run_id }}
+          key: runtime-state-v710-r2-${{ github.run_id }}
           restore-keys: |
+            runtime-state-v710-r2-
             runtime-state-v710-r1-
             runtime-state-v700-r6-
             runtime-state-v700-r5-
             runtime-state-v700-r4-
             runtime-state-v700-r3-
       - name: Lighter-Analyse ausführen
+        id: monitor
+        continue-on-error: true
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           SEND_DISCORD: ${{ inputs.send_discord }}
           CRYPTO_EVENTS_URL: ${{ secrets.CRYPTO_EVENTS_URL }}
         run: python main.py
       - name: Laufzeit-State speichern
-        if: always()
+        if: ${{ always() && hashFiles('output/runtime_state_ready') != '' }}
         uses: actions/cache/save@v6
         with:
           path: |
@@ -66,4 +69,7 @@ jobs:
             output/daily_candle_cache.json
             output/springer_history.json
             output/display_selection_state.json
-          key: runtime-state-v710-r1-${{ github.run_id }}
+          key: runtime-state-v710-r2-${{ github.run_id }}
+      - name: Analysefehler weitergeben
+        if: ${{ always() && steps.monitor.outcome == 'failure' }}
+        run: exit 1

@@ -1,4 +1,4 @@
-# r1
+# r2
 """Crypto Signal Monitor v7.1.0 — live signals, J/E, events and shock protection."""
 from __future__ import annotations
 
@@ -30,6 +30,8 @@ def main() -> int:
 
     output = ROOT / "output"
     output.mkdir(exist_ok=True)
+    state_ready_path = output / "runtime_state_ready"
+    state_ready_path.unlink(missing_ok=True)
     generated_at = datetime.now(timezone.utc)
     event_snapshot = load_critical_events(
         config,
@@ -69,6 +71,9 @@ def main() -> int:
         if signal.state == "INVALID_DATA":
             reason = "; ".join(signal.reasons) or "unbekannter Datenfehler"
             print(f"[DATA] {signal.symbol}: {reason}")
+    state_ready_path.write_text(
+        f"{APP_VERSION}-{PACKAGE_REVISION}\n", encoding="utf-8"
+    )
     for diagnostic in event_snapshot.diagnostics:
         print(f"EVENT: {diagnostic}")
     if monitor.last_incidents:
@@ -93,7 +98,7 @@ def main() -> int:
             state_path=event_display_path,
             plan=event_plan,
             now=generated_at,
-            displayed_symbols=monitor.last_header_event_symbols,
+            displayed_symbols=monitor.last_displayed_event_symbols,
         )
         print("Discord als neue Nachricht gesendet.")
     return 0

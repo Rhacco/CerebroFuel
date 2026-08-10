@@ -1,4 +1,4 @@
-# r1
+# r2
 """Live speed, activity, two-sided movement and BTC pinning context for CF v7.1.0.
 
 The core signal state remains authoritative. This layer only adds timing context:

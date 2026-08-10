@@ -1,4 +1,4 @@
-<!-- r1 -->
+<!-- r2 -->
 # Crypto Signal Monitor v7.1.0
 
 ## Kern
@@ -15,4 +15,4 @@ Oben stehen drei stabilisierte frühe Altcoin-Kandidaten von stärkerem Short-Bi
 Extremity wirkt im frühen Radar und im Anti-Chase-/Readiness-Schutz. `SHK!` markiert einen statistisch ungewöhnlichen einseitigen 15m-Kursausreißer, priorisiert ihn oben und sperrt ihn unten bis zur belastbaren Beruhigung oder Gegenbewegung.
 
 ## Ereignisse
-BTC-Makro umfasst die relevanten US-Termine aus offiziellen Kalendern. Coin-Ereignisse werden auf dem GitHub-Runner aus verifizierten Quellen gesammelt; Security-/Network-Fälle erhalten Vorrang. Der Cloudflare-Worker bleibt ausschließlich ein sehr leichter GitHub-Scheduler für den Workers-Free-Betrieb.
+BTC-Makro umfasst die relevanten US-Termine aus offiziellen Kalendern. Coin-Ereignisse werden auf dem GitHub-Runner aus verifizierten Quellen gesammelt; Security-/Network-Fälle erhalten Vorrang, ETF-Flows werden für BTC/ETH/SOL/HYPE nur bei auffälliger Veränderung eingeblendet. Der Cloudflare-Worker bleibt ausschließlich ein sehr leichter GitHub-Scheduler für den Workers-Free-Betrieb.

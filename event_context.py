@@ -1,4 +1,4 @@
-# r1
+# r2
 """Verified macro and coin-event context for CF v7.1.0.
 
 Macro facts come from authoritative public schedules. Coin status/news/release/
@@ -31,8 +31,8 @@ from project_event_sources import (
     collect_project_event_feed,
 )
 
-CACHE_VERSION = "event-cache-v710-r1"
-COMPATIBLE_CACHE_VERSIONS = {CACHE_VERSION, "event-cache-v700-r1"}
+CACHE_VERSION = "event-cache-v710-r2"
+COMPATIBLE_CACHE_VERSIONS = {CACHE_VERSION, "event-cache-v710-r1", "event-cache-v700-r1"}
 USER_AGENT = "crypto-signal-monitor/7.1.0"
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4,
@@ -48,7 +48,7 @@ US_MACRO_KINDS = {
     "FACTORY_ORDERS", "CONSTRUCTION", "BUSINESS_INVENTORIES",
     "ADVANCE_INDICATORS", "CLAIMS", "ADP",
     "CONSUMER_CONFIDENCE", "MICHIGAN", "ISM_MANUFACTURING",
-    "ISM_SERVICES",
+    "ISM_SERVICES", "INDUSTRIAL_PRODUCTION", "EXISTING_HOME_SALES",
 }
 
 KIND_CODES = {
@@ -78,6 +78,8 @@ KIND_CODES = {
     "MICHIGAN": "MICH",
     "ISM_MANUFACTURING": "ISMM",
     "ISM_SERVICES": "ISMS",
+    "INDUSTRIAL_PRODUCTION": "IP",
+    "EXISTING_HOME_SALES": "EHS",
     "EXPIRY": "EXP",
     "ETF": "ETF",
     "ETF_FLOW": "E",
@@ -118,6 +120,8 @@ DEFAULT_PRIORITIES = {
     "MICHIGAN": 80,
     "ISM_MANUFACTURING": 80,
     "ISM_SERVICES": 80,
+    "INDUSTRIAL_PRODUCTION": 80,
+    "EXISTING_HOME_SALES": 80,
     "UNLOCK": 94,
     "ETF": 92,
     "ETF_FLOW": 91,
@@ -773,6 +777,54 @@ def _parse_fred_claims_schedule(text: str) -> list[CriticalEvent]:
     )
 
 
+def _parse_fred_industrial_production_schedule(text: str) -> list[CriticalEvent]:
+    return _parse_fred_release_schedule(
+        text,
+        release_title="G.17 Industrial Production and Capacity Utilization",
+        kind="INDUSTRIAL_PRODUCTION",
+        source_url="https://fred.stlouisfed.org/releases/calendar?rid=13&view=year",
+    )
+
+
+def _parse_nar_existing_home_sales(text: str) -> list[CriticalEvent]:
+    """Parse NAR's explicitly stated next Existing-Home Sales release."""
+    flat = _html_text(text)
+    month_pattern = "|".join(name.title() for name in MONTHS)
+    match = re.search(
+        rf"Existing-Home Sales for .{{1,80}}? will be released on "
+        rf"(?:Monday|Tuesday|Wednesday|Thursday|Friday),?\s+"
+        rf"({month_pattern})\s+(\d{{1,2}}),\s+(20\d{{2}})\s+at\s+"
+        rf"(\d{{1,2}})(?::(\d{{2}}))?\s*(a\.?m\.?|p\.?m\.?)\s+Eastern\b",
+        flat,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return []
+    month_name, day_text, year_text, hour_text, minute_text, ampm = match.groups()
+    hour = int(hour_text) % 12 + (12 if ampm.lower().startswith("p") else 0)
+    try:
+        local = datetime(
+            int(year_text), MONTHS[month_name.lower()], int(day_text),
+            hour, int(minute_text or 0), tzinfo=ZoneInfo("America/New_York"),
+        )
+    except (ValueError, KeyError):
+        return []
+    return [CriticalEvent(
+        symbol="BTC",
+        kind="EXISTING_HOME_SALES",
+        title="U.S. Existing-Home Sales",
+        starts_at=_iso(local),
+        ends_at=None,
+        exact_time=True,
+        priority=DEFAULT_PRIORITIES["EXISTING_HOME_SALES"],
+        source_name="National Association of Realtors",
+        source_url=(
+            "https://www.nar.realtor/research-and-statistics/"
+            "housing-statistics/existing-home-sales"
+        ),
+    )]
+
+
 def _parse_michigan_schedule(text: str) -> list[CriticalEvent]:
     """Parse the explicitly stated next University of Michigan release."""
     flat = _html_text(text)
@@ -1020,6 +1072,88 @@ def _verified_impact_risk(event: CriticalEvent, *, default: int = 0) -> int:
     return default
 
 
+def _interpolate_risk(value: float, points: tuple[tuple[float, float], ...]) -> int:
+    """Piecewise-linear bounded risk; points must be ascending by x."""
+    if not points:
+        return 0
+    x = float(value)
+    if x <= points[0][0]:
+        return max(0, min(99, int(round(points[0][1]))))
+    for (left_x, left_y), (right_x, right_y) in zip(points, points[1:]):
+        if x <= right_x:
+            span = right_x - left_x
+            fraction = 0.0 if span <= 0 else (x - left_x) / span
+            result = left_y + (right_y - left_y) * fraction
+            return max(0, min(99, int(round(result))))
+    return max(0, min(99, int(round(points[-1][1]))))
+
+
+def _scheduled_time_risk(hours: float | None, *, priority: int = 80) -> int:
+    """Continuous E risk for exact-time scheduled events up to seven days away."""
+    if hours is None:
+        return 20
+    if hours <= 0:
+        base = 95
+    else:
+        base = _interpolate_risk(
+            hours,
+            (
+                (0.0, 95.0),
+                (0.25, 88.0),
+                (1.0, 72.0),
+                (6.0, 45.0),
+                (24.0, 30.0),
+                (72.0, 18.0),
+                (168.0, 8.0),
+            ),
+        )
+    # Major scheduled releases get a small transparent importance premium, but
+    # no release is filtered out because of priority. Priority 80 is neutral.
+    bonus = max(0, min(4, int(round((int(priority) - 80) * 0.4))))
+    adjusted = base + bonus
+    # Do not make a distant high-importance release spill into every altcoin
+    # earlier than the established global-risk window.
+    if base < 45:
+        adjusted = min(44, adjusted)
+    return max(0, min(99, adjusted))
+
+
+def _date_only_supply_risk(hours: float | None) -> int:
+    """Continuous risk for verified dates whose intraday release time is unknown."""
+    if hours is None:
+        return 16
+    days = max(0.0, float(hours) / 24.0)
+    return _interpolate_risk(
+        days,
+        (
+            (0.0, 68.0),
+            (1.0, 52.0),
+            (2.0, 42.0),
+            (3.0, 34.0),
+            (7.0, 22.0),
+            (14.0, 12.0),
+        ),
+    )
+
+
+def _exact_supply_risk(hours: float | None) -> int:
+    if hours is None:
+        return 20
+    return _interpolate_risk(
+        max(0.0, float(hours)),
+        (
+            (0.0, 88.0),
+            (0.25, 82.0),
+            (1.0, 70.0),
+            (6.0, 56.0),
+            (24.0, 45.0),
+            (48.0, 32.0),
+            (168.0, 18.0),
+            (336.0, 10.0),
+        ),
+    )
+
+
 def _event_timing(event: CriticalEvent, now: datetime, config: Mapping[str, Any]) -> tuple[bool, bool, int | None, int, float | None]:
     starts = _parse_iso(event.starts_at)
     ends = _parse_iso(event.ends_at)
@@ -1042,95 +1176,102 @@ def _event_timing(event: CriticalEvent, now: datetime, config: Mapping[str, Any]
     elif ends and now > ends + timedelta(minutes=post_minutes):
         active = False
 
-    # Date-only unlock/supply facts are active for their full verified calendar day.
-    # Their exact minute is unknown, so they reduce risk but never pretend to know
-    # a precise release time or impose a hard block.
+    # Date-only supply facts never pretend to know an intraday release minute.
     if event.kind in {"UNLOCK", "SUPPLY"}:
-        if not event.exact_time and hours == 0:
-            active = True
-            return active, False, 15, 68, hours
-        if hours is None:
-            return active, False, None, 20, hours
-        if hours > 24 * 7:
-            return active, False, None, 18, hours
-        if hours > 48:
-            return active, False, None, 32, hours
-        if hours > 24:
-            return active, False, 20, 45, hours
-        if hours > 0.25:
-            return active, False, 15, 62, hours
-        if event.exact_time and hours >= -(post_minutes / 60.0):
-            return active, False, 10, 88, hours
-        return active, False, None, 0, hours
+        if not event.exact_time:
+            risk = _date_only_supply_risk(hours)
+            if hours is not None and hours < 0:
+                return False, False, None, 0, hours
+            if hours == 0:
+                active = True
+            leverage_cap = 15 if hours is not None and 0 <= hours <= 24 else (
+                20 if hours is not None and 24 < hours <= 48 else None
+            )
+            return active, False, leverage_cap, risk, hours
+
+        risk = _exact_supply_risk(hours)
+        if hours is not None and hours < -(post_minutes / 60.0):
+            return False, False, None, 0, hours
+        leverage_cap = None
+        if hours is not None:
+            if hours <= 0.25:
+                leverage_cap = 10
+            elif hours <= 24:
+                leverage_cap = 15
+            elif hours <= 48:
+                leverage_cap = 20
+        return active, False, leverage_cap, risk, hours
 
     if event.kind in {"NETWORK", "SECURITY"}:
-        return active, active, 10 if active else None, 100 if active else 0, hours
+        return active, active, 10 if active else None, 99 if active else 0, hours
 
     # Fresh verified headlines are visibility signals, not automatic trade bans.
-    # E now reflects verified category severity and, where the feed supplies it,
-    # an explicit quantified impact (for example a measured BTC ETF net flow).
     if event.kind == "NEWS":
         return active, False, None, _verified_impact_risk(event, default=10) if active else 0, hours
     if event.kind == "ETF_FLOW":
         impact = max(10, int(event.impact_score or 0))
         return active, False, None, min(99, impact) if active else 0, hours
 
-    # Deribit expiry OI and share are directly measured, so E can distinguish
-    # qualifying expiries by size while still scaling the warning by proximity.
-    # Direction is never inferred from the option notional.
+    # Expiry risk blends measured OI/share impact with continuous time proximity.
     if event.kind == "EXPIRY":
         impact = _verified_impact_risk(event, default=35)
+        if hours is not None and hours < -(post_minutes / 60.0):
+            return False, False, None, 0, hours
+        time_risk = _scheduled_time_risk(hours, priority=event.priority)
+        blended = max(
+            int(round(impact * 0.55)),
+            int(round(time_risk * 0.75 + impact * 0.25)),
+        )
+        risk = max(0, min(99, blended))
+        block_new = bool(active or (hours is not None and hours <= 0.25))
+        leverage_cap = None
+        if hours is not None:
+            if hours <= 0.25:
+                leverage_cap = 10
+            elif hours <= 1:
+                leverage_cap = 15
+            elif hours <= 6:
+                leverage_cap = 20
         if active:
-            return active, True, 10, min(99, max(95, impact)), hours
-        if hours is None or hours > 6:
-            return active, False, None, max(20, min(60, int(round(impact * 0.55)))), hours
-        if hours > 1:
-            return active, False, 20, max(45, min(75, int(round(impact * 0.72)))), hours
-        if hours > 0.25:
-            return active, False, 15, max(72, min(90, int(round(impact * 0.88)))), hours
-        if hours >= -(post_minutes / 60.0):
-            return active, True, 10, min(99, max(90, impact)), hours
-        return active, False, None, 0, hours
+            risk = min(99, max(95, impact, risk))
+        return active, block_new, leverage_cap, risk, hours
 
-    # Governance, upgrades, maintenance and ETF decisions can matter, but an
-    # already-published headline must not freeze trading. Scheduled exact-time
-    # events receive only bounded leverage/risk controls near the appointment.
+    # Governance/upgrades/maintenance/ETF headlines use verified category impact.
+    # Future exact appointments additionally rise smoothly as they approach.
     if event.kind in {"GOVERNANCE", "UPGRADE", "MAINTENANCE", "ETF"}:
         impact = _verified_impact_risk(event, default=20)
         if active and (hours is None or hours <= 0):
             return active, False, None, impact, hours
-        if hours is None or hours > 6:
-            return active, False, None, 20, hours
-        if hours > 1:
-            return active, False, 20, max(45, min(60, impact)), hours
-        if hours > 0.25:
-            return active, False, 15, max(72, min(78, impact)), hours
-        if hours >= -(post_minutes / 60.0):
-            return active, False, 12, max(82, min(90, impact)), hours
-        return active, False, None, 0, hours
+        if hours is not None and hours < -(post_minutes / 60.0):
+            return False, False, None, 0, hours
+        time_risk = _scheduled_time_risk(hours, priority=event.priority)
+        risk = max(time_risk, min(55, impact))
+        leverage_cap = None
+        if hours is not None:
+            if hours <= 0.25:
+                leverage_cap = 12
+            elif hours <= 1:
+                leverage_cap = 15
+            elif hours <= 6:
+                leverage_cap = 20
+        return active, False, leverage_cap, min(99, risk), hours
 
-    block_new = False
-    leverage_cap: int | None = None
-    risk = 0
+    # US macro and other exact scheduled events: continuous E00-E99 while the
+    # safety windows remain identical to the prior discrete implementation.
     if active:
-        risk = 95
-        block_new = True
-        leverage_cap = 10
-    elif hours is None:
-        risk = 20
-    elif hours > 6:
-        risk = 20
-    elif hours > 1:
-        risk = 45
-        leverage_cap = 20
-    elif hours > 0.25:
-        risk = 72
-        leverage_cap = 15
-    elif hours >= -(post_minutes / 60.0):
-        risk = 95
-        block_new = True
-        leverage_cap = 10
-    return active, block_new, leverage_cap, risk, hours
+        return active, True, 10, min(99, max(95, _scheduled_time_risk(hours, priority=event.priority))), hours
+    if hours is None:
+        return active, False, None, _scheduled_time_risk(None, priority=event.priority), hours
+    if hours < -(post_minutes / 60.0):
+        return False, False, None, 0, hours
+    risk = _scheduled_time_risk(hours, priority=event.priority)
+    if hours <= 0.25:
+        return active, True, 10, risk, hours
+    if hours <= 1:
+        return active, False, 15, risk, hours
+    if hours <= 6:
+        return active, False, 20, risk, hours
+    return active, False, None, risk, hours
 
 
 def _event_code(event: CriticalEvent, now: datetime, timezone_name: str, active: bool) -> str:
@@ -1262,8 +1403,27 @@ def _pick_marks(
                 selected = min(recent_rows, key=lambda row: abs(float(row[5] or 0.0)))
         else:
             selected = max(rows, key=ranking)
-        marks[symbol] = _mark_from_row(
+        primary = _mark_from_row(
             selected, now=now, timezone_name=timezone_name
+        )
+        aggregate_risk = max(int(row[4]) for row in rows)
+        aggregate_priority = max(int(row[0].priority) for row in rows)
+        aggregate_block = any(bool(row[2]) for row in rows)
+        aggregate_caps = [int(row[3]) for row in rows if row[3] is not None]
+        marks[symbol] = EventMark(
+            symbol=primary.symbol,
+            code=primary.code,
+            kind=primary.kind,
+            title=primary.title,
+            starts_at=primary.starts_at,
+            ends_at=primary.ends_at,
+            priority=aggregate_priority,
+            risk=aggregate_risk,
+            active=primary.active,
+            block_new=aggregate_block,
+            leverage_cap=min(aggregate_caps) if aggregate_caps else None,
+            source_name=primary.source_name,
+            source_url=primary.source_url,
         )
     return marks
 
@@ -1328,6 +1488,41 @@ def _pick_display_marks(
     local_now = now.astimezone(zone)
     post_minutes = max(0, int(config.get("post_event_block_minutes", 10)))
     rows = _eligible_event_rows(events, symbols, now, config).get("BTC", [])
+
+    # Never let the normal BTC macro/price rotation hide an acute verified BTC
+    # incident. Likewise, an imminent non-macro event that is itself strong
+    # enough to block entries or reaches E72+ temporarily owns the BTC slot.
+    # Macro risk remains fully active in ``risk_marks`` and returns to the display
+    # immediately after the higher-priority event clears.
+    hard_rows = [
+        row for row in rows
+        if row[0].kind in {"SECURITY", "NETWORK"} and (row[1] or row[2])
+    ]
+    if hard_rows:
+        selected_hard = max(
+            hard_rows,
+            key=lambda row: (int(row[4]), int(row[0].priority), int(bool(row[1]))),
+        )
+        display["BTC"] = _mark_from_row(
+            selected_hard, now=now, timezone_name=timezone_name
+        )
+        return display
+
+    urgent_nonmacro = [
+        row for row in rows
+        if row[0].kind not in US_MACRO_KINDS
+        and row[0].kind != "ETF_FLOW"
+        and (bool(row[2]) or int(row[4]) >= 72)
+    ]
+    if urgent_nonmacro:
+        selected_urgent = max(
+            urgent_nonmacro,
+            key=lambda row: (int(bool(row[2])), int(row[4]), int(row[0].priority), int(bool(row[1]))),
+        )
+        display["BTC"] = _mark_from_row(
+            selected_urgent, now=now, timezone_name=timezone_name
+        )
+        return display
     today_rows = [
         row for row in rows
         if row[0].kind in US_MACRO_KINDS
@@ -1463,6 +1658,8 @@ def load_critical_events(
         "adp": str(section.get("adp_schedule_url", "https://adpemploymentreport.com/")),
         "fred-adp": str(section.get("fred_adp_schedule_url", "https://fred.stlouisfed.org/releases/calendar?rid=194&view=year")),
         "fred-claims": str(section.get("fred_claims_schedule_url", "https://fred.stlouisfed.org/releases/calendar?rid=180&view=year")),
+        "fred-ip": str(section.get("fred_industrial_production_schedule_url", "https://fred.stlouisfed.org/releases/calendar?rid=13&view=year")),
+        "nar-ehs": str(section.get("nar_existing_home_sales_url", "https://www.nar.realtor/research-and-statistics/housing-statistics/existing-home-sales")),
         "michigan": str(section.get("michigan_schedule_url", "https://www.sca.isr.umich.edu/")),
         "confidence": str(section.get("consumer_confidence_url", "https://www.conference-board.org/topics/consumer-confidence/")),
         "fomc": str(section.get("fomc_calendar_url", "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm")),
@@ -1505,6 +1702,10 @@ def load_critical_events(
                 parsed = _parse_fred_adp_schedule(value)
             elif name == "fred-claims":
                 parsed = _parse_fred_claims_schedule(value)
+            elif name == "fred-ip":
+                parsed = _parse_fred_industrial_production_schedule(value)
+            elif name == "nar-ehs":
+                parsed = _parse_nar_existing_home_sales(value)
             elif name == "michigan":
                 parsed = _parse_michigan_schedule(value)
             elif name == "confidence":
@@ -1598,6 +1799,18 @@ def load_critical_events(
             symbols=symbols,
             state=prior_project_state,
             timeout=timeout,
+            etf_min_impact_score=int(
+                section.get(
+                    "etf_flow_min_impact_score",
+                    section.get("btc_etf_flow_min_impact_score", 30),
+                )
+            ),
+            etf_realert_impact_delta=int(
+                section.get(
+                    "etf_flow_realert_impact_delta",
+                    section.get("btc_etf_flow_realert_impact_delta", 8),
+                )
+            ),
         )
     except Exception as exc:
         # Per-source network failures are already contained by the collector.

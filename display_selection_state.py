@@ -1,4 +1,4 @@
-# r1
+# r2
 """Small persistent state for stable Discord radar/detail membership."""
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-STATE_VERSION = "display-selection-v710-r1"
-COMPATIBLE_STATE_VERSIONS = {STATE_VERSION, "display-selection-v700-r1"}
+STATE_VERSION = "display-selection-v710-r2"
+COMPATIBLE_STATE_VERSIONS = {STATE_VERSION, "display-selection-v710-r1", "display-selection-v700-r1"}
 
 
 def _parse_time(value: Any) -> datetime | None:

@@ -1,6 +1,6 @@
 {
   "schema_version": "7.1.0",
-  "package_revision": "r1",
+  "package_revision": "r2",
   "lighter_base_url": "https://mainnet.zklighter.elliot.ai/api/v1",
   "timezone": "Europe/Berlin",
   "candidate_symbols": [
@@ -221,6 +221,7 @@
       "github.com",
       "hyperfoundation.org",
       "hyperliquid.xyz",
+      "hyperliquid.statuspage.io",
       "iog.io",
       "iohk.io",
       "ismworld.org",
@@ -310,18 +311,21 @@
       "ETH": [
         "ethereum.org",
         "ethereum.foundation",
-        "github.com"
+        "github.com",
+        "farside.co.uk"
       ],
       "SOL": [
         "solana.com",
         "github.com",
-        "status.solana.com"
+        "status.solana.com",
+        "farside.co.uk"
       ],
       "HYPE": [
         "hyperfoundation.org",
         "hyperliquid.xyz",
         "tokenomist.ai",
-        "hyperliquid.statuspage.io"
+        "hyperliquid.statuspage.io",
+        "farside.co.uk"
       ],
       "XRP": [
         "xrpl.org",
@@ -381,7 +385,11 @@
         "cashcat.cc",
         "cashcattoken.xyz"
       ]
-    }
+    },
+    "fred_industrial_production_schedule_url": "https://fred.stlouisfed.org/releases/calendar?rid=13&view=year",
+    "nar_existing_home_sales_url": "https://www.nar.realtor/research-and-statistics/housing-statistics/existing-home-sales",
+    "etf_flow_min_impact_score": 30,
+    "etf_flow_realert_impact_delta": 8
   },
   "incident_detection": {
     "enabled": true,

@@ -1,4 +1,4 @@
-# r1
+# r2
 """Lighter-native signal engine with persistent J/E context for CF v7.1.0."""
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from signal_transition_guard import apply_signal_transition_guard
 from display_selection_state import load_display_selection_state, save_display_selection_state
 
 APP_VERSION = "7.1.0"
-PACKAGE_REVISION = "r1"
+PACKAGE_REVISION = "r2"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 GLOBAL_BTC_EVENT_KINDS = {
@@ -41,7 +41,8 @@ GLOBAL_BTC_EVENT_KINDS = {
     "FACTORY_ORDERS", "CONSTRUCTION", "BUSINESS_INVENTORIES",
     "ADVANCE_INDICATORS", "CLAIMS", "ADP",
     "CONSUMER_CONFIDENCE", "MICHIGAN", "ISM_MANUFACTURING",
-    "ISM_SERVICES", "EXPIRY", "ETF",
+    "ISM_SERVICES", "INDUSTRIAL_PRODUCTION", "EXISTING_HOME_SALES",
+    "EXPIRY", "ETF", "ETF_FLOW",
 }
 
 STATE_TIER = {
@@ -55,9 +56,10 @@ STATE_TIER = {
     "INVALID_DATA": 0,
 }
 
-DAILY_CACHE_SCHEMA = "daily-candles-v710-r1"
+DAILY_CACHE_SCHEMA = "daily-candles-v710-r2"
 COMPATIBLE_DAILY_CACHE_IDENTITIES = {
     (DAILY_CACHE_SCHEMA, APP_VERSION, PACKAGE_REVISION),
+    ("daily-candles-v710-r1", APP_VERSION, "r1"),
     *(("daily-candles-v700-r1", "7.0.0", f"r{revision}") for revision in range(1, 7)),
 }
 FUNDING_NORMALIZATION_HOURS = 8.0
@@ -1805,6 +1807,7 @@ class LighterMonitor:
         self.last_snapshots: dict[str, dict[str, Any]] = {}
         self.last_incidents: IncidentSnapshot | None = None
         self.last_header_event_symbols: tuple[str, ...] = ()
+        self.last_displayed_event_symbols: tuple[str, ...] = ()
         self.generated_at = datetime.now(timezone.utc)
 
     def _validate_config(self) -> None:
@@ -3377,6 +3380,9 @@ class LighterMonitor:
         }
         critical_warnings = {"SEC!", "NET!", "SHK!"}
 
+        def is_critical_token(value: str) -> bool:
+            return any(marker in str(value or "") for marker in critical_warnings)
+
         max_len = int(self.config.get("discord_max_codepoints_per_line", 42))
         max_columns = int(self.config.get("discord_max_display_columns_per_line", max_len + 4))
         header_max_len = int(self.config.get("discord_max_header_codepoints_per_line", max_len))
@@ -3410,7 +3416,7 @@ class LighterMonitor:
             for item in summary:
                 codes = warning_codes.get(item.symbol, [])
                 for index in range(len(codes) - 1, -1, -1):
-                    if codes[index] in critical_warnings:
+                    if is_critical_token(codes[index]):
                         continue
                     del codes[index]
                     changed = True
@@ -3424,7 +3430,7 @@ class LighterMonitor:
                 if item.symbol in reserved:
                     continue
                 code = event_codes.get(item.symbol, "")
-                if code and code not in critical_warnings:
+                if code and not is_critical_token(code):
                     event_codes[item.symbol] = ""
                     header = summary_line()
                     if header_fits(header):
@@ -3460,11 +3466,11 @@ class LighterMonitor:
             )
             for item in removable:
                 code = event_codes.get(item.symbol, "")
-                if code in critical_warnings:
+                if is_critical_token(code):
                     event_codes[item.symbol] = ""
                 warning_codes[item.symbol] = [
                     value for value in warning_codes.get(item.symbol, [])
-                    if value not in critical_warnings
+                    if not is_critical_token(value)
                 ]
                 header = summary_line()
                 if header_fits(header):
@@ -3475,6 +3481,7 @@ class LighterMonitor:
         self.last_header_event_symbols = tuple(
             item.symbol for item in summary if event_codes.get(item.symbol, "")
         )
+        displayed_event_symbols = set(self.last_header_event_symbols)
         lines = [header]
         btc = next((item for item in ranked if item.symbol == "BTC"), None)
         btc_detail_allowed = btc is not None and not (
@@ -3500,7 +3507,7 @@ class LighterMonitor:
                 removable = next(
                     (
                         index for index in range(len(extras) - 1, -1, -1)
-                        if extras[index] not in critical_warnings and extras[index] != event
+                        if not is_critical_token(extras[index]) and extras[index] != event
                     ),
                     None,
                 )
@@ -3508,11 +3515,13 @@ class LighterMonitor:
                     break
                 extras.pop(removable)
                 line = core if not extras else f"{core} {' '.join(extras)}"
-            if not line_fits(line) and event and event not in critical_warnings:
+            if not line_fits(line) and event and not is_critical_token(event):
                 extras = [value for value in extras if value != event]
                 line = core if not extras else f"{core} {' '.join(extras)}"
             if not line_fits(line):
                 raise RuntimeError(f"Discord-Detailzeilenlimit überschritten: {item.symbol}")
+            if event and event in extras:
+                displayed_event_symbols.add(item.symbol)
             return line
 
         if btc_detail_allowed and btc is not None:
@@ -3523,6 +3532,7 @@ class LighterMonitor:
             fallback = next((item for item in ranked if item.symbol not in {x.symbol for x in summary}), ranked[0])
             lines.append(detail_line(fallback))
 
+        self.last_displayed_event_symbols = tuple(sorted(displayed_event_symbols))
         save_display_selection_state(
             display_selection_state_path,
             now=now,

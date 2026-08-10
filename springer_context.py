@@ -1,4 +1,4 @@
-# r1
+# r2
 """Persistent direction-free springer strength J00..J99 for CF v7.1.0.
 
 J measures how often and how quickly a market makes meaningful 15-minute moves
@@ -17,8 +17,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-HISTORY_SCHEMA = "springer-history-v710-r1"
-COMPATIBLE_HISTORY_SCHEMAS = {HISTORY_SCHEMA, "springer-history-v700-r1"}
+HISTORY_SCHEMA = "springer-history-v710-r2"
+COMPATIBLE_HISTORY_SCHEMAS = {HISTORY_SCHEMA, "springer-history-v710-r1", "springer-history-v700-r1"}
 
 
 def _f(value: Any, default: float = 0.0) -> float:

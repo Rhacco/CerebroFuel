@@ -1,4 +1,4 @@
-# r1
+# r2
 """Verified coin-event collection for the GitHub runner.
 
 The Cloudflare Worker stays a tiny scheduler. Network/status/news/release/unlock
@@ -21,9 +21,9 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 APP_VERSION = "7.1.0"
-PACKAGE_REVISION = "r1"
-STATE_VERSION = "project-events-v710-r1"
-COMPATIBLE_STATE_VERSIONS = {STATE_VERSION, "project-events-v700-r1"}
+PACKAGE_REVISION = "r2"
+STATE_VERSION = "project-events-v710-r2"
+COMPATIBLE_STATE_VERSIONS = {STATE_VERSION, "project-events-v710-r1", "project-events-v700-r1"}
 USER_AGENT = f"crypto-signal-monitor/{APP_VERSION}"
 
 ACTIVE_RETENTION_SECONDS = 25 * 60
@@ -39,6 +39,11 @@ STATUS_BATCH_SIZE = 4
 RELEASE_BATCH_SIZE = 4
 UNLOCK_BATCH_SIZE = 4
 ETF_SOURCE_URL = "https://farside.co.uk/btc/"
+ETF_ALT_SOURCES: dict[str, tuple[str, str]] = {
+    "ETH": ("https://farside.co.uk/eth/", "Ethereum"),
+    "SOL": ("https://farside.co.uk/sol/", "Solana"),
+    "HYPE": ("https://farside.co.uk/hyp/", "Hyperliquid"),
+}
 
 PROJECTS: dict[str, dict[str, Any]] = {
     "BTC": {"domains": ["bitcoin.org", "bitcoincore.org"], "github": ["bitcoin/bitcoin"]},
@@ -79,7 +84,9 @@ STATUSPAGE_SOURCES = (
 )
 HTML_STATUS_SOURCES = (
     ("JUP", "https://status.jup.ag/", "All services are online", "Jupiter Status"),
-    ("NEAR", "https://status.near.org/", "No problems detected", "NEAR Status"),
+)
+STRUCTURED_STATUS_SOURCES = (
+    ("NEAR", "https://status.near.org/json", "NEAR Status"),
 )
 OFFICIAL_FEEDS = (
     ("SOL", "https://solana.com/changelog/rss.xml", "Solana Changelog"),
@@ -107,6 +114,8 @@ def collect_project_event_feed(
     symbols: Iterable[str],
     state: Mapping[str, Any] | None,
     timeout: float = 8.0,
+    etf_min_impact_score: int = 30,
+    etf_realert_impact_delta: int = 8,
 ) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
     """Return verified project feed, updated persistent state and diagnostics."""
     current_symbols = {str(value).upper().strip() for value in symbols if str(value).strip()}
@@ -152,6 +161,9 @@ def collect_project_event_feed(
     for row in HTML_STATUS_SOURCES:
         if row[0] in current_symbols:
             status_sources.append({"type": "html", "row": row, "id": f"status:{row[0]}:{row[1]}"})
+    for row in STRUCTURED_STATUS_SOURCES:
+        if row[0] in current_symbols:
+            status_sources.append({"type": "near_json", "row": row, "id": f"status:{row[0]}:{row[1]}"})
     status_due = sorted(
         (source for source in status_sources if due(source["id"], STATUS_REFRESH_SECONDS)),
         key=lambda source: last_ok(source["id"]),
@@ -170,10 +182,6 @@ def collect_project_event_feed(
         else:
             diagnostics.append(f"status {source['row'][0]}: {_short_error(error)}")
 
-    if "XRP" in current_symbols:
-        escrow = _scheduled_xrp_escrow(now)
-        if escrow:
-            fresh.append(escrow)
 
     gdelt_batches = [
         batch for batch in _build_gdelt_queries(current_symbols)
@@ -214,35 +222,120 @@ def collect_project_event_feed(
         else:
             diagnostics.append(f"feed {source['row'][0]}: {_short_error(error)}")
 
-    etf_last_date = str(old.get("etf_last_date") or "")
-    try:
-        etf_last_total = float(old["etf_last_total_m"]) if old.get("etf_last_total_m") is not None else None
-    except (TypeError, ValueError):
-        etf_last_total = None
-    if "BTC" in current_symbols and due("etf:BTC", ETF_REFRESH_SECONDS):
-        mark_attempt("etf:BTC")
+    # Farside ETF flows: BTC keeps the long-standing absolute calibration; the
+    # pooled alt ETF products use each page's own recent realized flow history
+    # so no made-up cross-asset dollar threshold is required.
+    raw_etf_states = old.get("etf_by_symbol")
+    etf_by_symbol: dict[str, dict[str, Any]] = {}
+    if isinstance(raw_etf_states, Mapping):
+        for symbol, raw in raw_etf_states.items():
+            if str(symbol).upper() in ({"BTC"} | set(ETF_ALT_SOURCES)) and isinstance(raw, Mapping):
+                etf_by_symbol[str(symbol).upper()] = dict(raw)
+    if "BTC" not in etf_by_symbol:
+        # v7.1-r1/v7.0 migration from the former single-BTC scalar state.
+        etf_by_symbol["BTC"] = {
+            "last_date": str(old.get("etf_last_date") or ""),
+            "last_total_m": old.get("etf_last_total_m"),
+            "last_alert_date": str(old.get("etf_last_alert_date") or ""),
+            "last_alert_total_m": old.get("etf_last_alert_total_m"),
+            "last_alert_impact": old.get("etf_last_alert_impact"),
+        }
+    min_flow_impact = max(10, min(90, int(etf_min_impact_score)))
+    realert_delta = max(1, min(30, int(etf_realert_impact_delta)))
+
+    etf_sources: dict[str, tuple[str, str]] = {
+        "BTC": (ETF_SOURCE_URL, "Bitcoin"),
+        **ETF_ALT_SOURCES,
+    }
+    for symbol, (source_url, asset_name) in etf_sources.items():
+        if symbol not in current_symbols:
+            continue
+        source_id = f"etf:{symbol}"
+        if not due(source_id, ETF_REFRESH_SECONDS):
+            continue
+        mark_attempt(source_id)
+        state_row = dict(etf_by_symbol.get(symbol) or {})
+        last_date = str(state_row.get("last_date") or "")
         try:
-            row = _fetch_bitcoin_etf_flow(now, timeout)
-            mark_ok("etf:BTC")
+            last_total = float(state_row["last_total_m"]) if state_row.get("last_total_m") is not None else None
+        except (TypeError, ValueError):
+            last_total = None
+        last_alert_date = str(state_row.get("last_alert_date") or "")
+        try:
+            last_alert_total = float(state_row["last_alert_total_m"]) if state_row.get("last_alert_total_m") is not None else None
+        except (TypeError, ValueError):
+            last_alert_total = None
+        try:
+            last_alert_impact = int(state_row.get("last_alert_impact") or 0)
+        except (TypeError, ValueError):
+            last_alert_impact = 0
+
+        try:
+            if symbol == "BTC":
+                row = _fetch_bitcoin_etf_flow(now, timeout)
+                impact = _etf_flow_impact_score(float(row["total_m"])) if row else 0
+            else:
+                row = _fetch_alt_etf_flow(symbol, source_url, now, timeout)
+                impact = (
+                    _relative_etf_flow_impact_score(
+                        float(row["total_m"]), row.get("history_totals_m") or []
+                    )
+                    if row else 0
+                )
+            mark_ok(source_id)
             if row:
-                has_baseline = bool(etf_last_date) and etf_last_total is not None
-                changed = row["date"] != etf_last_date or round(row["total_m"]) != round(etf_last_total)
-                if has_baseline and changed and abs(round(row["total_m"])) >= 1:
-                    rounded = round(row["total_m"])
+                total_m = float(row["total_m"])
+                changed = (
+                    row["date"] != last_date
+                    or last_total is None
+                    or round(total_m, 1) != round(last_total, 1)
+                )
+                same_alert_day = row["date"] == last_alert_date
+                sign_flip = bool(
+                    same_alert_day
+                    and last_alert_total is not None
+                    and total_m * last_alert_total < 0
+                )
+                meaningful_realert = bool(
+                    same_alert_day
+                    and abs(impact - last_alert_impact) >= realert_delta
+                )
+                # A fresh deployment only establishes a baseline. A flow event
+                # is emitted when the current Farside row changes afterwards.
+                has_baseline = bool(last_date) and last_total is not None
+                should_alert = bool(
+                    has_baseline
+                    and changed
+                    and impact >= min_flow_impact
+                    and (not same_alert_day or sign_flip or meaningful_realert)
+                )
+                if should_alert:
+                    rounded = round(total_m)
                     signed = f"{'+' if rounded >= 0 else '-'}{abs(rounded)}M"
                     fresh.append(_event_row(
-                        symbol="BTC", kind="ETF_FLOW", title=f"US spot Bitcoin ETF net flow {signed}",
+                        symbol=symbol, kind="ETF_FLOW",
+                        title=f"US {asset_name} ETF net flow {signed}",
                         starts_at=now_iso,
                         ends_at=datetime.fromtimestamp(now_s + ETF_ACTIVE_RETENTION_SECONDS, timezone.utc).isoformat(),
                         expires_at=datetime.fromtimestamp(now_s + ETF_ACTIVE_RETENTION_SECONDS, timezone.utc).isoformat(),
                         exact_time=True, priority=91,
-                        source_name="Farside Investors Bitcoin ETF Flow", source_url=ETF_SOURCE_URL,
-                        active=True, source_type="etf_flow", impact_score=_etf_flow_impact_score(row["total_m"]),
+                        source_name=f"Farside Investors {asset_name} ETF Flow",
+                        source_url=source_url, active=True, source_type="etf_flow",
+                        impact_score=impact,
                     ))
-                etf_last_date = row["date"]
-                etf_last_total = row["total_m"]
-        except Exception as exc:  # noqa: BLE001 - diagnostics must retain partial feed
-            diagnostics.append(f"etf: {_short_error(exc)}")
+                    last_alert_date = row["date"]
+                    last_alert_total = total_m
+                    last_alert_impact = impact
+                state_row = {
+                    "last_date": row["date"],
+                    "last_total_m": total_m,
+                    "last_alert_date": last_alert_date or None,
+                    "last_alert_total_m": last_alert_total,
+                    "last_alert_impact": last_alert_impact or None,
+                }
+                etf_by_symbol[symbol] = state_row
+        except Exception as exc:  # noqa: BLE001 - diagnostics retain partial feed
+            diagnostics.append(f"etf {symbol}: {_short_error(exc)}")
 
     release_sources: list[dict[str, str]] = []
     for symbol in sorted(current_symbols):
@@ -306,8 +399,13 @@ def collect_project_event_feed(
         "updated_at": now_s,
         "source_last_ok": source_last_ok,
         "source_last_attempt": source_last_attempt,
-        "etf_last_date": etf_last_date or None,
-        "etf_last_total_m": etf_last_total,
+        "etf_by_symbol": etf_by_symbol,
+        # Keep BTC scalar mirrors for seamless rollback/older-state readers.
+        "etf_last_date": (etf_by_symbol.get("BTC") or {}).get("last_date"),
+        "etf_last_total_m": (etf_by_symbol.get("BTC") or {}).get("last_total_m"),
+        "etf_last_alert_date": (etf_by_symbol.get("BTC") or {}).get("last_alert_date"),
+        "etf_last_alert_total_m": (etf_by_symbol.get("BTC") or {}).get("last_alert_total_m"),
+        "etf_last_alert_impact": (etf_by_symbol.get("BTC") or {}).get("last_alert_impact"),
         "events": merged_events,
         "seen_events": seen,
         "source_health": source_health,
@@ -341,19 +439,145 @@ def _fetch_status_source(source: Mapping[str, Any], now: datetime, timeout: floa
     row = source["row"]
     if source["type"] == "statuspage":
         return _fetch_statuspage(row[0], row[1], row[2], row[3], now, timeout)
+    if source["type"] == "near_json":
+        return _fetch_near_mainnet_status(row[0], row[1], row[2], now, timeout)
     return _fetch_html_status(row[0], row[1], row[2], row[3], now, timeout)
+
+
+def _fetch_near_mainnet_status(
+    symbol: str, url: str, source_name: str, now: datetime, timeout: float
+) -> list[dict[str, Any]]:
+    """Use NEAR's structured status payload and ignore testnet-only incidents."""
+    payload = json.loads(_fetch_text(url, timeout))
+    if not isinstance(payload, Mapping):
+        raise RuntimeError("NEAR status payload is not an object")
+    monitors = payload.get("monitors")
+    if not isinstance(monitors, Mapping):
+        raise RuntimeError("NEAR status payload has no monitors")
+    mainnet = monitors.get("mainnet")
+    if not isinstance(mainnet, list) or not mainnet:
+        raise RuntimeError("NEAR status payload has no mainnet monitors")
+    unhealthy: list[str] = []
+    for monitor in mainnet:
+        if not isinstance(monitor, Mapping):
+            continue
+        status = str(monitor.get("status") or "").strip().lower()
+        if status in {"up", "operational", "ok", "healthy"}:
+            continue
+        label = _clean_text(monitor.get("label") or "NEAR mainnet service")
+        unhealthy.append(label)
+    if not unhealthy:
+        return []
+    title = "NEAR mainnet disruption: " + ", ".join(unhealthy[:3])
+    return [_event_row(
+        symbol=symbol,
+        kind="NETWORK",
+        title=title,
+        starts_at=now.isoformat(),
+        exact_time=True,
+        priority=100,
+        source_name=source_name,
+        source_url="https://status.near.org/",
+        active=True,
+        source_type="status",
+    )]
+
+
+_STATUSPAGE_NON_MAINNET_TERMS: dict[str, tuple[str, ...]] = {
+    "SUI": ("testnet", "devnet"),
+    "AVAX": ("fuji", "testnet"),
+}
+
+_STATUSPAGE_NON_MARKET_COMPONENT_TERMS: dict[str, tuple[str, ...]] = {
+    # Solana's public Statuspage also covers informational web/explorer tools.
+    # An isolated outage there is not equivalent to a mainnet/RPC incident.
+    "SOL": ("explorer", "solana.com", "break solana"),
+    # Avalanche's page includes wallet/cloud/explorer/support products alongside
+    # the networks. Isolated utility-product incidents must not become AVAX
+    # NETWORK/no-trade warnings.
+    "AVAX": (
+        "core browser extension", "core web", "core mobile", "avacloud",
+        "explorer", "faucet", "notify", "stats",
+    ),
+}
+
+
+def _statuspage_component_names(incident: Mapping[str, Any]) -> list[str]:
+    components = incident.get("components")
+    if not isinstance(components, list):
+        return []
+    names: list[str] = []
+    for component in components:
+        if not isinstance(component, Mapping):
+            continue
+        name = _clean_text(component.get("name") or "").strip().lower()
+        if name:
+            names.append(name)
+    return names
+
+
+def _statuspage_incident_text(incident: Mapping[str, Any]) -> str:
+    parts = [_clean_text(incident.get("name") or "")]
+    updates = incident.get("incident_updates")
+    if isinstance(updates, list):
+        for update in updates[:8]:
+            if isinstance(update, Mapping):
+                parts.append(_clean_text(update.get("body") or ""))
+    return " ".join(part for part in parts if part).lower()
+
+
+def _statuspage_irrelevant_scope(symbol: str, incident: Mapping[str, Any]) -> bool:
+    """Ignore only incidents that are explicitly outside the traded main market.
+
+    Statuspage instances may mix mainnet and test/dev networks or unrelated
+    utility products on one page. We require explicit component/text evidence;
+    ambiguous incidents remain visible rather than being silently discarded.
+    """
+    symbol = symbol.upper()
+    components = _statuspage_component_names(incident)
+
+    non_mainnet_terms = _STATUSPAGE_NON_MAINNET_TERMS.get(symbol, ())
+    if components and non_mainnet_terms:
+        # Component metadata is the strongest signal: only suppress if every
+        # affected component is explicitly test/dev-only.
+        if all(any(term in name for term in non_mainnet_terms) for name in components):
+            return True
+
+    utility_terms = _STATUSPAGE_NON_MARKET_COMPONENT_TERMS.get(symbol, ())
+    if components and utility_terms:
+        # Likewise, suppress isolated status incidents for clearly auxiliary
+        # products. Mixed utility + network incidents remain visible.
+        if all(any(term in name for term in utility_terms) for name in components):
+            return True
+
+    # Some Statuspage incident payloads omit component metadata. In that case
+    # suppress only when the wording itself explicitly says test/dev-only or
+    # explicitly confirms mainnet is unaffected/operational.
+    if non_mainnet_terms:
+        text = _statuspage_incident_text(incident)
+        if any(term in text for term in non_mainnet_terms):
+            if re.search(r"\b(?:testnet|devnet|fuji)\b.{0,100}\bonly\b|\bonly\b.{0,100}\b(?:testnet|devnet|fuji)\b", text, re.I):
+                return True
+            if re.search(r"\bmainnet\b.{0,100}\b(?:fully\s+)?(?:operational|unaffected|healthy)\b", text, re.I):
+                return True
+    return False
 
 
 def _fetch_statuspage(symbol: str, url: str, source_name: str, collection: str, now: datetime, timeout: float) -> list[dict[str, Any]]:
     payload = json.loads(_fetch_text(url, timeout))
-    rows = payload.get(collection) if isinstance(payload, Mapping) else []
-    rows = rows if isinstance(rows, list) else []
+    if not isinstance(payload, Mapping) or collection not in payload:
+        raise RuntimeError(f"{source_name} payload has no {collection}")
+    rows = payload.get(collection)
+    if not isinstance(rows, list):
+        raise RuntimeError(f"{source_name} {collection} is not a list")
     events: list[dict[str, Any]] = []
     for incident in rows:
         if not isinstance(incident, Mapping):
             continue
         status = str(incident.get("status") or "").lower()
         if status in {"resolved", "completed"}:
+            continue
+        if _statuspage_irrelevant_scope(symbol, incident):
             continue
         title = _clean_text(incident.get("name") or "Network incident")
         scheduled = collection == "scheduled_maintenances" or status == "scheduled" or bool(re.search(r"maintenance", title, re.I))
@@ -381,7 +605,9 @@ def _fetch_html_status(symbol: str, url: str, healthy_marker: str, source_name: 
     if healthy_marker.lower() in flat.lower():
         return []
     if not re.search(r"degraded|outage|incident|disruption|down|halt|stalled|critical", flat, re.I):
-        return []
+        # A changed/blocked status page must degrade coverage rather than being
+        # silently interpreted as healthy.
+        raise RuntimeError(f"{source_name} status marker not recognized")
     return [_event_row(
         symbol=symbol,
         kind="NETWORK",
@@ -419,8 +645,11 @@ def _fetch_gdelt_batch(batch: Mapping[str, Any], now: datetime, timeout: float) 
         "timespan": "1d",
     })
     payload = json.loads(_fetch_text(f"https://api.gdeltproject.org/api/v2/doc/doc?{params}", timeout))
-    articles = payload.get("articles") if isinstance(payload, Mapping) else []
-    articles = articles if isinstance(articles, list) else []
+    if not isinstance(payload, Mapping) or "articles" not in payload:
+        raise RuntimeError("GDELT payload has no articles list")
+    articles = payload.get("articles")
+    if not isinstance(articles, list):
+        raise RuntimeError("GDELT articles is not a list")
     result: list[dict[str, Any]] = []
     for article in articles:
         if not isinstance(article, Mapping):
@@ -452,6 +681,8 @@ def _fetch_gdelt_batch(batch: Mapping[str, Any], now: datetime, timeout: float) 
 def _fetch_official_feed(row: tuple[str, str, str], now: datetime, timeout: float) -> list[dict[str, Any]]:
     symbol, url, source_name = row
     text = _fetch_text(url, timeout)
+    if not re.search(r"<(?:rss|feed)\b", text, re.I):
+        raise RuntimeError(f"{source_name} feed root not recognized")
     blocks = [match.group(1) for match in re.finditer(r"<item(?:\s[^>]*)?>([\s\S]*?)</item>", text, re.I)]
     blocks.extend(match.group(1) for match in re.finditer(r"<entry(?:\s[^>]*)?>([\s\S]*?)</entry>", text, re.I))
     result: list[dict[str, Any]] = []
@@ -527,7 +758,9 @@ def _classify_headline(title: str) -> tuple[str, int] | None:
 def _fetch_github_releases(symbol: str, repo: str, now: datetime, timeout: float) -> list[dict[str, Any]]:
     url = f"https://github.com/{repo}/releases.atom"
     text = _fetch_text(url, timeout)
-    entries = [match.group(1) for match in re.finditer(r"<entry>([\s\S]*?)</entry>", text, re.I)][:3]
+    if not re.search(r"<feed\b", text, re.I):
+        raise RuntimeError(f"GitHub {repo} release feed not recognized")
+    entries = [match.group(1) for match in re.finditer(r"<entry(?:\s[^>]*)?>([\s\S]*?)</entry>", text, re.I)][:3]
     result: list[dict[str, Any]] = []
     for block in entries:
         title = _clean_text(_decode_xml(_capture(block, r"<title[^>]*>([\s\S]*?)</title>")))
@@ -571,7 +804,53 @@ def _fetch_bitcoin_etf_flow(now: datetime, timeout: float) -> dict[str, Any] | N
     return row
 
 
-def _parse_farside_bitcoin_etf_flow(text: str) -> dict[str, Any] | None:
+def _fetch_alt_etf_flow(symbol: str, url: str, now: datetime, timeout: float) -> dict[str, Any] | None:
+    rows = _parse_farside_etf_rows(_fetch_text(url, timeout))
+    if not rows:
+        raise RuntimeError(f"Farside {symbol} ETF rows not recognized")
+    latest = dict(rows[-1])
+    row_time = datetime.fromisoformat(f"{latest['date']}T00:00:00+00:00").timestamp()
+    if now.timestamp() - row_time > 7 * 86400:
+        raise RuntimeError(f"Farside {symbol} ETF row is stale")
+    latest["history_totals_m"] = [
+        float(row["total_m"]) for row in rows[-91:-1]
+        if math.isfinite(float(row["total_m"]))
+    ]
+    return latest
+
+
+def _relative_etf_flow_impact_score(total_m: float, historical_totals_m: Iterable[float]) -> int:
+    """Score an alt ETF flow only against that product's own realized history.
+
+    This deliberately avoids a guessed cross-asset USD threshold. With fewer
+    than six non-zero prior observations there is not enough evidence to call a
+    flow exceptional, so no actionable score is produced.
+    """
+    amount = abs(float(total_m))
+    if not math.isfinite(amount) or amount <= 0:
+        return 10
+    magnitudes = sorted(
+        abs(float(value)) for value in historical_totals_m
+        if math.isfinite(float(value)) and abs(float(value)) > 0
+    )
+    if len(magnitudes) < 6:
+        return 10
+    position = 0.80 * (len(magnitudes) - 1)
+    lower = int(math.floor(position))
+    upper = int(math.ceil(position))
+    reference = magnitudes[lower] if lower == upper else (
+        magnitudes[lower] * (upper - position) + magnitudes[upper] * (position - lower)
+    )
+    if reference <= 0:
+        return 10
+    ratio = amount / reference
+    if ratio <= 0.5:
+        return 10
+    score = 10.0 + 80.0 * (1.0 - math.exp(-(ratio - 0.5) / 1.2))
+    return max(10, min(90, int(round(score))))
+
+
+def _parse_farside_etf_rows(text: str) -> list[dict[str, Any]]:
     parsed: list[dict[str, Any]] = []
     for row_match in re.finditer(r"<tr\b[^>]*>([\s\S]*?)</tr>", str(text or ""), re.I):
         cells = [
@@ -593,8 +872,15 @@ def _parse_farside_bitcoin_etf_flow(text: str) -> dict[str, Any] | None:
             total_m = _parse_farside_number(row.rsplit("|", 1)[-1])
             if date and total_m is not None:
                 parsed.append({"date": date, "total_m": total_m})
-    parsed.sort(key=lambda row: row["date"])
-    return parsed[-1] if parsed else None
+    best_by_date: dict[str, dict[str, Any]] = {}
+    for row in parsed:
+        best_by_date[row["date"]] = row
+    return [best_by_date[key] for key in sorted(best_by_date)]
+
+
+def _parse_farside_bitcoin_etf_flow(text: str) -> dict[str, Any] | None:
+    rows = _parse_farside_etf_rows(text)
+    return rows[-1] if rows else None
 
 
 def _parse_farside_date(value: str) -> str | None:
@@ -626,47 +912,26 @@ def _parse_farside_number(value: str) -> float | None:
     return -abs(number) if negative_parentheses else number
 
 
-def _scheduled_xrp_escrow(now: datetime) -> dict[str, Any] | None:
-    current = now.date()
-    release = datetime(current.year, current.month, 1, tzinfo=timezone.utc)
-    if current.day > 1:
-        year = current.year + (1 if current.month == 12 else 0)
-        month = 1 if current.month == 12 else current.month + 1
-        release = datetime(year, month, 1, tzinfo=timezone.utc)
-    if release > datetime(2028, 9, 1, tzinfo=timezone.utc):
-        return None
-    days = (release.date() - current).days
-    if days < 0 or days > 14:
-        return None
-    return _event_row(
-        symbol="XRP",
-        kind="UNLOCK",
-        title="XRP monthly Ripple escrow release window",
-        starts_at=release.isoformat(),
-        exact_time=False,
-        priority=94,
-        source_name="Ripple XRP Markets Report",
-        source_url="https://ripple.com/insights/q1-2025-xrp-markets-report/",
-        active=False,
-        source_type="unlock",
-    )
-
-
 def _fetch_tokenomist_unlock(symbol: str, slug: str, now: datetime, timeout: float) -> dict[str, Any] | None:
     url = f"https://tokenomist.ai/{slug}/unlock-events"
     flat = _clean_text(_strip_html(_decode_xml(_fetch_text(url, timeout))))
-    if re.search(r"is fully unlocked", flat, re.I):
+    if re.search(r"is fully unlocked|no upcoming (?:token )?unlock|there (?:is|are) no upcoming (?:token )?unlock", flat, re.I):
         return None
     match = re.search(r"next unlock for [^.]{1,120}? is scheduled for ([A-Za-z]+\s+\d{1,2},\s+20\d{2})", flat, re.I)
     if not match:
         match = re.search(r"next unlock[^.]{0,80}? scheduled for ([A-Za-z]+\s+\d{1,2},\s+20\d{2})", flat, re.I)
     if not match:
-        return None
+        # A changed/paywalled/error page must not be silently counted as a
+        # successful unlock check. Supplemental-source degradation remains
+        # diagnostic only and never creates E?? by itself.
+        raise RuntimeError("Tokenomist next unlock not recognized")
     release = _parse_english_date(match.group(1))
     if not release:
-        return None
+        raise RuntimeError("Tokenomist unlock date not recognized")
     days = (release.date() - now.date()).days
-    if days < 0 or days > 14:
+    if days < 0:
+        raise RuntimeError("Tokenomist next unlock date is already in the past")
+    if days > 14:
         return None
     return _event_row(
         symbol=symbol,
@@ -806,6 +1071,7 @@ def _core_source_ids(symbol: str) -> list[str]:
     ids = [f"news:{symbol}"]
     ids.extend(f"status:{symbol}:{row[1]}" for row in STATUSPAGE_SOURCES if row[0] == symbol)
     ids.extend(f"status:{symbol}:{row[1]}" for row in HTML_STATUS_SOURCES if row[0] == symbol)
+    ids.extend(f"status:{symbol}:{row[1]}" for row in STRUCTURED_STATUS_SOURCES if row[0] == symbol)
     return ids
 
 
@@ -815,8 +1081,8 @@ def _supplemental_source_ids(symbol: str) -> list[str]:
     ids.extend(f"release:{symbol}:{repo}" for repo in project.get("github", []))
     if project.get("unlock_slug"):
         ids.append(f"unlock:{symbol}:{project['unlock_slug']}")
-    if symbol == "BTC":
-        ids.append("etf:BTC")
+    if symbol == "BTC" or symbol in ETF_ALT_SOURCES:
+        ids.append(f"etf:{symbol}")
     return ids
 
 

@@ -1,4 +1,4 @@
-# r1
+# r2
 """Hourly display throttling for future events in CF v7.1.0.
 
 Future-day events are shown once in the first successful Discord report of each
@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
-STATE_VERSION = "event-display-v710-r1"
-COMPATIBLE_STATE_VERSIONS = {STATE_VERSION, "event-display-v700-r1"}
+STATE_VERSION = "event-display-v710-r2"
+COMPATIBLE_STATE_VERSIONS = {STATE_VERSION, "event-display-v710-r1", "event-display-v700-r1"}
 
 
 @dataclass(frozen=True)
@@ -145,6 +145,9 @@ def mark_event_displayed(
     state = _load(state_path)
     sent = dict(state.get("sent") or {})
     for key in sorted(due_keys):
+        # Refresh insertion order as well as the hour value so a recently
+        # displayed old fingerprint cannot be evicted ahead of stale entries.
+        sent.pop(key, None)
         sent[key] = plan.hour_key
     # Keep only the latest 256 event fingerprints. Old entries are harmless,
     # but bounding the file avoids indefinite growth.

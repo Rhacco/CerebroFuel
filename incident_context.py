@@ -1,4 +1,4 @@
-# r1
+# r2
 """Acute incident protection for CF v7.1.0.
 
 A MARKET_SHOCK is price evidence only: a statistically unusual, strongly
@@ -17,8 +17,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-STATE_VERSION = "incident-state-v710-r1"
-COMPATIBLE_STATE_VERSIONS = {STATE_VERSION, "incident-state-v700-r1"}
+STATE_VERSION = "incident-state-v710-r2"
+COMPATIBLE_STATE_VERSIONS = {STATE_VERSION, "incident-state-v710-r1", "incident-state-v700-r1"}
 
 
 @dataclass(frozen=True)

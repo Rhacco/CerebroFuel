@@ -1,8 +1,8 @@
-// r1
+// r2
 // Minimal GitHub scheduler for Cloudflare Workers Free.
 
 const APP_VERSION = "7.1.0";
-const PACKAGE_REVISION = "r1";
+const PACKAGE_REVISION = "r2";
 
 export default {
   async scheduled(_controller, env, ctx) {
