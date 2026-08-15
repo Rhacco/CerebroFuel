@@ -1,8 +1,6 @@
-// r2
 // Minimal GitHub scheduler for Cloudflare Workers Free.
 
-const APP_VERSION = "7.1.0";
-const PACKAGE_REVISION = "r2";
+const APP_VERSION = "7.2.0";
 
 export default {
   async scheduled(_controller, env, ctx) {
@@ -13,7 +11,6 @@ export default {
     return jsonResponse({
       ok: true,
       version: APP_VERSION,
-      revision: PACKAGE_REVISION,
       scheduler: schedulerEnabled(env) ? "enabled" : "paused",
     });
   },
@@ -36,14 +33,14 @@ function githubHeaders(env) {
 async function triggerGitHub(env) {
   if (!schedulerEnabled(env)) return;
 
-  const required = ["GH_OWNER", "GH_REPO", "GH_PAT"];
+  const required = ["GH_OWNER", "GH_REPO", "GH_PAT", "GH_REF"];
   const missing = required.filter((name) => !String(env[name] ?? "").trim());
   if (missing.length) throw new Error(`Variable missing: ${missing.join(", ")}`);
 
   const owner = encodeURIComponent(String(env.GH_OWNER).trim());
   const repo = encodeURIComponent(String(env.GH_REPO).trim());
   const workflow = encodeURIComponent(String(env.GH_WORKFLOW || "monitor.yml").trim());
-  const ref = String(env.GH_REF || "master").trim();
+  const ref = String(env.GH_REF).trim();
   const endpoint = `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${workflow}/dispatches`;
   const body = JSON.stringify({ ref, inputs: { send_discord: "true" } });
 

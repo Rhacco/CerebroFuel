@@ -1,5 +1,4 @@
-# r2
-"""Acute incident protection for CF v7.1.0.
+"""Acute incident protection for CF v7.2.0.
 
 A MARKET_SHOCK is price evidence only: a statistically unusual, strongly
 one-sided 15-minute displacement.  It never claims an exploit/news cause.
@@ -17,8 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-STATE_VERSION = "incident-state-v710-r2"
-COMPATIBLE_STATE_VERSIONS = {STATE_VERSION, "incident-state-v710-r1", "incident-state-v700-r1"}
+STATE_VERSION = "incident-state-7.2.0"
 
 
 @dataclass(frozen=True)
@@ -134,7 +132,7 @@ def _load_state(path: Path) -> dict[str, Any]:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
         return {"version": STATE_VERSION, "records": {}}
-    if not isinstance(raw, dict) or raw.get("version") not in COMPATIBLE_STATE_VERSIONS or not isinstance(raw.get("records"), dict):
+    if not isinstance(raw, dict) or raw.get("version") != STATE_VERSION or not isinstance(raw.get("records"), dict):
         return {"version": STATE_VERSION, "records": {}}
     return raw
 

@@ -1,5 +1,4 @@
-# r2
-name: Crypto Signal Monitor v7.1.0
+name: Crypto Signal Monitor v7.2.0
 on:
   workflow_dispatch:
     inputs:
@@ -13,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: crypto-signal-monitor-v7.1.0
+  group: crypto-signal-monitor-v7.2.0
   cancel-in-progress: false
   queue: single
 
@@ -36,18 +35,12 @@ jobs:
             output/event_display_state.json
             output/incident_state.json
             output/signal_transition_state.json
-            output/signal_streak_state.json
             output/daily_candle_cache.json
             output/springer_history.json
             output/display_selection_state.json
-          key: runtime-state-v710-r2-${{ github.run_id }}
+          key: monitor-state-7-2-0-${{ github.run_id }}
           restore-keys: |
-            runtime-state-v710-r2-
-            runtime-state-v710-r1-
-            runtime-state-v700-r6-
-            runtime-state-v700-r5-
-            runtime-state-v700-r4-
-            runtime-state-v700-r3-
+            monitor-state-7-2-0-
       - name: Lighter-Analyse ausführen
         id: monitor
         continue-on-error: true
@@ -65,11 +58,10 @@ jobs:
             output/event_display_state.json
             output/incident_state.json
             output/signal_transition_state.json
-            output/signal_streak_state.json
             output/daily_candle_cache.json
             output/springer_history.json
             output/display_selection_state.json
-          key: runtime-state-v710-r2-${{ github.run_id }}
+          key: monitor-state-7-2-0-${{ github.run_id }}
       - name: Analysefehler weitergeben
         if: ${{ always() && steps.monitor.outcome == 'failure' }}
         run: exit 1

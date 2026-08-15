@@ -1,6 +1,5 @@
 {
-  "schema_version": "7.1.0",
-  "package_revision": "r2",
+  "version": "7.2.0",
   "lighter_base_url": "https://mainnet.zklighter.elliot.ai/api/v1",
   "timezone": "Europe/Berlin",
   "candidate_symbols": [
@@ -144,17 +143,18 @@
   "strong_trade_readiness": 58,
   "watch_trade_readiness": 51,
   "signal_flip_guard_minutes": 10,
-  "signal_flip_try_confirmed_minutes": 2,
-  "signal_flip_now_confirmed_minutes": 3,
+  "signal_flip_strong_confirmed_minutes": 2,
+  "signal_flip_immediate_confirmed_minutes": 3,
   "unconfirmed_reversal_max_readiness": 57,
   "candle_count": 360,
   "closed_candle_delay_seconds": 8,
   "api_retry_count": 3,
   "parallel_requests": 4,
   "request_timeout_seconds": 15,
-  "lighter_request_limit_per_minute": 54,
+  "lighter_request_limit_per_minute": 60,
+  "lighter_normal_request_budget": 54,
   "discord_max_codepoints_per_line": 42,
-  "discord_username": "CF v7.1.0",
+  "discord_username": "CF v7.2.0",
   "discord_avatar_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Cryptocurrency_Logo.svg/330px-Cryptocurrency_Logo.svg.png",
   "minimum_tape_quality": 65,
   "early_minimum_setup_score": 71,
@@ -207,6 +207,7 @@
       "cashcattoken.xyz",
       "census.gov",
       "conference-board.org",
+      "defillama.com",
       "deribit.com",
       "dol.gov",
       "electriccoin.co",
@@ -220,8 +221,8 @@
       "federalreserve.gov",
       "github.com",
       "hyperfoundation.org",
-      "hyperliquid.xyz",
       "hyperliquid.statuspage.io",
+      "hyperliquid.xyz",
       "iog.io",
       "iohk.io",
       "ismworld.org",
@@ -295,7 +296,8 @@
         "tokenomist.ai"
       ],
       "PUMP": [
-        "pump.fun"
+        "pump.fun",
+        "defillama.com"
       ],
       "SUI": [
         "sui.io",
@@ -449,7 +451,7 @@
   "early_chase_warning": 30,
   "early_chase_block": 46,
   "early_chase_penalty": 12,
-  "reversal_now_min_extremity": 16,
+  "reversal_immediate_min_extremity": 16,
   "early_approach_noise_multiple": 2.0,
   "early_probe_noise_multiple": 0.6,
   "early_probe_max_consumed_fraction": 0.35,

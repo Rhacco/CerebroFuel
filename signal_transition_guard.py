@@ -1,5 +1,4 @@
-# r2
-"""Persistent direction-transition protection for CF v7.1.0."""
+"""Persistent direction-transition protection for CF v7.2.0."""
 from __future__ import annotations
 
 import json
@@ -7,10 +6,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-STATE_VERSION = "signal-transition-v710-r2"
-COMPATIBLE_STATE_VERSIONS = {STATE_VERSION, "signal-transition-v710-r1", "signal-transition-v700-r1"}
-TRACKED_ACTIONS = {"NEAR", "TRY", "NOW"}
-STRONG_ACTIONS = {"TRY", "NOW"}
+STATE_VERSION = "signal-transition-7.2.0"
+TRACKED_ACTIONS = {"WATCH", "STRONG", "IMMEDIATE"}
+STRONG_ACTIONS = {"STRONG", "IMMEDIATE"}
 MAX_ENTRY_AGE_MINUTES = 90
 
 
@@ -34,7 +32,7 @@ def _load(path: Path) -> dict[str, Any]:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return {"version": STATE_VERSION, "entries": {}}
-    if raw.get("version") not in COMPATIBLE_STATE_VERSIONS or not isinstance(raw.get("entries"), dict):
+    if raw.get("version") != STATE_VERSION or not isinstance(raw.get("entries"), dict):
         return {"version": STATE_VERSION, "entries": {}}
     return raw
 
@@ -51,12 +49,12 @@ def _save(path: Path, payload: dict[str, Any]) -> None:
 
 def _set_action(signal: Any, action: str, direction: int) -> None:
     states = {
-        ("NEAR", 1): "WATCH_LONG",
-        ("NEAR", -1): "WATCH_SHORT",
-        ("TRY", 1): "STRONG_LONG",
-        ("TRY", -1): "STRONG_SHORT",
-        ("NOW", 1): "BUY",
-        ("NOW", -1): "SELL",
+        ("WATCH", 1): "WATCH_LONG",
+        ("WATCH", -1): "WATCH_SHORT",
+        ("STRONG", 1): "STRONG_LONG",
+        ("STRONG", -1): "STRONG_SHORT",
+        ("IMMEDIATE", 1): "BUY",
+        ("IMMEDIATE", -1): "SELL",
     }
     state = states.get((action, direction))
     if state:
@@ -104,15 +102,15 @@ def apply_signal_transition_guard(
     config: Mapping[str, Any],
     action_getter: Callable[[Any], str],
 ) -> dict[str, Any]:
-    """Prevent instant opposite TRY/NOW flips while preserving all display rules.
+    """Prevent instant opposite STRONG/IMMEDIATE flips while preserving all display rules.
 
     Rules:
-    - An unconfirmed reversal (W?) is always at most NEAR and its effective
-      readiness is capped just below TRY.
-    - After a recent opposite TRY/NOW, a confirmed W needs two consecutive
-      confirmed closes for TRY and three for NOW.
-    - Other opposite setups need two consecutive directional closes for TRY
-      and three for NOW.
+    - An unconfirmed reversal (W?) is always at most WATCH and its effective
+      readiness is capped just below STRONG.
+    - After a recent opposite STRONG/IMMEDIATE, a confirmed W needs two consecutive
+      confirmed closes for STRONG and three for IMMEDIATE.
+    - Other opposite setups need two consecutive directional closes for STRONG
+      and three for IMMEDIATE.
     - Duplicate runs on the same candle are idempotent.
     """
     state = _load(state_path)
@@ -120,8 +118,8 @@ def apply_signal_transition_guard(
     current_entries: dict[str, dict[str, Any]] = {}
 
     guard_minutes = max(1, int(config.get("signal_flip_guard_minutes", 10)))
-    try_minutes = max(2, int(config.get("signal_flip_try_confirmed_minutes", 2)))
-    now_minutes = max(try_minutes + 1, int(config.get("signal_flip_now_confirmed_minutes", 3)))
+    strong_minutes = max(2, int(config.get("signal_flip_strong_confirmed_minutes", 2)))
+    immediate_minutes = max(strong_minutes + 1, int(config.get("signal_flip_immediate_confirmed_minutes", 3)))
     strong_threshold = float(config.get("strong_trade_readiness", 61.0))
     unconfirmed_cap = min(
         strong_threshold - 1.0,
@@ -185,16 +183,16 @@ def apply_signal_transition_guard(
 
         reasons: list[str] = []
 
-        # W? may be interesting, but it is not a TRY/NOW permission.
+        # W? may be interesting, but it is not a STRONG/IMMEDIATE permission.
         if tracked_now and is_reversal and not reversal_confirmed:
             if raw_action in STRONG_ACTIONS:
-                _set_action(signal, "NEAR", direction)
+                _set_action(signal, "WATCH", direction)
                 guarded += 1
             current_readiness = float(getattr(signal, "trade_readiness", 0.0) or 0.0)
             if current_readiness > unconfirmed_cap:
                 setattr(signal, "trade_readiness", max(0.0, unconfirmed_cap))
                 capped += 1
-            reasons.append("W? bleibt bis zum strukturellen Reclaim NEAR")
+            reasons.append("W? bleibt bis zum strukturellen Reclaim im Beobachtungs-Tier")
 
         # A direct direction flip needs persistence, not just one fresh candle.
         effective_action = str(action_getter(signal) or "")
@@ -206,33 +204,33 @@ def apply_signal_transition_guard(
             setattr(signal, "transition_guard_confirmed_streak", confirmed_streak)
 
             if is_reversal and not reversal_confirmed:
-                # Already limited to NEAR above.
-                reasons.append(f"Gegenrichtung nach {last_strong_action or 'TRY/NOW'} wartet auf bestätigtes W")
-            elif effective_action == "NOW" and required_streak < now_minutes:
+                # Already limited to WATCH above.
+                reasons.append(f"Gegenrichtung nach {last_strong_action or 'STRONG/IMMEDIATE'} wartet auf bestätigtes W")
+            elif effective_action == "IMMEDIATE" and required_streak < immediate_minutes:
                 _set_action(
                     signal,
-                    "TRY" if required_streak >= try_minutes else "NEAR",
+                    "STRONG" if required_streak >= strong_minutes else "WATCH",
                     direction,
                 )
                 guarded += 1
                 reasons.append(
-                    f"Gegenrichtung braucht {now_minutes} bestätigte Minuten für NOW"
+                    f"Gegenrichtung braucht {immediate_minutes} bestätigte Minuten für Sofortfreigabe"
                 )
-            elif effective_action == "TRY" and required_streak < try_minutes:
-                _set_action(signal, "NEAR", direction)
+            elif effective_action == "STRONG" and required_streak < strong_minutes:
+                _set_action(signal, "WATCH", direction)
                 guarded += 1
                 reasons.append(
-                    f"Gegenrichtung braucht {try_minutes} bestätigte Minuten für TRY"
+                    f"Gegenrichtung braucht {strong_minutes} bestätigte Minuten für starke Freigabe"
                 )
 
         final_action = str(action_getter(signal) or "")
-        # During an opposite transition, TRY is deliberately provisional.
+        # During an opposite transition, STRONG is deliberately provisional.
         # Keep the previous strong direction as the active guard until the new
-        # direction reaches NOW (or the guard naturally expires). This also
-        # preserves TRY persistence without changing the visible token.
+        # direction reaches IMMEDIATE (or the guard naturally expires). This also
+        # preserves strong-tier persistence without changing the visible token.
         promote_strong_reference = bool(
-            final_action == "NOW"
-            or (final_action == "TRY" and not recent_opposite_strong)
+            final_action == "IMMEDIATE"
+            or (final_action == "STRONG" and not recent_opposite_strong)
         )
         if promote_strong_reference and direction != 0:
             last_strong_direction = direction

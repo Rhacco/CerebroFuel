@@ -1,5 +1,4 @@
-# r2
-"""Lighter-native signal engine with persistent J/E context for CF v7.1.0."""
+"""Lighter-native signal engine with persistent J/E context for CF v7.2.0."""
 from __future__ import annotations
 
 import json
@@ -26,12 +25,10 @@ from springer_context import (
     calculate_springer_strength, springer_backfill_requests, update_springer_history,
 )
 from incident_context import IncidentSnapshot, detect_spontaneous_incidents
-from signal_streak_state import apply_signal_streaks
 from signal_transition_guard import apply_signal_transition_guard
 from display_selection_state import load_display_selection_state, save_display_selection_state
 
-APP_VERSION = "7.1.0"
-PACKAGE_REVISION = "r2"
+APP_VERSION = "7.2.0"
 ANALYSIS_WINDOWS = (5, 10, 15, 20, 60)
 DISPLAY_WINDOWS = (5, 20, 60)
 GLOBAL_BTC_EVENT_KINDS = {
@@ -56,12 +53,7 @@ STATE_TIER = {
     "INVALID_DATA": 0,
 }
 
-DAILY_CACHE_SCHEMA = "daily-candles-v710-r2"
-COMPATIBLE_DAILY_CACHE_IDENTITIES = {
-    (DAILY_CACHE_SCHEMA, APP_VERSION, PACKAGE_REVISION),
-    ("daily-candles-v710-r1", APP_VERSION, "r1"),
-    *(("daily-candles-v700-r1", "7.0.0", f"r{revision}") for revision in range(1, 7)),
-}
+DAILY_CACHE_SCHEMA = "daily-candles-7.2.0"
 FUNDING_NORMALIZATION_HOURS = 8.0
 
 
@@ -80,12 +72,7 @@ def _load_daily_candle_cache(
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return {}, {}, {}
-    cache_identity = (
-        str(payload.get("schema") or ""),
-        str(payload.get("app_version") or ""),
-        str(payload.get("package_revision") or ""),
-    )
-    if cache_identity not in COMPATIBLE_DAILY_CACHE_IDENTITIES:
+    if payload.get("schema") != DAILY_CACHE_SCHEMA:
         return {}, {}, {}
     fresh: dict[str, list[Mapping[str, Any]]] = {}
     fallback: dict[str, list[Mapping[str, Any]]] = {}
@@ -152,8 +139,6 @@ def _write_daily_candle_cache(
         symbols[symbol] = {"updated_at": stamp, "rows": rows}
     payload = {
         "schema": DAILY_CACHE_SCHEMA,
-        "app_version": APP_VERSION,
-        "package_revision": PACKAGE_REVISION,
         "symbols": symbols,
     }
     try:
@@ -368,9 +353,6 @@ class Signal:
     early: Setup = field(default_factory=lambda: Setup("EARLY"))
     trend: Setup = field(default_factory=lambda: Setup("TREND"))
     reversal: Setup = field(default_factory=lambda: Setup("REVERSAL"))
-    action_streak_count: int = 0
-    action_streak_action: str = ""
-    action_streak_direction: int = 0
     transition_guard_active: bool = False
     transition_guard_from_direction: int = 0
     transition_guard_direction_streak: int = 0
@@ -386,15 +368,14 @@ class LighterClient:
         timeout: float = 15.0,
         retries: int = 3,
         closed_candle_delay_seconds: int = 8,
-        request_limit_per_minute: int = 54,
+        request_limit_per_minute: int = 60,
     ) -> None:
         self.base = base_url.rstrip("/")
         self.timeout = timeout
         self.retries = max(1, min(4, retries))
         self.closed_candle_delay_seconds = max(0, min(30, closed_candle_delay_seconds))
-        # Standard Lighter accounts are limited to 60 REST calls per rolling
-        # minute. Keep a small reserve for retries and coordinate every worker
-        # thread through one shared rolling-window gate.
+        # Coordinate every worker thread through one shared rolling-window gate.
+        # Normal work uses a separate lower budget so retries retain headroom.
         self.request_limit_per_minute = max(10, min(60, int(request_limit_per_minute)))
         self._rate_lock = threading.Lock()
         self._request_times: deque[float] = deque()
@@ -1581,7 +1562,7 @@ def _radar_activity_score(signal: Signal, config: Mapping[str, Any]) -> float:
 
 
 def _detail_head(signal: Signal) -> str:
-    """Show current multi-window pressure; purple is reserved for NOW."""
+    """Show current multi-window pressure; purple is reserved for an immediate BUY/SELL state."""
     if signal.state == "INVALID_DATA":
         return "⚫?"
     if signal.state in {"BUY", "SELL"}:
@@ -1625,16 +1606,16 @@ def _selected_setup(signal: Signal) -> Setup:
     }.get(signal.selected_setup, Setup("NONE"))
 
 
-def _action_code(signal: Signal) -> str:
+def _action_tier(signal: Signal) -> str:
     if signal.chase_warning:
         return "WAIT"
     return {
-        "BUY": "NOW",
-        "SELL": "NOW",
-        "STRONG_LONG": "TRY",
-        "STRONG_SHORT": "TRY",
-        "WATCH_LONG": "NEAR",
-        "WATCH_SHORT": "NEAR",
+        "BUY": "IMMEDIATE",
+        "SELL": "IMMEDIATE",
+        "STRONG_LONG": "STRONG",
+        "STRONG_SHORT": "STRONG",
+        "WATCH_LONG": "WATCH",
+        "WATCH_SHORT": "WATCH",
         "NO_TRADE": "WAIT",
         "INVALID_DATA": "DATA",
     }.get(signal.state, "WAIT")
@@ -1801,7 +1782,7 @@ class LighterMonitor:
             float(config.get("request_timeout_seconds", 15)),
             int(config.get("api_retry_count", 3)),
             int(config.get("closed_candle_delay_seconds", 8)),
-            int(config.get("lighter_request_limit_per_minute", 54)),
+            int(config.get("lighter_request_limit_per_minute", 60)),
         )
         self.last_signals: list[Signal] = []
         self.last_snapshots: dict[str, dict[str, Any]] = {}
@@ -1890,15 +1871,15 @@ class LighterMonitor:
         if not 0 < watch < strong < immediate <= 100:
             raise ValueError("Readiness-Schwellen sind nicht logisch geordnet")
         flip_guard = int(self.config.get("signal_flip_guard_minutes", 10))
-        flip_try = int(self.config.get("signal_flip_try_confirmed_minutes", 2))
-        flip_now = int(self.config.get("signal_flip_now_confirmed_minutes", 3))
+        flip_strong = int(self.config.get("signal_flip_strong_confirmed_minutes", 2))
+        flip_immediate = int(self.config.get("signal_flip_immediate_confirmed_minutes", 3))
         reversal_cap = float(
             self.config.get("unconfirmed_reversal_max_readiness", strong - 1.0)
         )
-        if not 1 <= flip_guard <= 60 or not 2 <= flip_try < flip_now <= 10:
+        if not 1 <= flip_guard <= 60 or not 2 <= flip_strong < flip_immediate <= 10:
             raise ValueError("Richtungswechsel-Schutz ist ungültig")
         if not watch <= reversal_cap < strong:
-            raise ValueError("W?-Readiness-Cap muss zwischen NEAR und TRY liegen")
+            raise ValueError("W?-Readiness-Cap muss zwischen Beobachtung und starker Freigabe liegen")
         funding_watch = float(self.config.get("funding_watch_hourly_pct", 0.015))
         funding_hard = float(self.config.get("funding_hard_hourly_pct", 0.05))
         if not 0 <= funding_watch < funding_hard:
@@ -1950,7 +1931,7 @@ class LighterMonitor:
         early_chase_penalty = float(self.config.get("early_chase_penalty", 10.0))
         if not 0 < early_chase_warning < early_chase_block <= 100 or not 0 <= early_chase_penalty <= 20:
             raise ValueError("E-Anti-Chase-Schwellen sind nicht logisch geordnet")
-        if not 0 <= float(self.config.get("reversal_now_min_extremity", 18.0)) <= 60:
+        if not 0 <= float(self.config.get("reversal_immediate_min_extremity", 18.0)) <= 60:
             raise ValueError("W-Extremitätsminimum ist ungültig")
         if not 1 <= int(self.config.get("early_min_volume_consistency", 2)) <= 4:
             raise ValueError("early_min_volume_consistency muss zwischen eins und vier liegen")
@@ -2059,15 +2040,18 @@ class LighterMonitor:
             raise ValueError("btc_pin_max_gap_minutes ist ungültig")
         if int(self.config.get("candle_count", 360)) < 200:
             raise ValueError("candle_count muss mindestens 200 betragen")
-        request_limit = int(self.config.get("lighter_request_limit_per_minute", 54))
+        request_limit = int(self.config.get("lighter_request_limit_per_minute", 60))
+        normal_budget = int(self.config.get("lighter_normal_request_budget", 54))
         if not 10 <= request_limit <= 60:
             raise ValueError("lighter_request_limit_per_minute muss zwischen 10 und 60 liegen")
+        if not 10 <= normal_budget <= request_limit:
+            raise ValueError("lighter_normal_request_budget muss innerhalb des Requestlimits liegen")
         daily_batch = int(self.config.get("daily_candle_refresh_batch_size", 4))
         if not 1 <= daily_batch <= 8:
             raise ValueError("daily_candle_refresh_batch_size ist ungültig")
         worst_normal_requests = 2 + 2 * len(symbols) + daily_batch
-        if worst_normal_requests > request_limit:
-            raise ValueError("Lighter-Requestbudget reicht für Pool plus Daily-Refresh nicht aus")
+        if worst_normal_requests > normal_budget:
+            raise ValueError("Normales Lighter-Requestbudget reicht für Pool plus Daily-Refresh nicht aus")
         breadth_symbols = [str(value).upper() for value in self.config.get("btc_breadth_symbols", [])]
         if len(breadth_symbols) != len(set(breadth_symbols)):
             raise ValueError("btc_breadth_symbols muss eindeutig sein")
@@ -2862,11 +2846,11 @@ class LighterMonitor:
                         )
                     elif item.state in {"BUY", "SELL"} and not aligned60 and chase >= warning * 0.75:
                         cap_immediate(item)
-                        item.reasons.append("E NOW ohne 60m-Bestätigung begrenzt")
+                        item.reasons.append("E Sofortsignal ohne 60m-Bestätigung begrenzt")
 
                 elif item.selected_setup == "REVERSAL":
                     exhaustion = -result.score * direction
-                    required = float(self.config.get("reversal_now_min_extremity", 18.0))
+                    required = float(self.config.get("reversal_immediate_min_extremity", 18.0))
                     if item.state in {"BUY", "SELL"} and exhaustion < required:
                         cap_immediate(item)
                         item.reasons.append(
@@ -3204,6 +3188,7 @@ class LighterMonitor:
         hold_margin = max(0.0, float(self.config.get("detail_hold_readiness_margin", 4.0)))
         hold_minutes = max(0, int(self.config.get("detail_hold_minutes", 15)))
         hold_bonus = max(0.0, float(self.config.get("detail_hold_bonus", 6.0)))
+        attention_threshold = float(self.config.get("detail_attention_threshold", 68.0))
         now_utc = now.astimezone(timezone.utc)
         now_iso = now_utc.isoformat()
 
@@ -3214,16 +3199,18 @@ class LighterMonitor:
                 continue
             if item.event_kind == "MARKET_SHOCK" and item.event_block_new:
                 continue
-            action = _action_code(item)
+            if float(item.attention_score) < attention_threshold:
+                continue
+            action = _action_tier(item)
             setup = _selected_setup(item)
             valid_setup = setup.phase in {"ready", "strong", "forming"} and not setup.exit_hint
-            current_qualified = action in {"NEAR", "TRY", "NOW"} and valid_setup
+            current_qualified = action in {"WATCH", "STRONG", "IMMEDIATE"} and valid_setup
             if current_qualified:
                 qualified.append(item)
                 last_qualified[item.symbol] = now_iso
                 continue
 
-            # A coin that only just lost NEAR may remain briefly if the setup is
+            # A coin that only just lost lower-row qualification may remain briefly if the setup is
             # still structurally valid and close to the watch threshold. This is
             # deliberately bounded and can never retain a shock, invalid setup,
             # chase warning or materially faded readiness.
@@ -3240,10 +3227,10 @@ class LighterMonitor:
             if hold_minutes and now_utc - stamp.astimezone(timezone.utc) <= timedelta(minutes=hold_minutes):
                 held.append(item)
 
-        action_rank = {"NOW": 3.0, "TRY": 2.0, "NEAR": 1.0}
+        action_rank = {"IMMEDIATE": 3.0, "STRONG": 2.0, "WATCH": 1.0}
 
         def quality(item: Signal, *, is_held: bool = False) -> tuple[float, float, float, float, str]:
-            action = _action_code(item)
+            action = _action_tier(item)
             tier = 0.5 if is_held else action_rank.get(action, 0.0)
             continuity = hold_bonus if item.symbol in previous else 0.0
             composite = (
@@ -3490,7 +3477,7 @@ class LighterMonitor:
 
         def detail_line(item: Signal) -> str:
             if item.state == "INVALID_DATA":
-                return f"⚫? 05⚫20⚫60⚫ J?? E?? {item.alias}?00"
+                return f"⚫? 05⚫20⚫60⚫ J?? {_event_risk_token(item, self.config)} {item.alias}?00"
             windows = "".join(
                 f"{minutes:02d}{_window_color(item.windows.get(minutes, Window(minutes)))}"
                 for minutes in DISPLAY_WINDOWS
@@ -3550,7 +3537,6 @@ class LighterMonitor:
         event_source_health: Mapping[str, Any] | None = None,
         incident_state_path: Path | None = None,
         signal_transition_state_path: Path | None = None,
-        signal_streak_state_path: Path | None = None,
         daily_candle_cache_path: Path | None = None,
         springer_history_path: Path | None = None,
         display_selection_state_path: Path | None = None,
@@ -3662,15 +3648,13 @@ class LighterMonitor:
             old_timestamps=daily_timestamps,
         )
 
-        # J bootstrap shares the same hard Lighter request budget. It only uses
-        # slots left after markets/funding, per-market 1m+book data and the
-        # bounded daily refresh batch. Thus normal runs never raise the nominal
-        # request envelope above lighter_request_limit_per_minute.
+        # J bootstrap only uses slots left inside the normal-work budget.
+        # The higher rolling request gate remains available for transient retries.
         springer_backfill: dict[str, list[Mapping[str, Any]]] = {}
         springer_backfill_failed: set[str] = set()
-        request_limit = max(1, int(self.config.get("lighter_request_limit_per_minute", 54)))
+        normal_budget = max(1, int(self.config.get("lighter_normal_request_budget", 54)))
         nominal_used = 2 + 2 * len(markets) + len(refresh_daily_symbols)
-        spare_requests = max(0, request_limit - nominal_used)
+        spare_requests = max(0, normal_budget - nominal_used)
         if spare_requests > 0 and springer_history_path is not None:
             mature_daily = {
                 symbol for symbol, rows in daily_candles.items()
@@ -3752,7 +3736,7 @@ class LighterMonitor:
                 state_path=signal_transition_state_path,
                 now=now,
                 config=self.config,
-                action_getter=_action_code,
+                action_getter=_action_tier,
             )
         # Record whether safety/context guards forced a lower action tier than
         # the numeric readiness alone would otherwise permit.
@@ -3762,23 +3746,9 @@ class LighterMonitor:
                 2 if item.trade_readiness >= strong_threshold else
                 1 if item.trade_readiness >= watch_threshold else 0
             )
-            actual_tier = {"NOW": 3, "TRY": 2, "NEAR": 1}.get(_action_code(item), 0)
+            actual_tier = {"IMMEDIATE": 3, "STRONG": 2, "WATCH": 1}.get(_action_tier(item), 0)
             item.state_limited_by_guard = bool(actual_tier < expected_tier)
 
-        if signal_streak_state_path is not None:
-            apply_signal_streaks(
-                signals,
-                state_path=signal_streak_state_path,
-                now=now,
-                action_getter=_action_code,
-            )
-        else:
-            for signal in signals:
-                action = _action_code(signal)
-                if action in {"NEAR", "TRY", "NOW"}:
-                    signal.action_streak_count = 1
-                    signal.action_streak_action = action
-                    signal.action_streak_direction = _direction(signal.direction)
         self.last_incidents = incident_snapshot
         self.last_signals = self._rank(signals)
         self.last_snapshots = snapshots
@@ -3801,7 +3771,6 @@ class LighterMonitor:
             raise RuntimeError("Discord-Ausgabe hat unerwartete Zeilenzahl")
         payload = {
             "version": APP_VERSION,
-            "package_revision": PACKAGE_REVISION,
             "generated_at": now.isoformat(),
             "report": report,
             "signals": [asdict(item) for item in self.last_signals],

@@ -1,5 +1,4 @@
-# r2
-"""Persistent direction-free springer strength J00..J99 for CF v7.1.0.
+"""Persistent direction-free springer strength J00..J99 for CF v7.2.0.
 
 J measures how often and how quickly a market makes meaningful 15-minute moves
 under normal conditions. It combines real non-overlapping 15m impulses retained
@@ -17,8 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-HISTORY_SCHEMA = "springer-history-v710-r2"
-COMPATIBLE_HISTORY_SCHEMAS = {HISTORY_SCHEMA, "springer-history-v710-r1", "springer-history-v700-r1"}
+HISTORY_SCHEMA = "springer-history-7.2.0"
 
 
 def _f(value: Any, default: float = 0.0) -> float:
@@ -108,7 +106,7 @@ def _load_history_payload(path: Path | None) -> dict[str, Any]:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return {}
-    if raw.get("schema") not in COMPATIBLE_HISTORY_SCHEMAS or not isinstance(raw.get("symbols"), Mapping):
+    if raw.get("schema") != HISTORY_SCHEMA or not isinstance(raw.get("symbols"), Mapping):
         return {}
     return dict(raw)
 

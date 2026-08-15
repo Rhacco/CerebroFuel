@@ -1,4 +1,3 @@
-# r2
 """Verified coin-event collection for the GitHub runner.
 
 The Cloudflare Worker stays a tiny scheduler. Network/status/news/release/unlock
@@ -13,17 +12,15 @@ import math
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import unescape
 from typing import Any, Iterable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
-APP_VERSION = "7.1.0"
-PACKAGE_REVISION = "r2"
-STATE_VERSION = "project-events-v710-r2"
-COMPATIBLE_STATE_VERSIONS = {STATE_VERSION, "project-events-v710-r1", "project-events-v700-r1"}
+APP_VERSION = "7.2.0"
+STATE_VERSION = "project-events-7.2.0"
 USER_AGENT = f"crypto-signal-monitor/{APP_VERSION}"
 
 ACTIVE_RETENTION_SECONDS = 25 * 60
@@ -53,7 +50,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
     "LDO": {"domains": ["lido.fi"]},
     "ZEC": {"domains": ["z.cash", "electriccoin.co"], "github": ["zcash/zcash"]},
     "WLD": {"domains": ["world.org"], "unlock_slug": "worldcoin-wld"},
-    "PUMP": {"domains": ["pump.fun"]},
+    "PUMP": {"domains": ["pump.fun"], "defillama_unlock_slug": "pump"},
     "SUI": {"domains": ["sui.io"], "github": ["MystenLabs/sui"], "unlock_slug": "sui"},
     "ENA": {"domains": ["ethena.fi", "ethenafoundation.com"], "unlock_slug": "ethena"},
     "ETH": {"domains": ["ethereum.org", "ethereum.foundation"], "github": ["ethereum/go-ethereum"]},
@@ -125,7 +122,7 @@ def collect_project_event_feed(
     now_iso = now.isoformat()
     old = (
         dict(state)
-        if isinstance(state, Mapping) and state.get("version") in COMPATIBLE_STATE_VERSIONS
+        if isinstance(state, Mapping) and state.get("version") == STATE_VERSION
         else {}
     )
     source_last_ok = _clean_timestamp_map(old.get("source_last_ok"))
@@ -154,6 +151,11 @@ def collect_project_event_feed(
     def mark_ok(source_id: str) -> None:
         source_last_ok[source_id] = now_s
 
+    def source_priority(source: Mapping[str, Any]) -> tuple[int, int, int]:
+        source_id = str(source["id"])
+        attempted = last_attempt(source_id)
+        return (1 if attempted else 0, attempted, last_ok(source_id))
+
     status_sources: list[dict[str, Any]] = []
     for row in STATUSPAGE_SOURCES:
         if row[0] in current_symbols:
@@ -166,7 +168,7 @@ def collect_project_event_feed(
             status_sources.append({"type": "near_json", "row": row, "id": f"status:{row[0]}:{row[1]}"})
     status_due = sorted(
         (source for source in status_sources if due(source["id"], STATUS_REFRESH_SECONDS)),
-        key=lambda source: last_ok(source["id"]),
+        key=source_priority,
     )[:STATUS_BATCH_SIZE]
     for source in status_due:
         mark_attempt(source["id"])
@@ -231,15 +233,6 @@ def collect_project_event_feed(
         for symbol, raw in raw_etf_states.items():
             if str(symbol).upper() in ({"BTC"} | set(ETF_ALT_SOURCES)) and isinstance(raw, Mapping):
                 etf_by_symbol[str(symbol).upper()] = dict(raw)
-    if "BTC" not in etf_by_symbol:
-        # v7.1-r1/v7.0 migration from the former single-BTC scalar state.
-        etf_by_symbol["BTC"] = {
-            "last_date": str(old.get("etf_last_date") or ""),
-            "last_total_m": old.get("etf_last_total_m"),
-            "last_alert_date": str(old.get("etf_last_alert_date") or ""),
-            "last_alert_total_m": old.get("etf_last_alert_total_m"),
-            "last_alert_impact": old.get("etf_last_alert_impact"),
-        }
     min_flow_impact = max(10, min(90, int(etf_min_impact_score)))
     realert_delta = max(1, min(30, int(etf_realert_impact_delta)))
 
@@ -343,7 +336,7 @@ def collect_project_event_feed(
             source_id = f"release:{symbol}:{repo}"
             if due(source_id, RELEASE_REFRESH_SECONDS):
                 release_sources.append({"symbol": symbol, "repo": repo, "id": source_id})
-    release_due = sorted(release_sources, key=lambda source: last_ok(source["id"]))[:RELEASE_BATCH_SIZE]
+    release_due = sorted(release_sources, key=source_priority)[:RELEASE_BATCH_SIZE]
     for source in release_due:
         mark_attempt(source["id"])
     release_results = _parallel(
@@ -360,23 +353,45 @@ def collect_project_event_feed(
 
     unlock_sources: list[dict[str, str]] = []
     for symbol in sorted(current_symbols):
-        slug = PROJECTS[symbol].get("unlock_slug")
-        if not slug:
-            continue
-        source_id = f"unlock:{symbol}:{slug}"
-        if due(source_id, UNLOCK_REFRESH_SECONDS):
-            unlock_sources.append({"symbol": symbol, "slug": slug, "id": source_id})
-    unlock_due = sorted(unlock_sources, key=lambda source: last_ok(source["id"]))[:UNLOCK_BATCH_SIZE]
+        project = PROJECTS[symbol]
+        tokenomist_slug = str(project.get("unlock_slug") or "").strip()
+        if tokenomist_slug:
+            source_id = f"unlock:{symbol}:tokenomist:{tokenomist_slug}"
+            if due(source_id, UNLOCK_REFRESH_SECONDS):
+                unlock_sources.append({
+                    "provider": "tokenomist", "symbol": symbol,
+                    "slug": tokenomist_slug, "id": source_id,
+                })
+        defillama_slug = str(project.get("defillama_unlock_slug") or "").strip()
+        if defillama_slug:
+            source_id = f"unlock:{symbol}:defillama:{defillama_slug}"
+            if due(source_id, UNLOCK_REFRESH_SECONDS):
+                unlock_sources.append({
+                    "provider": "defillama", "symbol": symbol,
+                    "slug": defillama_slug, "id": source_id,
+                })
+    unlock_due = sorted(unlock_sources, key=source_priority)[:UNLOCK_BATCH_SIZE]
     for source in unlock_due:
         mark_attempt(source["id"])
+
+    def fetch_unlock(source: Mapping[str, str]) -> dict[str, Any] | None:
+        if source["provider"] == "defillama":
+            return _fetch_defillama_unlock(source["symbol"], source["slug"], now, timeout)
+        return _fetch_tokenomist_unlock(source["symbol"], source["slug"], now, timeout)
+
     unlock_results = _parallel(
         unlock_due,
-        lambda source: _fetch_tokenomist_unlock(source["symbol"], source["slug"], now, timeout),
+        fetch_unlock,
         max_workers=UNLOCK_BATCH_SIZE,
     )
+    refreshed_unlock_urls: set[str] = set()
     for source, value, error in unlock_results:
         if error is None:
             mark_ok(source["id"])
+            if source["provider"] == "defillama":
+                refreshed_unlock_urls.add(f"https://defillama.com/unlocks/{source['slug']}")
+            else:
+                refreshed_unlock_urls.add(f"https://tokenomist.ai/{source['slug']}/unlock-events")
             if value:
                 fresh.append(value)
         else:
@@ -387,6 +402,7 @@ def collect_project_event_feed(
         old_seen=old.get("seen_events"),
         fresh=fresh,
         now=now,
+        refreshed_unlock_urls=refreshed_unlock_urls,
     )
     source_health = _build_source_health(
         symbols=current_symbols,
@@ -400,19 +416,12 @@ def collect_project_event_feed(
         "source_last_ok": source_last_ok,
         "source_last_attempt": source_last_attempt,
         "etf_by_symbol": etf_by_symbol,
-        # Keep BTC scalar mirrors for seamless rollback/older-state readers.
-        "etf_last_date": (etf_by_symbol.get("BTC") or {}).get("last_date"),
-        "etf_last_total_m": (etf_by_symbol.get("BTC") or {}).get("last_total_m"),
-        "etf_last_alert_date": (etf_by_symbol.get("BTC") or {}).get("last_alert_date"),
-        "etf_last_alert_total_m": (etf_by_symbol.get("BTC") or {}).get("last_alert_total_m"),
-        "etf_last_alert_impact": (etf_by_symbol.get("BTC") or {}).get("last_alert_impact"),
         "events": merged_events,
         "seen_events": seen,
         "source_health": source_health,
     }
     feed = {
         "version": APP_VERSION,
-        "package_revision": PACKAGE_REVISION,
         "generated_at": now_iso,
         "events": merged_events,
         "meta": {"source_health": source_health},
@@ -912,6 +921,74 @@ def _parse_farside_number(value: str) -> float | None:
     return -abs(number) if negative_parentheses else number
 
 
+
+def _fetch_defillama_unlock(symbol: str, slug: str, now: datetime, timeout: float) -> dict[str, Any] | None:
+    """Read the next dated unlock from the public DeFiLlama unlock page.
+
+    Only the earliest future date/time inside the Unlock Events section is used.
+    Amounts are deliberately ignored because the monitor only needs a verified
+    schedule fact and must not manufacture precision from conflicting providers.
+    """
+    url = f"https://defillama.com/unlocks/{slug}"
+    flat = _clean_text(_strip_html(_decode_xml(_fetch_text(url, timeout))))
+    marker = re.search(r"\bUnlock Events\b", flat, re.I)
+    if not marker:
+        raise RuntimeError("DeFiLlama unlock section not recognized")
+    section = flat[marker.end(): marker.end() + 2_000]
+    matches = list(re.finditer(
+        r"\b([A-Za-z]{3,9})\s+(\d{1,2}),\s+(20\d{2})\s+"
+        r"(\d{1,2}):(\d{2})\s+(AM|PM)\s+(?:GMT\+00:00|UTC)\b",
+        section,
+        re.I,
+    ))
+    if not matches:
+        raise RuntimeError("DeFiLlama next unlock date not recognized")
+
+    month_numbers = {name[:3]: number for name, number in MONTHS.items()}
+    candidates: list[datetime] = []
+    for match in matches:
+        month = month_numbers.get(match.group(1).lower()[:3])
+        if month is None:
+            continue
+        hour = int(match.group(4))
+        minute = int(match.group(5))
+        if not 1 <= hour <= 12 or not 0 <= minute <= 59:
+            continue
+        if match.group(6).upper() == "AM":
+            hour = 0 if hour == 12 else hour
+        else:
+            hour = 12 if hour == 12 else hour + 12
+        try:
+            candidates.append(datetime(
+                int(match.group(3)), month, int(match.group(2)), hour, minute,
+                tzinfo=timezone.utc,
+            ))
+        except ValueError:
+            continue
+    if not candidates:
+        raise RuntimeError("DeFiLlama unlock timestamp not recognized")
+
+    now_utc = now.astimezone(timezone.utc)
+    future = sorted(value for value in candidates if value >= now_utc - timedelta(seconds=60))
+    if not future:
+        raise RuntimeError("DeFiLlama next unlock date is already in the past")
+    parsed = future[0]
+    delta = parsed - now_utc
+    if delta.total_seconds() > 14 * 24 * 3600:
+        return None
+    return _event_row(
+        symbol=symbol,
+        kind="UNLOCK",
+        title=f"{symbol} token unlock",
+        starts_at=parsed.isoformat(),
+        exact_time=True,
+        priority=94,
+        source_name="DeFiLlama unlock calendar",
+        source_url=url,
+        active=False,
+        source_type="unlock",
+    )
+
 def _fetch_tokenomist_unlock(symbol: str, slug: str, now: datetime, timeout: float) -> dict[str, Any] | None:
     url = f"https://tokenomist.ai/{slug}/unlock-events"
     flat = _clean_text(_strip_html(_decode_xml(_fetch_text(url, timeout))))
@@ -987,6 +1064,7 @@ def _merge_events(
     old_seen: Any,
     fresh: list[dict[str, Any]],
     now: datetime,
+    refreshed_unlock_urls: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     now_s = int(now.timestamp())
     seen: dict[str, int] = {}
@@ -1001,11 +1079,23 @@ def _merge_events(
 
     previous = old_events if isinstance(old_events, list) else []
     fresh_keys = {_event_key(event) for event in fresh}
+    refreshed_unlock_urls = {str(value) for value in (refreshed_unlock_urls or set())}
     candidates: list[dict[str, Any]] = []
     for raw in previous:
         if not isinstance(raw, Mapping):
             continue
         event = dict(raw)
+        # A successful calendar refresh is authoritative for that calendar: its
+        # previous scheduled unlock is replaced by the fresh row, or removed if
+        # the source now reports no upcoming event. A failed refresh never enters
+        # this set, so transient source/network errors retain the last verified
+        # future schedule instead of silently deleting it.
+        if (
+            str(event.get("source_type") or "") == "unlock"
+            and str(event.get("source_url") or "") in refreshed_unlock_urls
+            and _event_key(event) not in fresh_keys
+        ):
+            continue
         expires = _parse_timestamp(event.get("expires_at"))
         starts = _parse_timestamp(event.get("starts_at"))
         is_future = not bool(event.get("active")) and starts and starts >= now_s - 86400
@@ -1080,7 +1170,9 @@ def _supplemental_source_ids(symbol: str) -> list[str]:
     ids = [f"feed:{symbol}:{row[1]}" for row in OFFICIAL_FEEDS if row[0] == symbol]
     ids.extend(f"release:{symbol}:{repo}" for repo in project.get("github", []))
     if project.get("unlock_slug"):
-        ids.append(f"unlock:{symbol}:{project['unlock_slug']}")
+        ids.append(f"unlock:{symbol}:tokenomist:{project['unlock_slug']}")
+    if project.get("defillama_unlock_slug"):
+        ids.append(f"unlock:{symbol}:defillama:{project['defillama_unlock_slug']}")
     if symbol == "BTC" or symbol in ETF_ALT_SOURCES:
         ids.append(f"etf:{symbol}")
     return ids
@@ -1121,7 +1213,7 @@ def _build_source_health(*, symbols: set[str], source_last_ok: Mapping[str, int]
     all_ok = 0
     all_total = 0
     for symbol in sorted(symbols):
-        core = _source_coverage(_core_source_ids(symbol), source_last_ok, source_last_attempt, now_s, ignore_unattempted=True)
+        core = _source_coverage(_core_source_ids(symbol), source_last_ok, source_last_attempt, now_s, ignore_unattempted=False)
         supplemental = _source_coverage(_supplemental_source_ids(symbol), source_last_ok, source_last_attempt, now_s, ignore_unattempted=True)
         all_ok += core["ok"]
         all_total += core["total"]

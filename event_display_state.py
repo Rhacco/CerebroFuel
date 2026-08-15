@@ -1,5 +1,4 @@
-# r2
-"""Hourly display throttling for future events in CF v7.1.0.
+"""Hourly display throttling for future events in CF v7.2.0.
 
 Future-day events are shown once in the first successful Discord report of each
 local clock hour. The event loader supplies today's timed macro only on its
@@ -14,8 +13,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
-STATE_VERSION = "event-display-v710-r2"
-COMPATIBLE_STATE_VERSIONS = {STATE_VERSION, "event-display-v710-r1", "event-display-v700-r1"}
+STATE_VERSION = "event-display-7.2.0"
 
 
 @dataclass(frozen=True)
@@ -47,7 +45,7 @@ def _load(path: Path) -> dict[str, Any]:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
         return {"version": STATE_VERSION, "sent": {}}
-    if not isinstance(raw, dict) or raw.get("version") not in COMPATIBLE_STATE_VERSIONS:
+    if not isinstance(raw, dict) or raw.get("version") != STATE_VERSION:
         return {"version": STATE_VERSION, "sent": {}}
     sent = raw.get("sent")
     if not isinstance(sent, dict):

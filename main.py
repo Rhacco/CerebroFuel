@@ -1,5 +1,4 @@
-# r2
-"""Crypto Signal Monitor v7.1.0 — live signals, J/E, events and shock protection."""
+"""Crypto Signal Monitor v7.2.0 — live signals, J/E, events and shock protection."""
 from __future__ import annotations
 
 import argparse
@@ -11,7 +10,7 @@ from pathlib import Path
 from discord_sender import send_discord
 from event_context import load_critical_events
 from event_display_state import mark_event_displayed, plan_event_display
-from lighter_monitor import APP_VERSION, PACKAGE_REVISION, LighterMonitor
+from lighter_monitor import APP_VERSION, LighterMonitor
 
 ROOT = Path(__file__).resolve().parent
 
@@ -23,10 +22,8 @@ def main() -> int:
     args = parser.parse_args()
 
     config = json.loads(Path(args.config).read_text(encoding="utf-8"))
-    if config.get("schema_version") != APP_VERSION:
-        raise ValueError(f"config schema_version muss {APP_VERSION} sein")
-    if config.get("package_revision") != PACKAGE_REVISION:
-        raise ValueError(f"config package_revision muss {PACKAGE_REVISION} sein")
+    if config.get("version") != APP_VERSION:
+        raise ValueError(f"config version muss {APP_VERSION} sein")
 
     output = ROOT / "output"
     output.mkdir(exist_ok=True)
@@ -53,7 +50,6 @@ def main() -> int:
         event_source_health=event_snapshot.source_health,
         incident_state_path=output / "incident_state.json",
         signal_transition_state_path=output / "signal_transition_state.json",
-        signal_streak_state_path=output / "signal_streak_state.json",
         daily_candle_cache_path=output / "daily_candle_cache.json",
         springer_history_path=output / "springer_history.json",
         display_selection_state_path=output / "display_selection_state.json",
@@ -71,9 +67,7 @@ def main() -> int:
         if signal.state == "INVALID_DATA":
             reason = "; ".join(signal.reasons) or "unbekannter Datenfehler"
             print(f"[DATA] {signal.symbol}: {reason}")
-    state_ready_path.write_text(
-        f"{APP_VERSION}-{PACKAGE_REVISION}\n", encoding="utf-8"
-    )
+    state_ready_path.write_text(f"{APP_VERSION}\n", encoding="utf-8")
     for diagnostic in event_snapshot.diagnostics:
         print(f"EVENT: {diagnostic}")
     if monitor.last_incidents:
@@ -91,7 +85,7 @@ def main() -> int:
         send_discord(
             webhook,
             report,
-            username=str(config.get("discord_username", "CF v7.1.0")),
+            username=str(config.get("discord_username", "CF v7.2.0")),
             avatar_url=str(config.get("discord_avatar_url", "")).strip(),
         )
         mark_event_displayed(

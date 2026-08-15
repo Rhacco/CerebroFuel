@@ -1,5 +1,4 @@
-# r2
-"""Verified macro and coin-event context for CF v7.1.0.
+"""Verified macro and coin-event context for CF v7.2.0.
 
 Macro facts come from authoritative public schedules. Coin status/news/release/
 unlock facts are collected on the GitHub runner and accepted only with verified,
@@ -27,13 +26,11 @@ from zoneinfo import ZoneInfo
 
 from project_event_sources import (
     APP_VERSION as PROJECT_EVENT_VERSION,
-    PACKAGE_REVISION as PROJECT_EVENT_REVISION,
     collect_project_event_feed,
 )
 
-CACHE_VERSION = "event-cache-v710-r2"
-COMPATIBLE_CACHE_VERSIONS = {CACHE_VERSION, "event-cache-v710-r1", "event-cache-v700-r1"}
-USER_AGENT = "crypto-signal-monitor/7.1.0"
+CACHE_VERSION = "event-cache-7.2.0"
+USER_AGENT = "crypto-signal-monitor/7.2.0"
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4,
     "may": 5, "june": 6, "july": 7, "august": 8,
@@ -1609,7 +1606,7 @@ def load_critical_events(
     diagnostics: list[str] = []
     source_health: dict[str, Any] = {}
     cached = _load_json(cache_path)
-    if cached.get("version") not in COMPATIBLE_CACHE_VERSIONS:
+    if cached.get("version") != CACHE_VERSION:
         cached = {"version": CACHE_VERSION}
     now_s = int(now.timestamp())
 
@@ -1837,7 +1834,6 @@ def load_critical_events(
             }
         project_feed = {
             "version": PROJECT_EVENT_VERSION,
-            "package_revision": PROJECT_EVENT_REVISION,
             "generated_at": _iso(now),
             "events": prior_project_state.get("events", []),
             "meta": {"source_health": prior_health},

@@ -1,5 +1,4 @@
-# r2
-"""Live speed, activity, two-sided movement and BTC pinning context for CF v7.1.0.
+"""Live speed, activity, two-sided movement and BTC pinning context for CF v7.2.0.
 
 The core signal state remains authoritative. This layer only adds timing context:
 - SPD measures how quickly price is moving now.
@@ -126,7 +125,7 @@ def calculate_swing_metrics(
     """Measure live speed/activity and diagnostic two-sided movement.
 
     The result does not create or promote a trading state.
-    NEAR/TRY/NOW remains authoritative; these metrics only confirm, rank and
+    Trade-readiness states remain authoritative; these metrics only confirm, rank and
     size those states.
     """
     speed_lookback = max(6, min(30, int(config.get("swing_speed_lookback_minutes", 12))))
